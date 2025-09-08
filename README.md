@@ -17,6 +17,7 @@
 ### Installation (End Users)
 
 **Coming Soon**: Install via Homebrew (recommended for general users):
+
 ```bash
 # Future release - not yet available
 brew tap your-org/chirp
@@ -31,11 +32,13 @@ chirp setup
 For developers or users who want to run from source:
 
 1. **Clone and setup everything**:
+
    ```bash
    git clone <repository-url>
    cd chirp-ai-note-app
    make setup
    ```
+
    This command automatically:
    - Installs system dependencies (PortAudio)
    - Installs Python dependencies with uv
@@ -47,6 +50,7 @@ For developers or users who want to run from source:
    - Follow the installation guide to set up a multi-output device
 
 3. **Setup Ollama**:
+
    ```bash
    brew install ollama
    ollama serve
@@ -54,6 +58,7 @@ For developers or users who want to run from source:
    ```
 
 4. **Verify setup**:
+
    ```bash
    make check-deps
    ```
@@ -61,26 +66,31 @@ For developers or users who want to run from source:
 ### Basic Usage
 
 1. **Record a meeting**:
+
    ```bash
    chirp record --duration 60 --title "Team Standup"
    ```
 
 2. **Transcribe audio files**:
+
    ```bash
    chirp transcribe
    ```
 
 3. **Generate meeting notes**:
+
    ```bash
    chirp notes
    ```
 
 4. **Process everything at once**:
+
    ```bash
    chirp process
    ```
 
 5. **Check status**:
+
    ```bash
    chirp status
    ```
@@ -149,25 +159,30 @@ chirp status
 ### Setup
 
 1. **Clone and setup**:
+
    ```bash
    git clone <repository-url>
    cd chirp-ai-note-app
    make dev-install
    ```
+
    This installs all dependencies, sets up pre-commit hooks, and installs the package in development mode.
 
 2. **Install system dependencies**:
+
    ```bash
    make install-deps
    ```
 
 3. **Run tests**:
+
    ```bash
    make test
    make test-coverage
    ```
 
 4. **Code quality checks**:
+
    ```bash
    make style-check  # Linting, formatting, spell check
    make type-check   # Type checking with mypy
@@ -189,7 +204,7 @@ make validate      # Validate imports and compilation
 
 ### Project Structure
 
-```
+```text
 chirp-ai-note-app/
 ├── chirp/                 # Main CLI application
 │   ├── cli.py            # CLI interface with Typer
