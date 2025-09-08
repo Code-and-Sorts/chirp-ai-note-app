@@ -1,0 +1,21 @@
+directories:
+  raw_audio: "./to-transcribe"
+  transcriptions: "./transcription-out"
+  notes: "./notes-out"
+  templates: "./templates"
+
+models:
+  whisper: "base"
+  llm: "llama3.1:8b"
+  ollama_url: "http://localhost:11434"
+
+audio:
+  sample_rate: 16000
+  channels: 2
+  chunk_size: 1024
+  format: "wav"
+
+monitoring:
+  warning_minutes: 60
+  warning_interval: 15
+  max_recording_hours: 8
