@@ -28,6 +28,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
+    "mypy>=1.0.0",
     "codespell>=2.2.0",
     "pre-commit>=3.0.0",
 ]
@@ -39,7 +40,7 @@ line-length = 88
 [tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings  
+    "W",   # pycodestyle warnings
     "F",   # Pyflakes
     "I",   # isort
     "B",   # flake8-bugbear
@@ -63,3 +64,10 @@ docstring-code-format = true
 
 [tool.ruff.lint.isort]
 known-first-party = ["chirp"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
