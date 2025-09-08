@@ -1,0 +1,83 @@
+{
+  // Python settings
+  "python.defaultInterpreterPath": "./.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  // Ruff (linting and formatting)
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    },
+    "editor.defaultFormatter": "charliermarsh.ruff"
+  },
+  // Files and search
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.pytest_cache": true,
+    "**/htmlcov": true,
+    "**/.coverage": true,
+    "**/dist": true,
+    "**/*.egg-info": true,
+    ".venv": false,
+    "uv.lock": false
+  },
+  "search.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/htmlcov": true,
+    "**/dist": true,
+    "**/*.egg-info": true
+  },
+  // Git
+  "git.ignoreLimitWarning": true,
+  // Terminal
+  "terminal.integrated.env.osx": {
+    "PATH": "${workspaceFolder}/.venv/bin:${env:PATH}"
+  },
+  // Code Spell Checker
+  "cSpell.words": [
+    "blackhole",
+    "chirp",
+    "codespell",
+    "diarization",
+    "mypy",
+    "ollama",
+    "portaudio",
+    "pyaudio",
+    "pydantic",
+    "pytest",
+    "ruff",
+    "transcriber",
+    "typer",
+    "unittests",
+    "whisper"
+  ],
+  // YAML
+  "yaml.schemas": {
+    "https://json.schemastore.org/github-workflow.json": ".github/workflows/*.yml",
+    "https://json.schemastore.org/github-action.json": ".github/actions/*/action.yml"
+  },
+  // Markdown
+  "markdown.preview.breaks": true,
+  "markdown.preview.linkify": true,
+  // Auto save
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000,
+  // Editor
+  "editor.rulers": [88],
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "editor.trimAutoWhitespace": true,
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  // Testing
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": [
+    "tests/",
+    "-v"
+  ],
+  "python.testing.unittestEnabled": false,
+  "python.testing.autoTestDiscoverOnSaveEnabled": true
+}
