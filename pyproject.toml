@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chirp"
+version = "0.1.0"
+description = "Meeting recorder CLI that transcribes and generates AI notes"
+authors = [{name = "User", email = "user@example.com"}]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0",
+    "pyaudio>=0.2.11",
+    "faster-whisper>=1.0.0",
+    "ollama>=0.1.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+chirp = "chirp.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "codespell>=2.2.0",
+    "pre-commit>=3.0.0",
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings  
+    "F",   # Pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults (typer pattern)
+    "F403", # star imports (used intentionally for exceptions)
+    "F405", # may be undefined from star imports
+    "B904", # Within except clause, raise exceptions with raise ... from err (too verbose for this use case)
+    "E722", # Do not use bare except (acceptable in test function)
+    "F401", # Imported but unused (acceptable in conditional imports for testing)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.ruff.lint.isort]
+known-first-party = ["chirp"]
