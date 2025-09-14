@@ -42,11 +42,27 @@ class MonitoringConfig(BaseModel):
     max_recording_hours: int = 8
 
 
+class NotesChatConfig(BaseModel):
+    emb_model: str = "nomic-embed-text"
+    chunk_size: int = 1000
+    overlap: int = 200
+    k: int = 10
+    ctx_char_budget: int = 8000
+    index_dir: Path = Field(default_factory=lambda: Path(".notes_index"))
+    auto_index: bool = True
+
+    @field_validator("index_dir", mode="before")
+    @classmethod
+    def convert_to_path(cls, v):
+        return Path(v) if isinstance(v, str) else v
+
+
 class ChirpSettings(BaseModel):
     directories: DirectoriesConfig = Field(default_factory=DirectoriesConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
+    notes_chat: NotesChatConfig = Field(default_factory=NotesChatConfig)
 
     @classmethod
     def load_from_file(cls, config_path: Optional[Path] = None) -> "ChirpSettings":
@@ -82,6 +98,9 @@ class ChirpSettings(BaseModel):
             self.directories.transcriptions,
             self.directories.notes,
             self.directories.templates,
+            self.notes_chat.index_dir,
+            self.notes_chat.index_dir / "chroma",
+            self.notes_chat.index_dir / "cache",
         ]:
             directory.mkdir(parents=True, exist_ok=True)
 

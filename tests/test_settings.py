@@ -30,5 +30,5 @@ class TestChirpSettings:
 
             # Should create all required directories
             assert (
-                mock_mkdir.call_count == 4
-            )  # raw_audio, transcriptions, notes, templates
+                mock_mkdir.call_count == 7
+            )  # raw_audio, transcriptions, notes, templates, index_dir, index_dir/chroma, index_dir/cache

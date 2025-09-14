@@ -19,3 +19,12 @@ monitoring:
   warning_minutes: 60
   warning_interval: 15
   max_recording_hours: 8
+
+notes_chat:
+  emb_model: "nomic-embed-text"
+  chunk_size: 1000
+  overlap: 200
+  k: 10
+  ctx_char_budget: 8000
+  index_dir: ".notes_index"
+  auto_index: true

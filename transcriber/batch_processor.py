@@ -120,9 +120,9 @@ class BatchProcessor:
                 transcription_result["compressed"] = True
             else:
                 transcription_result["compressed"] = False
-                transcription_result["compression_error"] = (
-                    "Failed to compress transcription"
-                )
+                transcription_result[
+                    "compression_error"
+                ] = "Failed to compress transcription"
 
         return transcription_result
 

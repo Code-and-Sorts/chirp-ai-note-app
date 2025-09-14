@@ -304,7 +304,7 @@ def test():
     tests.append(("BlackHole", device_manager.check_blackhole_available()))
 
     try:
-        from faster_whisper import WhisperModel
+        from faster_whisper import WhisperModel  # noqa: F401
 
         tests.append(("Faster Whisper", True))
     except ImportError:
@@ -341,6 +341,35 @@ def test():
         console.print(
             "\n[red]⚠️  Some tests failed. Please check the installation.[/red]"
         )
+
+
+notes_app = typer.Typer(help="Notes search and query commands")
+app.add_typer(notes_app, name="notes")
+
+
+@notes_app.command("index")
+def notes_index(
+    force: bool = typer.Option(False, "--force", help="Force full rebuild of index"),
+):
+    """Build or rebuild the notes search index."""
+    from notes_chat.cli import index
+
+    index(force)
+
+
+@notes_app.command("ask")
+def notes_ask(
+    question: str = typer.Argument(..., help="Question to ask about your meetings"),
+    when: Optional[str] = typer.Option(None, "--when", help="Time range filter"),
+    sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show prompt without calling LLM"
+    ),
+):
+    """Ask questions about your meeting notes."""
+    from notes_chat.cli import ask
+
+    ask(question, when, sources, dry_run)
 
 
 if __name__ == "__main__":

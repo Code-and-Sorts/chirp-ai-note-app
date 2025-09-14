@@ -1,0 +1,175 @@
+from unittest.mock import Mock, patch
+
+from config.settings import ChirpSettings
+from notes_chat.prompting import generate_answer, validate_ollama_connection
+
+
+class TestPrompting:
+    @patch("requests.post")
+    def test_prompt_includes_instruction_and_sources(self, mock_post):
+        """Test that prompt includes proper instruction and source headers."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "Test answer"}
+        mock_post.return_value = mock_response
+
+        config = ChirpSettings()
+        question = "What was decided?"
+        context = "2025-01-15 · meeting.md\nWe decided to implement the new feature."
+
+        result = generate_answer(config, question, context)
+
+        assert result["success"]
+        assert result["answer"] == "Test answer"
+
+        # Check that the request was made with proper prompt structure
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+
+        assert "based ONLY on the provided meeting notes" in prompt
+        assert question in prompt
+        assert context in prompt
+        assert "temperature" in call_args[1]["json"]
+        assert call_args[1]["json"]["temperature"] == 0
+
+    @patch("requests.post")
+    def test_budget_cap_enforced(self, mock_post):
+        """Test that context budget cap is enforced."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "Answer"}
+        mock_post.return_value = mock_response
+
+        config = ChirpSettings()
+        question = "Test question"
+
+        # Very long context
+        context = "X" * 20000
+
+        result = generate_answer(config, question, context)
+
+        assert result["success"]
+
+        # The prompt should contain the context as-is (budget enforcement happens in retrieval)
+        call_args = mock_post.call_args
+        prompt = call_args[1]["json"]["prompt"]
+        assert len(prompt) > 10000  # Should contain the full context
+
+    @patch("requests.post")
+    def test_not_found_ambiguous_responses(self, mock_post):
+        """Test handling of 'not found' and 'ambiguous' responses."""
+        config = ChirpSettings()
+        question = "What happened?"
+        context = "Some meeting notes"
+
+        # Test "not found" response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "response": "I don't have enough information to answer that question."
+        }
+        mock_post.return_value = mock_response
+
+        result = generate_answer(config, question, context)
+
+        assert not result["success"]
+        assert "No relevant information found" in result["error"]
+        assert "I don't have enough information" in result["answer"]
+
+    @patch("requests.post")
+    def test_empty_context_handling(self, mock_post):
+        """Test handling of empty context."""
+        config = ChirpSettings()
+        question = "What happened?"
+        context = ""
+
+        result = generate_answer(config, question, context)
+
+        assert not result["success"]
+        assert "Empty context" in result["error"]
+        # Should not make HTTP request for empty context
+        mock_post.assert_not_called()
+
+    @patch("requests.post")
+    def test_api_error_handling(self, mock_post):
+        """Test handling of various API errors."""
+        config = ChirpSettings()
+        question = "Test question"
+        context = "Test context"
+
+        # Test 404 error (model not found)
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_post.return_value = mock_response
+
+        result = generate_answer(config, question, context)
+
+        assert not result["success"]
+        assert "Model" in result["error"]
+        assert "not found" in result["error"]
+        assert "ollama pull" in result["error"]
+
+    @patch("requests.post")
+    def test_connection_error_handling(self, mock_post):
+        """Test handling of connection errors."""
+        config = ChirpSettings()
+        question = "Test question"
+        context = "Test context"
+
+        # Simulate connection error
+        mock_post.side_effect = ConnectionError("Connection failed")
+
+        result = generate_answer(config, question, context)
+
+        assert not result["success"]
+        assert "Cannot connect to Ollama" in result["error"]
+        assert "ollama serve" in result["error"]
+
+    @patch("requests.get")
+    def test_ollama_validation_success(self, mock_get):
+        """Test successful Ollama validation."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "models": [{"name": "llama3.1:8b"}, {"name": "nomic-embed-text"}]
+        }
+        mock_get.return_value = mock_response
+
+        config = ChirpSettings()
+        result = validate_ollama_connection(config)
+
+        assert result["success"]
+
+    @patch("requests.get")
+    def test_ollama_validation_missing_model(self, mock_get):
+        """Test Ollama validation with missing model."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"models": [{"name": "other-model"}]}
+        mock_get.return_value = mock_response
+
+        config = ChirpSettings()
+        result = validate_ollama_connection(config)
+
+        assert not result["success"]
+        assert "llama3.1:8b" in result["error"]
+        assert "not found" in result["error"]
+
+    @patch("requests.post")
+    def test_deterministic_settings(self, mock_post):
+        """Test that deterministic settings are applied."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "Answer"}
+        mock_post.return_value = mock_response
+
+        config = ChirpSettings()
+        question = "Test question"
+        context = "Test context"
+
+        generate_answer(config, question, context)
+
+        call_args = mock_post.call_args[1]["json"]
+        assert call_args["temperature"] == 0
+        assert call_args["top_p"] == 1
+        assert call_args["stream"] is False

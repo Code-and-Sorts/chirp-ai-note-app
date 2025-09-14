@@ -43,9 +43,9 @@ class PopupManager:
             return False
 
     def _show_macos_notification(self, title: str, message: str) -> bool:
-        applescript = f'''
+        applescript = f"""
         display notification "{message}" with title "{title}"
-        '''
+        """
         try:
             subprocess.run(
                 ["osascript", "-e", applescript], check=True, capture_output=True
@@ -67,9 +67,9 @@ class PopupManager:
         if not self.is_macos:
             return None
 
-        applescript = f'''
+        applescript = f"""
         display dialog "{question}" with title "{title}" buttons {{"No", "Yes"}} default button "Yes"
-        '''
+        """
         try:
             result = subprocess.run(
                 ["osascript", "-e", applescript],

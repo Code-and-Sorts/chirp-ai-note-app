@@ -10,6 +10,7 @@
 - **📁 Batch Processing**: Process multiple audio files with progress indicators
 - **🗜️ Efficient Storage**: Compressed JSON storage for transcriptions to save space
 - **📝 Template System**: Customizable markdown templates for consistent note formatting
+- **🔍 Smart Search**: Query your meeting history with natural language using hybrid search (semantic + keyword)
 - **⚡ Modern CLI**: Built with Typer and Rich for a beautiful command-line experience
 
 ## 🚀 Quick Start
@@ -55,6 +56,7 @@ For developers or users who want to run from source:
    brew install ollama
    ollama serve
    ollama pull llama3.1:8b
+   ollama pull nomic-embed-text
    ```
 
 4. **Verify setup**:
@@ -89,7 +91,14 @@ For developers or users who want to run from source:
    chirp process
    ```
 
-5. **Check status**:
+5. **Search your meeting history**:
+
+   ```bash
+   notes ask "what was decided about the project timeline?"
+   notes ask "who was assigned the API task?" --when "last week"
+   ```
+
+6. **Check status**:
 
    ```bash
    chirp status
@@ -121,6 +130,23 @@ chirp transcribe --force
 
 # Process specific directory
 chirp transcribe --input /path/to/audio/files
+```
+
+### Searching Meeting History
+
+```bash
+# Ask questions about your meetings
+notes ask "what were the key decisions from yesterday?"
+notes ask "who is responsible for the budget review?"
+
+# Search within specific time ranges
+notes ask "what was discussed about hiring?" --when "last week"
+notes ask "any mentions of deadlines?" --when "2024-01-15"
+notes ask "project updates?" --when "2024-01-01:2024-01-31"
+
+# Build search index manually (optional - auto-builds during note generation)
+notes index
+notes index --force
 ```
 
 ### Managing Configuration
@@ -222,6 +248,11 @@ chirp-ai-note-app/
 │   ├── note_generator.py
 │   ├── template_engine.py
 │   └── daily_aggregator.py
+├── notes_chat/          # Search and query functionality
+│   ├── index.py
+│   ├── retrieval.py
+│   ├── prompting.py
+│   └── cache.py
 ├── utils/               # Utilities
 │   ├── file_utils.py
 │   ├── time_utils.py
@@ -262,13 +293,12 @@ make clean            # Clean build artifacts
 - **Lectures**: Convert educational content into structured notes
 - **Brainstorming Sessions**: Capture ideas and generate actionable summaries
 - **Client Calls**: Create professional meeting summaries automatically
+- **Meeting Research**: Quickly find past decisions, action items, or specific discussions
 
 ## 🚧 Future Enhancements
 
 ### Near-term
 
-- **Obsidian Integration**: Export notes in Obsidian-compatible format
-- **Chat Interface**: `chirp chat` command for querying past meetings
 - **Speaker Detection**: Identify different speakers in meetings
 
 ### Long-term

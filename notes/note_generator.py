@@ -124,6 +124,9 @@ class NoteGenerator:
             with open(notes_path, "w", encoding="utf-8") as f:
                 f.write(daily_notes)
 
+            # Auto-index the generated note if enabled
+            self._auto_index_note(notes_path)
+
             return {
                 "success": True,
                 "filename": notes_filename,
@@ -297,3 +300,33 @@ Return only valid JSON, no additional text or formatting."""
                 "error": str(e),
                 "url": self.settings.models.ollama_url,
             }
+
+    def _auto_index_note(self, notes_path: Path):
+        if not self.settings.notes_chat.auto_index:
+            return
+
+        try:
+            from notes_chat.index import IndexManager
+
+            index_manager = IndexManager(self.settings)
+            success = index_manager._add_to_index(notes_path)
+
+            if success:
+                manifest = index_manager._load_manifest()
+                current_files = index_manager._scan_notes_files()
+
+                file_path = str(notes_path)
+                if file_path in current_files:
+                    manifest[file_path] = current_files[file_path]
+                    index_manager._save_manifest(manifest)
+
+                index_manager._rebuild_bm25()
+
+                self.console.print(
+                    f"[dim green]✓ Auto-indexed {notes_path.name}[/dim green]"
+                )
+
+        except Exception as e:
+            self.console.print(
+                f"[dim yellow]⚠️ Auto-indexing failed for {notes_path.name}: {e}[/dim yellow]"
+            )
