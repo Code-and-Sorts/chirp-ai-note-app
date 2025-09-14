@@ -3,7 +3,7 @@ import wave
 from datetime import datetime
 from pathlib import Path
 from threading import Timer
-from typing import Any, Optional
+from typing import Optional
 
 import pyaudio
 

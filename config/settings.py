@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ConfigurationError(Exception):
@@ -17,7 +17,8 @@ class DirectoriesConfig(BaseModel):
     notes: Path = Field(default_factory=lambda: Path("./notes-out"))
     templates: Path = Field(default_factory=lambda: Path("./templates"))
 
-    @validator("*", pre=True)
+    @field_validator("*", mode="before")
+    @classmethod
     def convert_to_path(cls, v):
         return Path(v) if isinstance(v, str) else v
 
