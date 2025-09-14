@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import requests
+from rich.console import Console
 
 from config.settings import ChirpSettings
 from notes.daily_aggregator import DailyAggregator
@@ -20,6 +21,7 @@ class NoteGenerator:
         self.daily_aggregator = DailyAggregator(settings)
         self.compressor = JSONCompressor()
         self.popup_manager = PopupManager()
+        self.console = Console()
 
     def generate_daily_notes(
         self, transcription_files: list[Path], force: bool = False
@@ -69,11 +71,15 @@ class NoteGenerator:
         try:
             meeting_sections = []
             total_duration = 0.0
+            skipped_files = []
 
             for transcription_file in transcription_files:
                 transcription_data = self.compressor.decompress_json(transcription_file)
 
                 if not transcription_data.get("success", False):
+                    skipped_files.append(
+                        (transcription_file.name, "Failed transcription")
+                    )
                     continue
 
                 meeting_notes = self._generate_meeting_notes(transcription_data)
@@ -85,6 +91,22 @@ class NoteGenerator:
 
                     duration = transcription_data.get("metadata", {}).get("duration", 0)
                     total_duration += duration
+                else:
+                    transcript_text = transcription_data.get("full_text", "").strip()
+                    reason = (
+                        "Insufficient content (< 50 characters)"
+                        if len(transcript_text) < 50
+                        else "Failed to generate notes"
+                    )
+                    skipped_files.append((transcription_file.name, reason))
+
+            # Log skipped files if any
+            if skipped_files:
+                self.console.print(
+                    f"[yellow]⚠️  Skipped {len(skipped_files)} transcription(s):[/yellow]"
+                )
+                for filename, reason in skipped_files:
+                    self.console.print(f"[dim]   • {filename}: {reason}[/dim]")
 
             if not meeting_sections:
                 return {
