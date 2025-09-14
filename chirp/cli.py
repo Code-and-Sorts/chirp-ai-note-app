@@ -134,9 +134,18 @@ def transcribe(
         )
 
     success_count = sum(1 for r in results if r["success"])
-    console.print(
-        f"[green]✅ Successfully transcribed {success_count}/{len(audio_files)} files[/green]"
-    )
+    processed_count = len(results)
+    skipped_count = len(audio_files) - processed_count
+
+    if processed_count > 0:
+        console.print(
+            f"[green]✅ Successfully transcribed {success_count}/{processed_count} files[/green]"
+        )
+
+    if skipped_count > 0 and not force:
+        console.print(
+            f"[yellow]⏭️  Skipped {skipped_count} file(s) - already transcribed (use --force to re-transcribe)[/yellow]"
+        )
 
 
 @app.command()

@@ -37,7 +37,11 @@ def get_transcription_files(directory: Path) -> list[Path]:
         return []
 
     return sorted(
-        [f for f in directory.iterdir() if f.is_file() and f.suffix.lower() == ".json"],
+        [
+            f
+            for f in directory.iterdir()
+            if f.is_file() and f.name.endswith((".json", ".json.gz"))
+        ],
         key=lambda x: x.stat().st_mtime,
     )
 

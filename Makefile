@@ -229,9 +229,9 @@ info: ## Show system and version information
 	@$(MAKE) status
 
 # Quick examples
-example: ## Example: Record a 5-minute meeting and process it
+example: ## Example: Record a 1-minute meeting and process it
 	@echo "🎬 Running Chirp example workflow:"
-	@echo "1. Recording 5-minute meeting titled 'Demo Meeting'..."
-	@$(MAKE) record DURATION=5 TITLE="Demo Meeting" || echo "⚠️  Recording failed (audio setup required)"
+	@echo "1. Recording 1-minute meeting titled 'Demo Meeting'..."
+	@$(MAKE) record DURATION=1 TITLE="Demo Meeting" || echo "⚠️  Recording failed (audio setup required)"
 	@echo "2. Processing audio files..."
 	@$(MAKE) process FORCE=true

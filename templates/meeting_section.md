@@ -1,25 +1,25 @@
-# {meeting_title} - {meeting_time}
+## {meeting_title} - {meeting_time}
 
 **Duration:** {duration}
 **Participants:** {participants}
 
-## Executive Summary
+### Executive Summary
 
 {executive_summary}
 
-## Key Discussion Points
+### Key Discussion Points
 
 {key_points}
 
-## Decisions Made
+### Decisions Made
 
 {decisions}
 
-## Action Items
+### Action Items
 
 {action_items}
 
-## Next Steps
+### Next Steps
 
 {next_steps}
 
