@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 
 import pyaudio
 
@@ -55,7 +55,7 @@ class DeviceManager:
                     blackhole_name.lower() in device_name
                     and device["max_input_channels"] > 0
                 ):
-                    return device["index"]
+                    return int(device["index"])
 
         return None
 
@@ -68,7 +68,8 @@ class DeviceManager:
 
         try:
             default_device = self.audio.get_default_input_device_info()
-            return default_device.get("index")
+            device_index = default_device.get("index")
+            return int(device_index) if device_index is not None else None
         except Exception:
             return None
 
@@ -77,7 +78,8 @@ class DeviceManager:
             return None
 
         try:
-            return self.audio.get_device_info_by_index(device_index)
+            device_info = self.audio.get_device_info_by_index(device_index)
+            return dict(device_info) if device_info else None
         except Exception:
             return None
 
@@ -114,7 +116,7 @@ class DeviceManager:
 
     def get_device_sample_rates(self, device_index: int) -> list[int]:
         standard_rates = [8000, 16000, 22050, 44100, 48000, 96000]
-        supported_rates = []
+        supported_rates: list[int] = []
 
         device_info = self.get_device_info(device_index)
         if not device_info:
@@ -150,6 +152,6 @@ class DeviceManager:
             if not self.audio:
                 return False
             device_count = self.audio.get_device_count()
-            return device_count > 0
+            return bool(device_count > 0)
         except Exception:
             return False

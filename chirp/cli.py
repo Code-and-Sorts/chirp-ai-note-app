@@ -8,7 +8,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from chirp.exceptions import *
-from config.settings import ConfigurationError, get_settings
+from config.settings import get_settings
 from notes.note_generator import NoteGenerator
 from recorder.audio_recorder import AudioRecorder
 from recorder.device_manager import DeviceManager
@@ -86,14 +86,15 @@ def process(
     """⚡ Process audio files (transcribe + generate notes)"""
     get_settings()
 
-    transcribe_command = app.commands.get("transcribe")
-    notes_command = app.commands.get("notes")
-
-    if transcribe_command:
-        transcribe_command.callback(input_dir, force)
-
-    if notes_command:
-        notes_command.callback(force)
+    # Call commands directly since app.commands doesn't exist in Typer
+    # This is a simplified process command that manually calls both operations
+    try:
+        # Call transcribe functionality
+        transcribe(input_dir=input_dir, force=force)
+        # Call notes functionality
+        notes(force=force)
+    except Exception as e:
+        console.print(f"[red]Error in process command: {e}[/red]")
 
 
 @app.command()

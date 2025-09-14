@@ -29,6 +29,8 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "types-PyYAML>=6.0.0",
+    "types-requests>=2.31.0",
     "codespell>=2.2.0",
     "pre-commit>=3.0.0",
 ]
@@ -60,7 +62,9 @@ ignore = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-docstring-code-format = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.isort]
 known-first-party = ["chirp"]

@@ -192,7 +192,8 @@ Return only valid JSON, no additional text or formatting."""
 
             if json_start != -1 and json_end > json_start:
                 json_str = response[json_start:json_end]
-                return json.loads(json_str)
+                data = json.loads(json_str)
+                return dict(data) if isinstance(data, dict) else None
             else:
                 return self._parse_fallback_response(response)
 
@@ -213,7 +214,8 @@ Return only valid JSON, no additional text or formatting."""
         response.raise_for_status()
 
         result = response.json()
-        return result.get("response", "").strip()
+        response_text = result.get("response", "")
+        return str(response_text).strip() if response_text else ""
 
     def _parse_fallback_response(self, response: str) -> dict[str, Any]:
         return {

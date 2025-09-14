@@ -20,7 +20,7 @@ def sanitize_filename(filename: str) -> str:
 
 def get_audio_files(directory: Path) -> list[Path]:
     audio_extensions = {".wav", ".mp3", ".m4a", ".flac", ".aac"}
-    audio_files = []
+    audio_files: list[Path] = []
 
     if not directory.exists():
         return audio_files

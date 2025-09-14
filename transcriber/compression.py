@@ -30,7 +30,8 @@ class JSONCompressor:
                 json_bytes = f.read()
 
             json_str = json_bytes.decode("utf-8")
-            return json.loads(json_str)
+            data = json.loads(json_str)
+            return dict(data) if isinstance(data, dict) else {}
         except Exception as e:
             raise RuntimeError(f"Failed to decompress JSON file: {str(e)}")
 

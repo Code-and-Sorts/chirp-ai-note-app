@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from config.settings import ChirpSettings
 from transcriber.compression import JSONCompressor
@@ -60,7 +61,7 @@ class DailyAggregator:
 
         return sorted(matching_files, key=lambda x: self._extract_meeting_date(x))
 
-    def get_daily_statistics(self, transcription_files: list[Path]) -> dict[str, any]:
+    def get_daily_statistics(self, transcription_files: list[Path]) -> dict[str, Any]:
         daily_groups = self.group_transcriptions_by_day(transcription_files)
 
         stats = {}

@@ -2,7 +2,8 @@ import threading
 import wave
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from threading import Timer
+from typing import Any, Optional
 
 import pyaudio
 
@@ -19,11 +20,11 @@ class AudioRecorder:
         self.device_manager = device_manager
         self.audio = pyaudio.PyAudio()
         self.is_recording = False
-        self.frames = []
+        self.frames: list[bytes] = []
         self.stream = None
-        self.recording_thread = None
-        self.monitor = None
-        self.start_time = None
+        self.recording_thread: Optional[Timer] = None
+        self.monitor: Optional[MeetingMonitor] = None
+        self.start_time: Optional[datetime] = None
 
     def __del__(self):
         if self.audio:
@@ -40,7 +41,7 @@ class AudioRecorder:
             raise RuntimeError("No suitable audio device found")
 
         device_info = self.device_manager.get_device_info(device_index)
-        if device_info["maxInputChannels"] == 0:
+        if not device_info or device_info["maxInputChannels"] == 0:
             raise RuntimeError("Selected device has no input channels")
 
         self.settings.directories.raw_audio.mkdir(parents=True, exist_ok=True)
@@ -76,14 +77,17 @@ class AudioRecorder:
             self._should_stop_recording,
         )
 
-        self.stream.start_stream()
-        self.monitor.start()
+        if self.stream:
+            self.stream.start_stream()
+        if self.monitor:
+            self.monitor.start()
 
         if duration_minutes:
-            self.recording_thread = threading.Timer(
+            self.recording_thread = Timer(
                 duration_minutes * 60, self._stop_recording_timer
             )
-            self.recording_thread.start()
+            if self.recording_thread:
+                self.recording_thread.start()
 
         try:
             while self.is_recording:

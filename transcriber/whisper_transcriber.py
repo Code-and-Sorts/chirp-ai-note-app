@@ -63,7 +63,8 @@ class WhisperTranscriber:
     def _get_cpu_threads(self) -> int:
         import os
 
-        return max(1, os.cpu_count() // 2)
+        cpu_count = os.cpu_count()
+        return max(1, cpu_count // 2) if cpu_count else 1
 
     def transcribe_file(self, audio_file_path: Path) -> dict[str, Any]:
         if not audio_file_path.exists():
