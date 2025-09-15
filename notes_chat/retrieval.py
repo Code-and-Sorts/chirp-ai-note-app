@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -14,6 +15,15 @@ def retrieve_context(
     """Retrieve context for answering a question using hybrid search."""
     try:
         index_manager = IndexManager(config)
+
+        # Check if index exists before trying to build
+        if not index_manager.manifest_file.exists():
+            suggestion = _generate_suggestion(config, None)
+            return {
+                "success": False,
+                "error": "No search index found",
+                "suggestion": suggestion,
+            }
 
         # Auto-index if needed (incremental)
         index_result = index_manager.build_index(force=False)
@@ -258,7 +268,22 @@ def _create_chunk_header(data: dict[str, Any]) -> str:
 def _generate_suggestion(config: ChirpSettings, time_range: Optional[Any]) -> str:
     """Generate a helpful suggestion when no results are found."""
     try:
-        # Find the most recent notes
+        index_dir = config.notes_chat.index_dir
+        manifest_file = index_dir / "manifest.json"
+
+        if not manifest_file.exists():
+            return "Index not found. Run 'chirp notes index' to build the search index first."
+
+        try:
+            with open(manifest_file) as f:
+                manifest = json.load(f)
+                if not manifest:
+                    return "No files in search index. Run 'chirp notes index' to build the index."
+        except:
+            return (
+                "Index appears corrupted. Run 'chirp notes index --force' to rebuild."
+            )
+
         if not config.directories.notes.exists():
             return "No notes directory found. Try running 'chirp process' to create some notes first."
 
@@ -266,7 +291,6 @@ def _generate_suggestion(config: ChirpSettings, time_range: Optional[Any]) -> st
         if not note_files:
             return "No notes found. Try running 'chirp process' to create some notes first."
 
-        # Get most recent note
         latest_note = max(note_files, key=lambda f: f.stat().st_mtime)
         latest_date = datetime.fromtimestamp(latest_note.stat().st_mtime)
 

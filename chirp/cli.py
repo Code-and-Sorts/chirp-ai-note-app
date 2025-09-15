@@ -359,7 +359,12 @@ def notes_index(
 
 @notes_app.command("ask")
 def notes_ask(
-    question: str = typer.Argument(..., help="Question to ask about your meetings"),
+    question: Optional[str] = typer.Option(
+        None,
+        "--question",
+        "-q",
+        help="Question to ask about your meetings (omit for interactive chat)",
+    ),
     when: Optional[str] = typer.Option(None, "--when", help="Time range filter"),
     sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
     dry_run: bool = typer.Option(

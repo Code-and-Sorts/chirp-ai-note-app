@@ -42,7 +42,12 @@ def index(
 
 @app.command()
 def ask(
-    question: str = typer.Argument(..., help="Question to ask about your meetings"),
+    question: Optional[str] = typer.Option(
+        None,
+        "--question",
+        "-q",
+        help="Question to ask about your meetings (omit for interactive chat)",
+    ),
     when: Optional[str] = typer.Option(
         None,
         "--when",
@@ -55,8 +60,16 @@ def ask(
         False, "--dry-run", help="Show what would be sent to LLM without calling it"
     ),
 ):
-    """Ask questions about your meeting notes."""
+    """Ask questions about your meeting notes. Run without a question for interactive chat."""
     config = get_notes_config()
+
+    # If no question provided, start interactive chat
+    if question is None:
+        from notes_chat.interactive import InteractiveChatSession
+
+        session = InteractiveChatSession(config)
+        session.start()
+        return
 
     try:
         from notes_chat.cache import cache_answer, get_cached_answer
@@ -76,6 +89,8 @@ def ask(
                 raise typer.Exit(2)
             else:
                 console.print(f"[red]❌ Context retrieval failed: {error}[/red]")
+                if context_result.get("suggestion"):
+                    console.print(f"[dim]💡 {context_result['suggestion']}[/dim]")
                 raise typer.Exit(1)
 
         context = context_result["context"]
