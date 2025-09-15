@@ -214,4 +214,4 @@ transcription-out/*.json
 transcription-out/*.json.gz
 notes-out/*.md
 config/user_config.yaml
-.notes_index/chroma/chroma.sqlite3
+.notes_index/*

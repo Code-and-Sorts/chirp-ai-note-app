@@ -3,6 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+import requests
+
 from config.settings import ChirpSettings
 from notes_chat.bm25 import BM25Index
 from notes_chat.index import IndexManager
@@ -97,8 +99,13 @@ def _search_chroma(
                 "$and": [{"date": {"$gte": start_iso}}, {"date": {"$lt": end_iso}}]
             }
 
+        # Get query embedding using the same model as indexing
+        query_embedding = _get_query_embedding(index_manager.config, query)
+        if not query_embedding:
+            return []
+
         results = index_manager.collection.query(
-            query_texts=[query],
+            query_embeddings=[query_embedding],  # type: ignore
             n_results=k,
             where=where_clause,  # type: ignore
         )
@@ -228,18 +235,25 @@ def _build_context(
                 chunks_to_include.append((chunk_id, full_content, data))
             break
 
-    # Build final context
+    # Build final context and collect unique sources
+    seen_sources = set()
     for chunk_id, content, data in chunks_to_include:
         context_parts.append(content)
         retrieved_ids.append(chunk_id)
 
-        # Add source info
+        # Add source info (deduplicated by file)
         if "metadata" in data:
             path = data["metadata"].get("path", "Unknown")
             title = data["metadata"].get("title", "Unknown")
-            sources.append(f"{title} ({Path(path).name})")
+            source_text = f"{title} ({Path(path).name})"
+            if source_text not in seen_sources:
+                seen_sources.add(source_text)
+                sources.append(source_text)
         else:
-            sources.append(f"Document {chunk_id}")
+            source_text = f"Document {chunk_id}"
+            if source_text not in seen_sources:
+                seen_sources.add(source_text)
+                sources.append(source_text)
 
     context = "\n".join(context_parts)
     return context, sources, retrieved_ids
@@ -298,3 +312,24 @@ def _generate_suggestion(config: ChirpSettings, time_range: Optional[Any]) -> st
 
     except Exception:
         return "Try a broader search or different keywords"
+
+
+def _get_query_embedding(config: ChirpSettings, query: str) -> Optional[list[float]]:
+    """Get embedding for query text using the same model as indexing."""
+    try:
+        response = requests.post(
+            f"{config.models.ollama_url}/api/embeddings",
+            json={"model": config.notes_chat.emb_model, "prompt": query},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            return None
+        result = response.json()
+        embedding = result.get("embedding")
+        if isinstance(embedding, list) and all(
+            isinstance(x, (int, float)) for x in embedding
+        ):
+            return embedding
+        return None
+    except Exception:
+        return None
