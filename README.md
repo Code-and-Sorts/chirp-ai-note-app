@@ -11,6 +11,7 @@
 - **🗜️ Efficient Storage**: Compressed JSON storage for transcriptions to save space
 - **📝 Template System**: Customizable markdown templates for consistent note formatting
 - **🔍 Smart Search**: Query your meeting history with natural language using hybrid search (semantic + keyword)
+- **💬 Interactive Chat**: Beautiful chat interface to have conversations about your meeting notes
 - **⚡ Modern CLI**: Built with Typer and Rich for a beautiful command-line experience
 
 ## 🚀 Quick Start
@@ -50,14 +51,23 @@ For developers or users who want to run from source:
    - Download from [existential.audio/blackhole](https://existential.audio/blackhole/)
    - Follow the installation guide to set up a multi-output device
 
-3. **Setup Ollama**:
+3. **Setup Ollama and AI Models**:
 
    ```bash
+   # Install Ollama
    brew install ollama
+
+   # Start Ollama service
    ollama serve
-   ollama pull llama3.1:8b
-   ollama pull nomic-embed-text
+
+   # Install required models
+   ollama pull llama3.1:8b        # LLM for note generation and Q&A
+   ollama pull nomic-embed-text   # Embedding model for search indexing
    ```
+
+   **Required Models**:
+   - `llama3.1:8b`: Main language model for generating notes and answering questions
+   - `nomic-embed-text`: Embedding model for semantic search functionality
 
 4. **Verify setup**:
 
@@ -91,11 +101,17 @@ For developers or users who want to run from source:
    chirp process
    ```
 
-5. **Search your meeting history**:
+5. **Build search index and query your meetings**:
 
    ```bash
-   notes ask "what was decided about the project timeline?"
-   notes ask "who was assigned the API task?" --when "last week"
+   # Build search index for your notes
+   chirp notes index
+
+   # Ask specific questions
+   chirp notes ask --question "what was decided about the project timeline?"
+
+   # Start interactive chat mode
+   chirp notes ask
    ```
 
 6. **Check status**:
@@ -132,22 +148,67 @@ chirp transcribe --force
 chirp transcribe --input /path/to/audio/files
 ```
 
-### Searching Meeting History
+### Searching and Querying Meeting History
+
+#### Building the Search Index
+
+Before you can search your meetings, you need to build a search index:
 
 ```bash
-# Ask questions about your meetings
-notes ask "what were the key decisions from yesterday?"
-notes ask "who is responsible for the budget review?"
+# Build search index for the first time
+chirp notes index
+
+# Force rebuild the index (if you have new notes or want to refresh)
+chirp notes index --force
+```
+
+**Note**: The index is automatically built/updated when you generate notes, but you can build it manually at any time.
+
+#### Interactive Chat Mode
+
+The interactive chat provides a beautiful, bordered interface for conversing with your meeting notes:
+
+```bash
+# Start interactive chat (no question parameter)
+chirp notes ask
+```
+
+**Features**:
+- Beautiful bordered chat interface with animated loading spinners
+- Conversation history displayed in organized panels
+- Smooth Ctrl+C behavior: clear while typing, double Ctrl+C to exit
+- Real-time search with visual feedback
+- Professional CLI experience similar to Claude Code
+
+#### One-time Questions
+
+Ask specific questions directly from the command line:
+
+```bash
+# Ask specific questions
+chirp notes ask --question "what were the key decisions from yesterday?"
+chirp notes ask -q "who is responsible for the budget review?"
 
 # Search within specific time ranges
-notes ask "what was discussed about hiring?" --when "last week"
-notes ask "any mentions of deadlines?" --when "2024-01-15"
-notes ask "project updates?" --when "2024-01-01:2024-01-31"
+chirp notes ask -q "what was discussed about hiring?" --when "last week"
+chirp notes ask -q "any mentions of deadlines?" --when "2024-01-15"
+chirp notes ask -q "project updates?" --when "2024-01-01:2024-01-31"
 
-# Build search index manually (optional - auto-builds during note generation)
-notes index
-notes index --force
+# Show search context without generating an answer (for debugging)
+chirp notes ask -q "budget planning" --dry-run
+
+# Hide source attribution
+chirp notes ask -q "team updates" --no-sources
 ```
+
+#### Search Features
+
+- **Hybrid Search**: Combines semantic search (using embeddings) with keyword search (BM25)
+- **Time Range Filtering**: Search within specific dates or relative time periods
+- **Natural Language**: Ask questions in plain English
+- **Source Attribution**: See which meeting notes contain your answers
+- **Caching**: Repeated questions use cached results for speed
+- **Smart Suggestions**: Get helpful suggestions when no results are found
 
 ### Managing Configuration
 
@@ -294,6 +355,56 @@ make clean            # Clean build artifacts
 - **Brainstorming Sessions**: Capture ideas and generate actionable summaries
 - **Client Calls**: Create professional meeting summaries automatically
 - **Meeting Research**: Quickly find past decisions, action items, or specific discussions
+
+## 🔧 Troubleshooting
+
+### Search and Chat Issues
+
+**"No relevant documents found"**:
+1. Make sure you have generated notes: `chirp notes`
+2. Build the search index: `chirp notes index --force`
+3. Verify Ollama models are installed: `ollama list`
+
+**"Failed to get embeddings" during indexing**:
+1. Ensure Ollama is running: `ollama serve`
+2. Install the embedding model: `ollama pull nomic-embed-text`
+3. Check Ollama is accessible: `curl http://localhost:11434/api/version`
+
+**Interactive chat not starting**:
+1. Verify the index exists: `chirp notes index`
+2. Check that you have notes in the `notes-out/` directory
+3. Ensure all dependencies are installed: `chirp test`
+
+### Audio Recording Issues
+
+**BlackHole not detected**:
+1. Download and install BlackHole from [existential.audio/blackhole](https://existential.audio/blackhole/)
+2. Set up a multi-output device in Audio MIDI Setup
+3. Verify detection: `chirp devices`
+
+**Recording fails to start**:
+1. Check audio permissions in System Preferences > Security & Privacy > Microphone
+2. Verify BlackHole installation: `chirp test`
+3. List available devices: `chirp devices`
+
+### AI/LLM Issues
+
+**Transcription fails**:
+1. Check that faster-whisper is properly installed
+2. Verify audio file format is supported
+3. Try with a smaller audio file first
+
+**Note generation fails**:
+1. Ensure Ollama is running: `ollama serve`
+2. Verify the model is installed: `ollama pull llama3.1:8b`
+3. Check Ollama logs for errors
+
+### Configuration Issues
+
+**Wrong directories or missing files**:
+1. Check current configuration: `chirp config --list`
+2. Verify directory structure: `chirp status`
+3. Reset to defaults by removing `config/config.yaml`
 
 ## 🚧 Future Enhancements
 
