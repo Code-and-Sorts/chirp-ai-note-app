@@ -88,8 +88,8 @@ jobs:
           **Repository:** [${repository}](${repositoryUrl})
 
           ${repository === 'testpypi' ?
-            '🧪 This is a test release. Install with:\n```bash\npip install --index-url https://test.pypi.org/simple/ chirp-ai-note-app\n```' :
-            '🚀 Production release is now available:\n```bash\npip install chirp-ai-note-app\n```'
+            '🧪 This is a test release. Install with:\n```bash\npip install --index-url https://test.pypi.org/simple/chirp-notes-ai\n```' :
+            '🚀 Production release is now available:\n```bash\npip install chirp-notes-ai\n```'
           }`;
 
           if (botComment) {
