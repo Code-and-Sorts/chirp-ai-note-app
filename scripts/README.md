@@ -89,12 +89,12 @@ Edit this file to customize directories, models, and settings.
 
 ## Features
 
-- <� **High-quality audio recording** with system audio capture
-- =� **Accurate transcription** using OpenAI's Whisper models
-- >� **AI-powered meeting notes** with structured summaries
-- = **Semantic search** across all your meeting notes
-- =� **Interactive chat** to ask questions about your meetings
-- � **Flexible configuration** with sensible defaults
+- 🎙️ **High-quality audio recording** with system audio capture
+- 📝 **Accurate transcription** using OpenAI's Whisper models
+- 🧠 **AI-powered meeting notes** with structured summaries
+- 🔍 **Semantic search** across all your meeting notes
+- 💬 **Interactive chat** to ask questions about your meetings
+- ⚙️ **Flexible configuration** with sensible defaults
 
 ## Requirements
 
