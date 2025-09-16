@@ -123,14 +123,12 @@ jobs:
         uv pip install --system -e .[dev]
         uv run ruff check --output-format=github .
 
-    - name: 🔄 Update version for PR (if enabled)
-      if: ${{ inputs.update-version-for-pr }}
+    - name: ⬆️ Update version in pyproject.toml for PR
+      if: inputs.update-version-for-pr
       env:
-        PR_NUMBER: ${{ github.event.number }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
         RUN_NUMBER: ${{ github.run_number }}
-      run: |
-        cd scripts
-        uv run python update_pr_version.py
+      run: cd scripts && uv run python update_pr_version.py
 
     - name: 🏗️ Build
       run: uv build
