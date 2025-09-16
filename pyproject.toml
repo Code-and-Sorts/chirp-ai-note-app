@@ -21,6 +21,7 @@ dependencies = [
     "chromadb>=0.4.0",
     "rank-bm25>=0.2.0",
     "python-dateutil>=2.8.0",
+    "platformdirs>=4.0.0",
 ]
 
 [project.scripts]

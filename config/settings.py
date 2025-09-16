@@ -2,7 +2,9 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from platformdirs import user_config_dir
 from pydantic import BaseModel, Field, field_validator
+from rich.console import Console
 
 
 class ConfigurationError(Exception):
@@ -65,13 +67,41 @@ class ChirpSettings(BaseModel):
     notes_chat: NotesChatConfig = Field(default_factory=NotesChatConfig)
 
     @classmethod
+    def get_config_path(cls) -> Path:
+        """Get the platform-specific config file path."""
+        config_dir = Path(user_config_dir("chirp"))
+        return config_dir / "config.yaml"
+
+    @classmethod
+    def create_default_config(cls) -> "ChirpSettings":
+        """Create a default config with user-friendly defaults."""
+        from platformdirs import user_data_dir
+
+        data_dir = Path(user_data_dir("chirp"))
+
+        settings = cls()
+        settings.directories.raw_audio = data_dir / "to-transcribe"
+        settings.directories.transcriptions = data_dir / "transcriptions"
+        settings.directories.notes = data_dir / "notes"
+        settings.directories.templates = data_dir / "templates"
+        settings.notes_chat.index_dir = data_dir / "notes_index"
+
+        return settings
+
+    @classmethod
     def load_from_file(cls, config_path: Optional[Path] = None) -> "ChirpSettings":
         if config_path is None:
-            config_path = Path("config/config.yaml")
+            config_path = cls.get_config_path()
 
         if not config_path.exists():
-            settings = cls()
+            console = Console()
+            console.print(f"[blue]Creating default config at {config_path}[/blue]")
+
+            settings = cls.create_default_config()
             settings.save_to_file(config_path)
+
+            console.print("[green]✅ Default config created![/green]")
+            console.print(f"[dim]Edit {config_path} to customize settings[/dim]")
             return settings
 
         with open(config_path) as f:
