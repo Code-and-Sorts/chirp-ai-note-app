@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "chirp"
 version = "0.1.0"
 description = "Meeting recorder CLI that transcribes and generates AI notes"
-authors = [{name = "User", email = "user@example.com"}]
+authors = [{name = "Colby Timm"}]
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [

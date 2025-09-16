@@ -46,6 +46,20 @@ def get_transcription_files(directory: Path) -> list[Path]:
     )
 
 
+def get_notes_files(directory: Path) -> list[Path]:
+    if not directory.exists():
+        return []
+
+    return sorted(
+        [
+            f
+            for f in directory.iterdir()
+            if f.is_file() and f.suffix.lower() in {".md", ".txt"}
+        ],
+        key=lambda x: x.stat().st_mtime,
+    )
+
+
 def move_file(src: Path, dst: Path) -> bool:
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)

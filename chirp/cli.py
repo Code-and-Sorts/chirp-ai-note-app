@@ -13,7 +13,7 @@ from notes.note_generator import NoteGenerator
 from recorder.audio_recorder import AudioRecorder
 from recorder.device_manager import DeviceManager
 from transcriber.batch_processor import BatchProcessor
-from utils.file_utils import get_audio_files, get_transcription_files
+from utils.file_utils import get_audio_files, get_notes_files, get_transcription_files
 
 app = typer.Typer(
     name="chirp",
@@ -22,8 +22,68 @@ app = typer.Typer(
 )
 console = Console()
 
+RECORDING_PANEL = "🎙️  Recording"
+CHAT_PANEL = "💬 Ask"
+PROCESSING_PANEL = "⚡ Processing"
+SETUP_PANEL = "⚙️  Setup & Diagnostics"
+INFO_PANEL = "ℹ️  Information"
 
-@app.command()
+
+def _test_ollama_connection(settings):
+    """Test if Ollama is running and accessible"""
+    try:
+        import requests
+
+        response = requests.get(f"{settings.models.ollama_url}/api/version", timeout=5)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+def _test_llm_model_available(settings):
+    """Test if the configured LLM model is available in Ollama"""
+    try:
+        import requests
+
+        response = requests.get(f"{settings.models.ollama_url}/api/tags", timeout=5)
+        if response.status_code == 200:
+            models = response.json().get("models", [])
+            available_models = [model["name"] for model in models]
+            return settings.models.llm in available_models
+        return False
+    except Exception:
+        return False
+
+
+def _test_notes_index(settings):
+    """Test if notes index exists and is accessible"""
+    try:
+        index_dir = settings.notes_chat.index_dir
+        manifest_file = index_dir / "manifest.json"
+        chroma_dir = index_dir / "chroma"
+        return manifest_file.exists() and chroma_dir.exists()
+    except Exception:
+        return False
+
+
+def _test_chroma_db(settings):
+    """Test if ChromaDB is working for notes search"""
+    try:
+        import chromadb
+        from chromadb.config import Settings as ChromaSettings
+
+        index_dir = settings.notes_chat.index_dir
+        client = chromadb.PersistentClient(
+            path=str(index_dir / "chroma"),
+            settings=ChromaSettings(allow_reset=True),
+        )
+        client.get_or_create_collection(name="notes")
+        return True
+    except Exception:
+        return False
+
+
+@app.command(rich_help_panel=RECORDING_PANEL)
 def record(
     duration: Optional[int] = typer.Option(
         None, "--duration", "-d", help="Recording duration in minutes"
@@ -32,7 +92,7 @@ def record(
         None, "--title", "-t", help="Meeting title for filename"
     ),
 ):
-    """🎙️ Start recording a meeting"""
+    """Start recording a meeting"""
     settings = get_settings()
     device_manager = DeviceManager()
 
@@ -71,29 +131,27 @@ def record(
         raise typer.Exit(1)
 
 
-@app.command()
-def process(
-    input_dir: Optional[Path] = typer.Option(
-        None, "--input", "-i", help="Input directory for audio files"
+@app.command(rich_help_panel=CHAT_PANEL)
+def ask(
+    question: Optional[str] = typer.Option(
+        None,
+        "--question",
+        "-q",
+        help="Question to ask about your meetings (omit for interactive chat)",
     ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Process all files, including already processed ones",
+    when: Optional[str] = typer.Option(None, "--when", help="Time range filter"),
+    sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show prompt without calling LLM"
     ),
 ):
-    """⚡ Process audio files (transcribe + generate notes)"""
-    get_settings()
+    """Ask questions about your meeting notes"""
+    from notes_chat.cli import ask
 
-    try:
-        transcribe(input_dir=input_dir, force=force)
-        notes(force=force)
-    except Exception as e:
-        console.print(f"[red]Error in process command: {e}[/red]")
+    ask(question, when, sources, dry_run)
 
 
-@app.command()
+@app.command(rich_help_panel=PROCESSING_PANEL)
 def transcribe(
     input_dir: Optional[Path] = typer.Option(
         None, "--input", "-i", help="Input directory for audio files"
@@ -102,7 +160,7 @@ def transcribe(
         False, "--force", "-f", help="Re-transcribe already processed files"
     ),
 ):
-    """📝 Transcribe audio files to text"""
+    """Transcribe audio files to text"""
     settings = get_settings()
 
     if input_dir is None:
@@ -144,13 +202,35 @@ def transcribe(
         )
 
 
-@app.command()
-def notes(
+@app.command(name="transcribe-and-notes", rich_help_panel=PROCESSING_PANEL)
+def transcribe_and_notes(
+    input_dir: Optional[Path] = typer.Option(
+        None, "--input", "-i", help="Input directory for audio files"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Process all files, including already processed ones",
+    ),
+):
+    """Process audio files (transcribe + generate notes)"""
+    get_settings()
+
+    try:
+        transcribe(input_dir=input_dir, force=force)
+        generate_notes(force=force)
+    except Exception as e:
+        console.print(f"[red]Error in process command: {e}[/red]")
+
+
+@app.command(name="generate-notes", rich_help_panel=PROCESSING_PANEL)
+def generate_notes(
     force: bool = typer.Option(
         False, "--force", "-f", help="Regenerate notes even if they exist"
     ),
 ):
-    """📋 Generate meeting notes from transcriptions"""
+    """Generate meeting notes from transcriptions"""
     settings = get_settings()
 
     transcription_files = get_transcription_files(settings.directories.transcriptions)
@@ -173,30 +253,44 @@ def notes(
         console.print(f"[red]❌ Failed to generate notes: {result['error']}[/red]")
 
 
-@app.command()
-def status():
-    """📊 Show Chirp status and statistics"""
+@app.command(name="notes-index", rich_help_panel=PROCESSING_PANEL)
+def notes_index(
+    force: bool = typer.Option(False, "--force", help="Force full rebuild of index"),
+):
+    """Build or rebuild the notes search index"""
+    from notes_chat.cli import index
+
+    index(force)
+
+
+@app.command(rich_help_panel=INFO_PANEL)
+def stats():
+    """Show Chirp statistics"""
     settings = get_settings()
 
-    table = Table(title="🐦 Chirp Status", show_header=True)
+    table = Table(title="🐦 Chirp Statistics", show_header=True)
     table.add_column("Category", style="cyan")
     table.add_column("Value", style="green")
 
     audio_files = get_audio_files(settings.directories.raw_audio)
     transcription_files = get_transcription_files(settings.directories.transcriptions)
+    notes_files = get_notes_files(settings.directories.notes)
 
     table.add_row("Raw Audio Files", str(len(audio_files)))
     table.add_row("Transcriptions", str(len(transcription_files)))
+    table.add_row("Notes", str(len(notes_files)))
     table.add_row("Audio Directory", str(settings.directories.raw_audio))
     table.add_row("Transcription Directory", str(settings.directories.transcriptions))
     table.add_row("Notes Directory", str(settings.directories.notes))
     table.add_row("Whisper Model", settings.models.whisper)
     table.add_row("LLM Model", settings.models.llm)
+    table.add_row("Embedding Model", settings.notes_chat.emb_model)
+    table.add_row("Ollama URL", settings.models.ollama_url)
 
     console.print(table)
 
 
-@app.command()
+@app.command(rich_help_panel=SETUP_PANEL)
 def config(
     list_config: bool = typer.Option(
         False, "--list", "-l", help="List current configuration"
@@ -211,7 +305,7 @@ def config(
         None, "--notes-dir", help="Set notes directory"
     ),
 ):
-    """⚙️ Manage Chirp configuration"""
+    """Manage Chirp configuration"""
     settings = get_settings()
 
     if list_config:
@@ -259,13 +353,13 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         console.print("[green]✅ Configuration updated[/green]")
 
 
-@app.command()
+@app.command(rich_help_panel=INFO_PANEL)
 def devices():
-    """🎵 List available audio devices"""
+    """List available audio devices"""
     device_manager = DeviceManager()
     devices_info = device_manager.list_devices()
 
-    table = Table(title="🎵 Available Audio Devices")
+    table = Table(title="Available Audio Devices")
     table.add_column("ID", style="cyan")
     table.add_column("Name", style="green")
     table.add_column("Channels", style="yellow")
@@ -288,89 +382,80 @@ def devices():
         console.print("Install from: https://existential.audio/blackhole/")
 
 
-@app.command()
+@app.command(rich_help_panel=SETUP_PANEL)
 def test():
-    """🧪 Test Chirp dependencies and configuration"""
-    console.print("[bold]🧪 Testing Chirp Dependencies...[/bold]")
+    """Test Chirp dependencies and configuration"""
+    settings = get_settings()
 
-    tests = []
-
+    external_tests = []
     device_manager = DeviceManager()
-    tests.append(("PyAudio", device_manager.test_pyaudio()))
-    tests.append(("BlackHole", device_manager.check_blackhole_available()))
+    external_tests.append(("PyAudio", device_manager.test_pyaudio()))
+    external_tests.append(("BlackHole", device_manager.check_blackhole_available()))
 
     try:
         from faster_whisper import WhisperModel  # noqa: F401
 
-        tests.append(("Faster Whisper", True))
+        external_tests.append(("Faster Whisper", True))
     except ImportError:
-        tests.append(("Faster Whisper", False))
+        external_tests.append(("Faster Whisper", False))
 
-    try:
-        import requests
+    ollama_connected = _test_ollama_connection(settings)
+    external_tests.append(("Ollama", ollama_connected))
 
-        response = requests.get("http://localhost:11434/api/version", timeout=5)
-        tests.append(("Ollama", response.status_code == 200))
-    except:
-        tests.append(("Ollama", False))
+    chroma_working = _test_chroma_db(settings)
+    external_tests.append(("ChromaDB", chroma_working))
 
-    settings = get_settings()
+    config_tests = []
     settings.ensure_directories_exist()
-    tests.append(("Directories", True))
+    config_tests.append(("Directories", True))
 
-    table = Table(title="🧪 Dependency Test Results")
-    table.add_column("Component", style="cyan")
-    table.add_column("Status", style="bold")
+    if ollama_connected:
+        llm_available = _test_llm_model_available(settings)
+        config_tests.append(("LLM Model Available", llm_available))
+    else:
+        config_tests.append(("LLM Model Available", False))
 
-    all_passed = True
-    for name, passed in tests:
+    notes_index_built = _test_notes_index(settings)
+    config_tests.append(("Notes Index", notes_index_built))
+
+    external_table = Table(title="🔧 External Dependencies")
+    external_table.add_column("Component", style="cyan")
+    external_table.add_column("Status", style="bold")
+
+    external_passed = True
+    for name, passed in external_tests:
         status = "[green]✅ PASS[/green]" if passed else "[red]❌ FAIL[/red]"
-        table.add_row(name, status)
+        external_table.add_row(name, status)
         if not passed:
-            all_passed = False
+            external_passed = False
 
-    console.print(table)
+    console.print(external_table)
 
-    if all_passed:
+    config_table = Table(title="⚙️ Configuration & Setup")
+    config_table.add_column("Component", style="cyan")
+    config_table.add_column("Status", style="bold")
+
+    config_passed = True
+    for name, passed in config_tests:
+        status = "[green]✅ PASS[/green]" if passed else "[red]❌ FAIL[/red]"
+        config_table.add_row(name, status)
+        if not passed:
+            config_passed = False
+
+    console.print(config_table)
+
+    if external_passed and config_passed:
         console.print("\n[green]🎉 All tests passed! Chirp is ready to use.[/green]")
     else:
-        console.print(
-            "\n[red]⚠️  Some tests failed. Please check the installation.[/red]"
-        )
-
-
-notes_app = typer.Typer(help="Notes search and query commands")
-app.add_typer(notes_app, name="notes")
-
-
-@notes_app.command("index")
-def notes_index(
-    force: bool = typer.Option(False, "--force", help="Force full rebuild of index"),
-):
-    """Build or rebuild the notes search index."""
-    from notes_chat.cli import index
-
-    index(force)
-
-
-@notes_app.command("ask")
-def notes_ask(
-    question: Optional[str] = typer.Option(
-        None,
-        "--question",
-        "-q",
-        help="Question to ask about your meetings (omit for interactive chat)",
-    ),
-    when: Optional[str] = typer.Option(None, "--when", help="Time range filter"),
-    sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show prompt without calling LLM"
-    ),
-):
-    """Ask questions about your meeting notes."""
-    from notes_chat.cli import ask
-
-    ask(question, when, sources, dry_run)
+        if not external_passed:
+            console.print(
+                "\n[red]⚠️  External dependencies missing. Install required software.[/red]"
+            )
+        if not config_passed:
+            console.print(
+                "\n[yellow]⚠️  Configuration issues. Run setup commands to fix.[/yellow]"
+            )
+        console.print("[dim]Run 'chirp --help' for setup commands[/dim]")
 
 
 if __name__ == "__main__":
