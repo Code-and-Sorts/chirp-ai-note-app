@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chirp-scripts"
+version = "0.1.0"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[project.scripts]
+update-pr-version = "update_pr_version:main"

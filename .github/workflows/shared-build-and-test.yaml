@@ -125,21 +125,12 @@ jobs:
 
     - name: 🔄 Update version for PR (if enabled)
       if: ${{ inputs.update-version-for-pr }}
+      env:
+        PR_NUMBER: ${{ github.event.number }}
+        RUN_NUMBER: ${{ github.run_number }}
       run: |
-        PR_NUMBER=${{ github.event.number }}
-        COMMIT_SHA=${{ github.sha }}
-        SHORT_SHA=${COMMIT_SHA:0:7}
-        uv run python -c "
-        import toml
-        with open('pyproject.toml', 'r') as f:
-            data = toml.load(f)
-        current_version = data['project']['version']
-        new_version = f'{current_version}.dev{PR_NUMBER}+{SHORT_SHA}'
-        data['project']['version'] = new_version
-        with open('pyproject.toml', 'w') as f:
-            toml.dump(data, f)
-        print(f'Updated version to: {new_version}')
-        "
+        cd scripts
+        uv run python update_pr_version.py
 
     - name: 🏗️ Build
       run: uv build
