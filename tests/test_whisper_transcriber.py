@@ -71,7 +71,6 @@ class TestWhisperTranscriber:
             assert device == "cpu"
 
     def test_get_optimal_device_with_cuda(self, mock_settings):
-        # Create transcriber with minimal mocking for initialization
         with patch("transcriber.whisper_transcriber.WhisperModel"):
             with patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4):
                 with patch.object(
@@ -79,10 +78,8 @@ class TestWhisperTranscriber:
                 ):
                     transcriber = WhisperTranscriber(mock_settings)
 
-                    # Now test _get_optimal_device directly with proper mocks
                     with patch("platform.system", return_value="Linux"):
                         with patch("platform.processor", return_value="Intel"):
-                            # Mock torch import and cuda availability
                             mock_torch = Mock()
                             mock_torch.cuda.is_available.return_value = True
 
@@ -98,10 +95,8 @@ class TestWhisperTranscriber:
                 ):
                     transcriber = WhisperTranscriber(mock_settings)
 
-                    # Test _get_optimal_device when torch is not available
                     with patch("platform.system", return_value="Linux"):
                         with patch("platform.processor", return_value="Intel"):
-                            # Remove torch from sys.modules to simulate ImportError
                             with patch.dict("sys.modules", {}, clear=False):
                                 if "torch" in sys.modules:
                                     del sys.modules["torch"]
@@ -147,7 +142,7 @@ class TestWhisperTranscriber:
             transcriber = WhisperTranscriber(mock_settings)
             threads = transcriber._get_cpu_threads()
 
-            assert threads == 4  # Half of 8
+            assert threads == 4
 
     @patch("os.cpu_count")
     def test_get_cpu_threads_none_fallback(self, mock_cpu_count, mock_settings):
@@ -157,7 +152,7 @@ class TestWhisperTranscriber:
             transcriber = WhisperTranscriber(mock_settings)
             threads = transcriber._get_cpu_threads()
 
-            assert threads == 1  # Fallback when cpu_count returns None
+            assert threads == 1
 
     @patch("os.cpu_count")
     @patch("platform.processor")

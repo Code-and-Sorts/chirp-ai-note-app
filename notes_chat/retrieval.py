@@ -18,7 +18,6 @@ def retrieve_context(
     try:
         index_manager = IndexManager(config)
 
-        # Check if index exists before trying to build
         if not index_manager.manifest_file.exists():
             suggestion = _generate_suggestion(config, None)
             return {
@@ -27,7 +26,6 @@ def retrieve_context(
                 "suggestion": suggestion,
             }
 
-        # Auto-index if needed (incremental)
         index_result = index_manager.build_index(force=False)
         if not index_result["success"]:
             return {
@@ -35,14 +33,12 @@ def retrieve_context(
                 "error": f"Failed to update index: {index_result.get('error')}",
             }
 
-        # Parse time range filter
         time_range = None
         if when_filter:
             time_range = parse_time_range(question, when_filter)
         else:
             time_range = parse_time_range(question)
 
-        # Get chunks from both Chroma and BM25
         chroma_results = _search_chroma(
             index_manager, question, config.notes_chat.k, time_range
         )
@@ -58,10 +54,8 @@ def retrieve_context(
                 "suggestion": suggestion,
             }
 
-        # Merge and dedupe results
         merged_chunks = _merge_and_dedupe(chroma_results, bm25_results)
 
-        # Apply context character budget with round-robin
         context, sources, retrieved_ids = _build_context(
             merged_chunks, config.notes_chat.ctx_char_budget
         )
@@ -99,7 +93,6 @@ def _search_chroma(
                 "$and": [{"date": {"$gte": start_iso}}, {"date": {"$lt": end_iso}}]
             }
 
-        # Get query embedding using the same model as indexing
         query_embedding = _get_query_embedding(index_manager.config, query)
         if not query_embedding:
             return []
@@ -166,28 +159,22 @@ def _merge_and_dedupe(
     seen_signatures: set[str] = set()
     merged = []
 
-    # Combine all results
     all_results = []
 
-    # Add Chroma results with source info
     for chunk_id, score, data in chroma_results:
         data["source"] = "chroma"
         all_results.append((chunk_id, score, data))
 
-    # Add BM25 results
     all_results.extend(bm25_results)
 
-    # Sort by score (descending)
     all_results.sort(key=lambda x: x[1], reverse=True)
 
     for chunk_id, score, data in all_results:
-        # Create signature for deduplication
         if "metadata" in data:
             path = data["metadata"].get("path", "")
             first_96 = data["metadata"].get("first_96_chars", "")
             signature = f"{path}::{first_96}"
         else:
-            # For BM25 results without metadata, use chunk_id for deduplication
             signature = chunk_id
 
         if signature not in seen_signatures:
@@ -208,7 +195,6 @@ def _build_context(
     sources = []
     retrieved_ids = []
 
-    # Round-robin allocation
     chunks_to_include = []
     remaining_budget = char_budget
 
@@ -217,7 +203,6 @@ def _build_context(
         if not content:
             continue
 
-        # Create header
         header = _create_chunk_header(data)
         full_content = f"{header}\n{content}\n"
 
@@ -225,7 +210,6 @@ def _build_context(
             chunks_to_include.append((chunk_id, full_content, data))
             remaining_budget -= len(full_content)
         else:
-            # Truncate if we can fit at least the header + some content
             min_size = len(header) + 100
             if min_size <= remaining_budget:
                 truncated_content = (
@@ -235,13 +219,11 @@ def _build_context(
                 chunks_to_include.append((chunk_id, full_content, data))
             break
 
-    # Build final context and collect unique sources
     seen_sources = set()
     for chunk_id, content, data in chunks_to_include:
         context_parts.append(content)
         retrieved_ids.append(chunk_id)
 
-        # Add source info (deduplicated by file)
         if "metadata" in data:
             path = data["metadata"].get("path", "Unknown")
             title = data["metadata"].get("title", "Unknown")

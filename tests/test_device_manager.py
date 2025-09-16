@@ -125,7 +125,7 @@ class TestDeviceManager:
                         "index": 0,
                         "name": "BlackHole 2ch",
                         "max_input_channels": 0,
-                    },  # Output only
+                    },
                     {"index": 1, "name": "BlackHole 16ch", "max_input_channels": 16},
                 ]
 

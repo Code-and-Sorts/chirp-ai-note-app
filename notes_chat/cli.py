@@ -63,7 +63,6 @@ def ask(
     """Ask questions about your meeting notes. Run without a question for interactive chat."""
     config = get_notes_config()
 
-    # If no question provided, start interactive chat
     if question is None:
         from notes_chat.interactive import InteractiveChatSession
 

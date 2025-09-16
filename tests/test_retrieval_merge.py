@@ -2,12 +2,6 @@ from notes_chat.retrieval import _build_context, _merge_and_dedupe
 
 
 class TestRetrievalMerge:
-    def test_date_filtering(self):
-        """Test that date filtering works in Chroma queries."""
-        # This would be tested with actual Chroma integration
-        # For now, just test the merge logic
-        pass
-
     def test_semantic_bm25_merge(self):
         """Test merging of semantic and BM25 results."""
         chroma_results = [
@@ -42,7 +36,6 @@ class TestRetrievalMerge:
 
         merged = _merge_and_dedupe(chroma_results, bm25_results)
 
-        # Should have 4 unique chunks (no duplicates)
         chunk_ids = [chunk_id for chunk_id, _, _ in merged]
         assert len(merged) == 4
         assert "chunk1" in chunk_ids
@@ -50,7 +43,6 @@ class TestRetrievalMerge:
         assert "chunk3" in chunk_ids
         assert "chunk4" in chunk_ids
 
-        # Should be sorted by score (highest first)
         scores = [score for _, score, _ in merged]
         assert scores == sorted(scores, reverse=True)
 
@@ -85,9 +77,8 @@ class TestRetrievalMerge:
 
         merged = _merge_and_dedupe(chroma_results, bm25_results)
 
-        # Should have only 1 chunk after deduplication
         assert len(merged) == 1
-        assert merged[0][0] == "chunk1_001"  # Higher score wins
+        assert merged[0][0] == "chunk1_001"
 
     def test_round_robin_budgeting(self):
         """Test round-robin character budget allocation."""
@@ -118,7 +109,6 @@ class TestRetrievalMerge:
             ),
         ]
 
-        # Small budget should fit first two chunks but not the third
         context, sources, retrieved_ids = _build_context(chunks, 400)
 
         assert len(retrieved_ids) <= 3
@@ -142,7 +132,7 @@ class TestRetrievalMerge:
         context, sources, retrieved_ids = _build_context(chunks, 200)
 
         assert len(context) <= 200
-        assert "..." in context  # Should be truncated
+        assert "..." in context
         assert len(retrieved_ids) == 1
 
     def test_empty_chunks_handling(self):
@@ -187,7 +177,6 @@ class TestRetrievalMerge:
 
         merged = _merge_and_dedupe(chroma_results, bm25_results)
 
-        # Check that scores are in descending order
         scores = [score for _, score, _ in merged]
         assert scores == sorted(scores, reverse=True)
 

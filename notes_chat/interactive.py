@@ -30,7 +30,6 @@ class SmartInputHandler:
     def _signal_handler(self, signum, frame):
         """Handle SIGINT (Ctrl+C) signal"""
         self.ctrl_c_received = True
-        # Don't call the original handler - we'll handle this ourselves
 
     def get_input(self, prompt_text: str) -> tuple[str, bool, bool]:
         """
@@ -42,7 +41,6 @@ class SmartInputHandler:
             - was_ctrl_c: True if Ctrl+C was pressed
             - was_typing: True if there was text when Ctrl+C was pressed
         """
-        # Setup signal handler
         self.original_handler = signal.signal(signal.SIGINT, self._signal_handler)
         self.input_buffer = ""
         self.input_started = False
@@ -51,7 +49,6 @@ class SmartInputHandler:
         try:
             console.print(prompt_text, end="")
 
-            # Monitor for input character by character
             import sys
             import termios
             import tty
@@ -62,10 +59,8 @@ class SmartInputHandler:
 
                 while True:
                     if self.ctrl_c_received:
-                        # Ctrl+C was pressed
                         was_typing = len(self.input_buffer) > 0
                         if was_typing:
-                            # Clear the current line if we were typing
                             print("\r\033[K", end="", flush=True)
                         return "", True, was_typing
 
@@ -74,7 +69,6 @@ class SmartInputHandler:
                     if ord(char) == 3:  # Ctrl+C
                         was_typing = len(self.input_buffer) > 0
                         if was_typing:
-                            # Clear the current line if we were typing
                             print("\r\033[K", end="", flush=True)
                         return "", True, was_typing
                     elif ord(char) == 13 or ord(char) == 10:  # Enter
@@ -83,7 +77,6 @@ class SmartInputHandler:
                     elif ord(char) in (8, 127):  # Backspace (8) or DEL (127)
                         if self.input_buffer:
                             self.input_buffer = self.input_buffer[:-1]
-                            # Move cursor back, print space, move cursor back again
                             print("\b \b", end="", flush=True)
                     elif ord(char) >= 32:  # Printable character
                         self.input_buffer += char
@@ -94,19 +87,16 @@ class SmartInputHandler:
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
         except Exception:
-            # Fallback to simple input if raw mode fails
             try:
                 result = input(" ")
                 return result, False, False
             except KeyboardInterrupt:
-                return "", True, False  # Can't distinguish, assume empty prompt
+                return "", True, False
         finally:
-            # Restore original signal handler
             if self.original_handler:
                 signal.signal(signal.SIGINT, self.original_handler)
 
 
-# Global input handler instance
 input_handler = SmartInputHandler()
 
 
@@ -117,7 +107,6 @@ class InteractiveChatSession:
         self.chat_history: list[dict[str, Any]] = []
 
     def start(self):
-        # Show initial welcome in a simple bordered box
         console.print(
             Panel(
                 "[bold blue]Notes Chat[/bold blue]\n"
@@ -135,22 +124,17 @@ class InteractiveChatSession:
                 )
 
                 if question.strip():
-                    # User entered a real question
                     self.exit_attempts = 0
                     self._add_to_history("question", question)
                     self.handle_question(question)
 
                 elif question == "" and not was_ctrl_c:
-                    # Empty input (just pressed Enter)
                     console.print("[dim]Please enter a question[/dim]")
 
                 elif was_ctrl_c and was_typing:
-                    # Ctrl+C while typing - input already cleared by handler
-                    # Don't increment exit_attempts - this is the key fix!
-                    pass  # Just continue the loop
+                    pass
 
                 elif was_ctrl_c and not was_typing:
-                    # Ctrl+C on empty prompt - increment counter
                     self.exit_attempts += 1
                     if self.exit_attempts >= 2:
                         console.print("\n[dim]Goodbye![/dim]")
@@ -159,7 +143,6 @@ class InteractiveChatSession:
                         console.print("\n[dim]Press Ctrl+C again to exit[/dim]")
 
             except KeyboardInterrupt:
-                # Fallback for any remaining KeyboardInterrupts (empty prompt)
                 self.exit_attempts += 1
                 if self.exit_attempts >= 2:
                     console.print("\n[dim]Goodbye![/dim]")
@@ -180,7 +163,6 @@ class InteractiveChatSession:
         if not self.chat_history:
             return
 
-        # Build chat content from recent history (last 10 entries to avoid too much scrolling)
         recent_history = self.chat_history[-10:]
         chat_lines = []
 
@@ -200,12 +182,11 @@ class InteractiveChatSession:
         )
 
     def handle_question(self, question: str):
-        # Create a spinner that will disappear when done
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console,
-            transient=True,  # This makes it disappear when done
+            transient=True,
         ) as progress:
             task = progress.add_task("Searching...", total=None)
 
@@ -251,7 +232,6 @@ class InteractiveChatSession:
                     answer = answer_result["answer"]
                     cache_answer(question, retrieved_ids, answer)
 
-                # Add answer to history and display
                 self._add_to_history("answer", answer)
                 self._display_chat_in_box()
 

@@ -41,7 +41,6 @@ class TestFileUtils:
         mock_directory = Mock()
         mock_directory.exists.return_value = True
 
-        # Mock files with different extensions
         mock_files = [
             Mock(is_file=lambda: True, suffix=".wav", stat=lambda: Mock(st_mtime=1)),
             Mock(is_file=lambda: True, suffix=".mp3", stat=lambda: Mock(st_mtime=2)),
@@ -51,7 +50,7 @@ class TestFileUtils:
 
         result = get_audio_files(mock_directory)
 
-        assert len(result) == 2  # Only .wav and .mp3 files
+        assert len(result) == 2
 
     def test_get_audio_files_empty_directory(self):
         mock_directory = Mock()

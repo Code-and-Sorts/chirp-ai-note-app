@@ -29,13 +29,8 @@ class WhisperTranscriber:
 
     def _get_optimal_device(self) -> str:
         system = platform.system()
-        processor = platform.processor()
 
-        if system == "Darwin" and (
-            "M1" in processor or "M2" in processor or "M3" in processor
-        ):
-            return "cpu"  # faster-whisper doesn't support Metal yet, but CPU is optimized for Apple Silicon
-        elif system == "Darwin":
+        if system == "Darwin":
             return "cpu"
         else:
             try:
@@ -49,14 +44,7 @@ class WhisperTranscriber:
         device = self._get_optimal_device()
 
         if device == "cpu":
-            if platform.system() == "Darwin" and (
-                "M1" in platform.processor()
-                or "M2" in platform.processor()
-                or "M3" in platform.processor()
-            ):
-                return "int8"  # Optimized for Apple Silicon
-            else:
-                return "int8"
+            return "int8"
         else:
             return "float16"
 
@@ -79,7 +67,7 @@ class WhisperTranscriber:
             segments, info = self.model.transcribe(
                 str(audio_file_path),
                 beam_size=5,
-                language=None,  # Auto-detect
+                language=None,
                 condition_on_previous_text=False,
                 temperature=0.0,
                 compression_ratio_threshold=2.4,

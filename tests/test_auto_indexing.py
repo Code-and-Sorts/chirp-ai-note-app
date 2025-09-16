@@ -53,7 +53,6 @@ class TestAutoIndexing:
         with patch("notes_chat.index.IndexManager") as mock_manager_class:
             mock_manager_class.side_effect = Exception("Ollama not available")
 
-            # Should not raise exception
             generator._auto_index_note(notes_path)
 
     def test_auto_index_add_failure(self, tmp_path):
@@ -72,6 +71,5 @@ class TestAutoIndexing:
             generator._auto_index_note(notes_path)
 
             mock_manager._add_to_index.assert_called_once_with(notes_path)
-            # Should not call manifest or BM25 operations if add failed
             mock_manager._save_manifest.assert_not_called()
             mock_manager._rebuild_bm25.assert_not_called()

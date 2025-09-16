@@ -86,12 +86,8 @@ def process(
     """⚡ Process audio files (transcribe + generate notes)"""
     get_settings()
 
-    # Call commands directly since app.commands doesn't exist in Typer
-    # This is a simplified process command that manually calls both operations
     try:
-        # Call transcribe functionality
         transcribe(input_dir=input_dir, force=force)
-        # Call notes functionality
         notes(force=force)
     except Exception as e:
         console.print(f"[red]Error in process command: {e}[/red]")

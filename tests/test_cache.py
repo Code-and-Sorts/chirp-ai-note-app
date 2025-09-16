@@ -9,9 +9,8 @@ class TestCache:
         """Test that cache keys are stable and order-independent."""
         question = "What was decided in the meeting?"
         ids1 = ["chunk1", "chunk2", "chunk3"]
-        ids2 = ["chunk3", "chunk1", "chunk2"]  # Different order
+        ids2 = ["chunk3", "chunk1", "chunk2"]
 
-        # Mock the config to avoid file system operations
         with patch("notes_chat.cache.get_notes_config") as mock_config:
             mock_config.return_value.notes_chat.index_dir.return_value = "/tmp"
 
@@ -20,8 +19,8 @@ class TestCache:
             key1 = _generate_cache_key(question, ids1)
             key2 = _generate_cache_key(question, ids2)
 
-            assert key1 == key2  # Should be the same despite different order
-            assert len(key1) == 16  # Should be truncated hash
+            assert key1 == key2
+            assert len(key1) == 16
 
     def test_cache_hit_miss(self, tmp_path):
         """Test cache hit and miss scenarios."""
@@ -32,15 +31,12 @@ class TestCache:
             retrieved_ids = ["chunk1", "chunk2"]
             answer = "We discussed the project timeline."
 
-            # Test cache miss
             cached = get_cached_answer(question, retrieved_ids)
             assert cached is None
 
-            # Cache the answer
             success = cache_answer(question, retrieved_ids, answer)
             assert success
 
-            # Test cache hit
             cached = get_cached_answer(question, retrieved_ids)
             assert cached == answer
 
@@ -55,11 +51,9 @@ class TestCache:
             answer1 = "We decided to implement feature X."
             answer2 = "Alice and Bob attended."
 
-            # Cache both answers
             cache_answer(question1, retrieved_ids, answer1)
             cache_answer(question2, retrieved_ids, answer2)
 
-            # Verify they're cached separately
             cached1 = get_cached_answer(question1, retrieved_ids)
             cached2 = get_cached_answer(question2, retrieved_ids)
 
@@ -78,11 +72,9 @@ class TestCache:
             answer1 = "Answer based on chunks 1,2"
             answer2 = "Answer based on chunks 1,3"
 
-            # Cache both
             cache_answer(question, ids1, answer1)
             cache_answer(question, ids2, answer2)
 
-            # Verify separate caching
             cached1 = get_cached_answer(question, ids1)
             cached2 = get_cached_answer(question, ids2)
 
@@ -101,11 +93,9 @@ class TestCache:
             success = cache_answer(question, retrieved_ids, answer)
             assert success
 
-            # Find the cache file
             cache_files = list((tmp_path / "cache").glob("*.json"))
             assert len(cache_files) == 1
 
-            # Verify file format
             with open(cache_files[0]) as f:
                 data = json.load(f)
 
@@ -119,38 +109,31 @@ class TestCache:
         with patch("notes_chat.cache.get_notes_config") as mock_config:
             mock_config.return_value.notes_chat.index_dir = tmp_path
 
-            # Add some cache entries
             cache_answer("question1", ["chunk1"], "answer1")
             cache_answer("question2", ["chunk2"], "answer2")
 
             cache_dir = tmp_path / "cache"
             assert len(list(cache_dir.glob("*.json"))) == 2
 
-            # Clear cache
             success = clear_cache()
             assert success
 
-            # Verify cache is empty
             assert len(list(cache_dir.glob("*.json"))) == 0
 
-            # Verify cached answers are gone
             assert get_cached_answer("question1", ["chunk1"]) is None
             assert get_cached_answer("question2", ["chunk2"]) is None
 
     def test_error_handling(self, tmp_path):
         """Test error handling in cache operations."""
         with patch("notes_chat.cache.get_notes_config") as mock_config:
-            # Mock config that will cause errors
             mock_config.side_effect = Exception("Config error")
 
-            # All operations should handle errors gracefully
             assert get_cached_answer("question", ["chunk1"]) is None
             assert cache_answer("question", ["chunk1"], "answer") is False
             assert clear_cache() is False
 
     def test_bypass_on_dry_run(self, tmp_path):
         """Test that cache is not used in dry-run scenarios."""
-        # This would be tested at the CLI level, but we can test the basic functionality
         with patch("notes_chat.cache.get_notes_config") as mock_config:
             mock_config.return_value.notes_chat.index_dir = tmp_path
 
@@ -158,10 +141,7 @@ class TestCache:
             retrieved_ids = ["chunk1"]
             answer = "Test answer"
 
-            # Cache an answer
             cache_answer(question, retrieved_ids, answer)
 
-            # In dry-run mode, the CLI should not call get_cached_answer
-            # But if it does, it should still return the cached value
             cached = get_cached_answer(question, retrieved_ids)
             assert cached == answer

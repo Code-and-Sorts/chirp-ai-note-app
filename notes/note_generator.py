@@ -100,7 +100,6 @@ class NoteGenerator:
                     )
                     skipped_files.append((transcription_file.name, reason))
 
-            # Log skipped files if any
             if skipped_files:
                 self.console.print(
                     f"[yellow]⚠️  Skipped {len(skipped_files)} transcription(s):[/yellow]"
@@ -124,7 +123,6 @@ class NoteGenerator:
             with open(notes_path, "w", encoding="utf-8") as f:
                 f.write(daily_notes)
 
-            # Auto-index the generated note if enabled
             self._auto_index_note(notes_path)
 
             return {

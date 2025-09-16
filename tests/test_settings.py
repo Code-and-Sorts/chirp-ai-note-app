@@ -16,7 +16,6 @@ class TestChirpSettings:
     def test_directories_config_paths(self):
         settings = ChirpSettings()
 
-        # Test that directory paths are Path objects
         assert isinstance(settings.directories.raw_audio, Path)
         assert isinstance(settings.directories.transcriptions, Path)
         assert isinstance(settings.directories.notes, Path)
@@ -28,7 +27,4 @@ class TestChirpSettings:
         with patch.object(Path, "mkdir") as mock_mkdir:
             settings.ensure_directories_exist()
 
-            # Should create all required directories
-            assert (
-                mock_mkdir.call_count == 7
-            )  # raw_audio, transcriptions, notes, templates, index_dir, index_dir/chroma, index_dir/cache
+            assert mock_mkdir.call_count == 7

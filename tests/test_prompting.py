@@ -22,7 +22,6 @@ class TestPrompting:
         assert result["success"]
         assert result["answer"] == "Test answer"
 
-        # Check that the request was made with proper prompt structure
         call_args = mock_post.call_args
         prompt = call_args[1]["json"]["prompt"]
 
@@ -43,17 +42,15 @@ class TestPrompting:
         config = ChirpSettings()
         question = "Test question"
 
-        # Very long context
         context = "X" * 20000
 
         result = generate_answer(config, question, context)
 
         assert result["success"]
 
-        # The prompt should contain the context as-is (budget enforcement happens in retrieval)
         call_args = mock_post.call_args
         prompt = call_args[1]["json"]["prompt"]
-        assert len(prompt) > 10000  # Should contain the full context
+        assert len(prompt) > 10000
 
     @patch("requests.post")
     def test_not_found_ambiguous_responses(self, mock_post):
@@ -62,7 +59,6 @@ class TestPrompting:
         question = "What happened?"
         context = "Some meeting notes"
 
-        # Test "not found" response
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -87,7 +83,6 @@ class TestPrompting:
 
         assert not result["success"]
         assert "Empty context" in result["error"]
-        # Should not make HTTP request for empty context
         mock_post.assert_not_called()
 
     @patch("requests.post")
@@ -97,7 +92,6 @@ class TestPrompting:
         question = "Test question"
         context = "Test context"
 
-        # Test 404 error (model not found)
         mock_response = Mock()
         mock_response.status_code = 404
         mock_post.return_value = mock_response
@@ -116,7 +110,6 @@ class TestPrompting:
         question = "Test question"
         context = "Test context"
 
-        # Simulate connection error
         mock_post.side_effect = ConnectionError("Connection failed")
 
         result = generate_answer(config, question, context)

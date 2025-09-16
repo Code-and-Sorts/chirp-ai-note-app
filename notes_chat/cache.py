@@ -52,10 +52,8 @@ def cache_answer(question: str, retrieved_ids: list[str], answer: str) -> bool:
 
 def _generate_cache_key(question: str, retrieved_ids: list[str]) -> str:
     """Generate a cache key from question and retrieved IDs."""
-    # Sort IDs for consistent cache keys
     sorted_ids = sorted(retrieved_ids)
 
-    # Create hash from question + sorted IDs
     hash_input = f"{question}::{','.join(sorted_ids)}"
     return hashlib.sha256(hash_input.encode()).hexdigest()[:16]
 

@@ -61,7 +61,6 @@ def generate_answer(
         if not answer:
             return {"success": False, "error": "Empty response from LLM"}
 
-        # Check for common "no information" patterns
         no_info_patterns = [
             "i don't have enough information",
             "not enough information",
@@ -101,7 +100,6 @@ def generate_answer(
 def validate_ollama_connection(config: ChirpSettings) -> dict[str, Any]:
     """Validate that Ollama is running and the model is available."""
     try:
-        # Check if Ollama is running
         response = requests.get(f"{config.models.ollama_url}/api/tags", timeout=5)
         if response.status_code != 200:
             return {"success": False, "error": "Ollama server is not responding"}
@@ -115,7 +113,6 @@ def validate_ollama_connection(config: ChirpSettings) -> dict[str, Any]:
                 "error": f"Model '{config.models.llm}' not found. Available models: {', '.join(model_names) if model_names else 'none'}. Try: ollama pull {config.models.llm}",
             }
 
-        # Check embedding model too
         if config.notes_chat.emb_model not in model_names:
             return {
                 "success": False,
