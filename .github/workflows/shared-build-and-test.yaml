@@ -111,6 +111,8 @@ jobs:
       with:
         path: .venv
         key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+        restore-keys: |
+          venv-${{ runner.os }}-
 
     - name: ✅ Install dependencies
       run: uv sync --dev
