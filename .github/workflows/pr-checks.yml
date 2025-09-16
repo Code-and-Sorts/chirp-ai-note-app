@@ -10,25 +10,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality-checks:
-    runs-on: macos-latest
+  build-and-test:
     if: github.event.pull_request.draft == false
+    uses: ./.github/workflows/shared-build-and-test.yaml
+    with:
+      python-version: '3.13'
+      os-matrix: '["macos-latest"]'
+      upload-artifacts: true
+      update-version-for-pr: true
+      run-integration-tests: false
 
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Run quality checks
-      uses: ./.github/actions/quality-checks
-
-    - name: Run tests
-      run: |
-        uv run pytest tests/ -v --cov=chirp --cov=config --cov=recorder --cov=transcriber --cov=notes --cov=utils --cov-report=xml
-
-    - name: Upload coverage reports
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+  publish-to-test-pypi:
+    needs: build-and-test
+    if: github.event.pull_request.draft == false
+    uses: ./.github/workflows/shared-publish-package.yaml
+    with:
+      python-version: '3.13'
+      is-test-pypi: true
+    secrets: inherit
+    permissions:
+      pull-requests: write

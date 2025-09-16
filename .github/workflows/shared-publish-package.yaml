@@ -1,0 +1,109 @@
+name: Publish Package
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: 'Python version to use'
+        required: false
+        type: string
+        default: '3.13'
+      is-test-pypi:
+        description: 'Whether to publish to TestPyPI or PyPI'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      published-version:
+        description: 'The version that was published'
+        value: 'published'
+
+jobs:
+  publish-package:
+    runs-on: macos-latest
+    environment: ${{ inputs.is-test-pypi && 'testpypi' || 'pypi-prod' }}
+    env:
+      pypi-repository: ${{ inputs.is-test-pypi && 'testpypi' || 'pypi' }}
+    permissions:
+      pull-requests: write
+
+    steps:
+    - name: 🐍 Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: 🚀 Install uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: ⤵️ Download dist artifacts
+      uses: actions/download-artifact@v5
+      with:
+        name: python-package-dist
+        path: dist/
+
+    - name: Install Twine
+      run: uv pip install twine --system
+
+    - name: 📦 Publish to ${{ env.pypi-repository }}
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ inputs.is-test-pypi && secrets.TEST_PYPI_API_TOKEN || secrets.PYPI_API_TOKEN }}
+      run: twine upload --verbose --repository ${{ env.pypi-repository }} dist/*.whl dist/*.tar.gz
+
+    - name: Read version for comment
+      id: version_info
+      run: |
+        if [ -f "pyproject.toml" ]; then
+          VERSION=$(uv run python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+        else
+          VERSION=$(ls dist/*.whl | head -1 | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+[^-]*')
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Comment on PR with publish info
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const botComment = comments.find(comment =>
+            comment.user.type === 'Bot' && comment.body.includes('📦 Package Published')
+          );
+
+          const repository = '${{ env.pypi-repository }}';
+          const version = '${{ steps.version_info.outputs.version }}';
+          const repositoryUrl = repository === 'testpypi'
+            ? 'https://test.pypi.org'
+            : 'https://pypi.org';
+
+          const body = `## 📦 Package Published to ${repository === 'testpypi' ? 'TestPyPI' : 'PyPI'}
+
+          **Version:** \`${version}\`
+          **Repository:** [${repository}](${repositoryUrl})
+
+          ${repository === 'testpypi' ?
+            '🧪 This is a test release. Install with:\n```bash\npip install --index-url https://test.pypi.org/simple/ chirp-ai-note-app\n```' :
+            '🚀 Production release is now available:\n```bash\npip install chirp-ai-note-app\n```'
+          }`;
+
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: body
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+          }
