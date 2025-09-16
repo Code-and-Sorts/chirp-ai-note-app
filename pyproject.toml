@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chirp"
+name = "chirp-notes-ai"
 version = "0.1.0"
 description = "Meeting recorder CLI that transcribes and generates AI notes"
 authors = [{name = "Colby Timm"}]
