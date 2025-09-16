@@ -1,6 +1,6 @@
 # Chirp - AI Meeting Notes CLI
 
-=& A powerful CLI tool that records meetings, transcribes audio to text, and generates AI-powered meeting notes with semantic search capabilities.
+üê¶ A powerful CLI tool that records meetings, transcribes audio to text, and generates AI-powered meeting notes with semantic search capabilities.
 
 ## Quick Start
 
@@ -89,12 +89,12 @@ Edit this file to customize directories, models, and settings.
 
 ## Features
 
-- <ô **High-quality audio recording** with system audio capture
-- =› **Accurate transcription** using OpenAI's Whisper models
-- >‡ **AI-powered meeting notes** with structured summaries
+- <ÔøΩ **High-quality audio recording** with system audio capture
+- =ÔøΩ **Accurate transcription** using OpenAI's Whisper models
+- >ÔøΩ **AI-powered meeting notes** with structured summaries
 - = **Semantic search** across all your meeting notes
-- =¨ **Interactive chat** to ask questions about your meetings
-- ô **Flexible configuration** with sensible defaults
+- =ÔøΩ **Interactive chat** to ask questions about your meetings
+- ÔøΩ **Flexible configuration** with sensible defaults
 
 ## Requirements
 
