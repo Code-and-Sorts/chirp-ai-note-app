@@ -106,19 +106,22 @@ jobs:
     - name: 🔗 Check lock file consistency (uv.lock)
       run: uv lock --check
 
-    - name: 📦 Cache virtual environment
+    - name: ♻️ Cache .venv
       uses: actions/cache@v4
       with:
         path: .venv
-        key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+        key: ${{ runner.os }}-python-${{ inputs.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-${{ hashFiles('uv.lock') }}
         restore-keys: |
-          venv-${{ runner.os }}-
+          ${{ runner.os }}-python-${{ inputs.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-
+          ${{ runner.os }}-python-${{ inputs.python-version }}-venv-
 
     - name: ✅ Install dependencies
       run: uv sync --dev
 
-    - name: 🔍 Lint with Ruff
-      run: uv run ruff check --output-format=github .
+    - name: ✨ Lint with Ruff using uv
+      run: |
+        uv pip install --system -e .[dev]
+        uv run ruff check --output-format=github .
 
     - name: 🔄 Update version for PR (if enabled)
       if: ${{ inputs.update-version-for-pr }}
