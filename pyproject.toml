@@ -7,7 +7,7 @@ name = "chirp-notes-ai"
 version = "0.1.0"
 description = "Meeting recorder CLI that transcribes and generates AI notes"
 authors = [{name = "Colby Timm"}]
-readme = "README.md"
+readme = "scripts/README.md"
 requires-python = ">=3.9"
 dependencies = [
     "typer>=0.9.0",
@@ -26,6 +26,9 @@ dependencies = [
 
 [project.scripts]
 chirp = "chirp.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [project.optional-dependencies]
 dev = [
