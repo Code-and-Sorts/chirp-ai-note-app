@@ -2,41 +2,42 @@
 
 🐦 A powerful CLI tool that records meetings, transcribes audio to text, and generates AI-powered meeting notes with semantic search capabilities.
 
-## Quick Start
+## Installation
 
-Install Chirp with pip:
+### 1. Install System Dependencies
+
+**macOS:**
 
 ```bash
-pip install chirp-notes-ai
-```
-
-## Manual Dependencies
-
-Before using Chirp, you'll need to install these system dependencies:
-
-### macOS
-```bash
-# Install PortAudio for audio recording
-brew install portaudio
+# Install required system libraries
+brew install portaudio ollama
 
 # Install BlackHole for system audio capture
 # Download from: https://existential.audio/blackhole/
 ```
 
-### Linux (Ubuntu/Debian)
-```bash
-# Install PortAudio development headers
-sudo apt-get update
-sudo apt-get install portaudio19-dev python3-dev
+**Linux (Ubuntu/Debian):**
 
-# Install ALSA utilities for audio
-sudo apt-get install alsa-utils
+```bash
+# Install required system libraries
+sudo apt-get update
+sudo apt-get install portaudio19-dev python3-dev alsa-utils
+
+# Install Ollama for AI processing
+curl -fsSL https://ollama.ai/install.sh | sh
 ```
 
-### Windows
+**Windows:**
+
 ```bash
 # PortAudio is included with PyAudio wheels on Windows
-# No additional system dependencies required
+# Install Ollama for AI processing from: https://ollama.ai/download
+```
+
+### 2. Install Chirp
+
+```bash
+pip install chirp-notes-ai
 ```
 
 ## AI Model Setup
@@ -46,6 +47,7 @@ Chirp requires **Ollama** for AI processing:
 1. **Install Ollama**: Download from [https://ollama.ai](https://ollama.ai)
 2. **Start Ollama**: Run `ollama serve` in a terminal
 3. **Download models**:
+
    ```bash
    # For meeting note generation
    ollama pull llama3.1:8b
@@ -82,6 +84,7 @@ chirp test
 ## Configuration
 
 On first run, Chirp creates a config file at:
+
 - **macOS/Linux**: `~/.config/chirp/config.yaml`
 - **Windows**: `%APPDATA%/chirp/config.yaml`
 
