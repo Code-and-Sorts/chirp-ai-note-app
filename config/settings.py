@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from platformdirs import user_config_dir
+from platformdirs import user_config_dir, user_documents_dir
 from pydantic import BaseModel, Field, field_validator
 from rich.console import Console
 
@@ -14,10 +14,18 @@ class ConfigurationError(Exception):
 
 
 class DirectoriesConfig(BaseModel):
-    raw_audio: Path = Field(default_factory=lambda: Path("./to-transcribe"))
-    transcriptions: Path = Field(default_factory=lambda: Path("./transcription-out"))
-    notes: Path = Field(default_factory=lambda: Path("./notes-out"))
-    templates: Path = Field(default_factory=lambda: Path("./templates"))
+    raw_audio: Path = Field(
+        default_factory=lambda: Path(user_documents_dir()) / "Chirp" / "recordings"
+    )
+    transcriptions: Path = Field(
+        default_factory=lambda: Path(user_documents_dir()) / "Chirp" / "transcripts"
+    )
+    notes: Path = Field(
+        default_factory=lambda: Path(user_documents_dir()) / "Chirp" / "notes"
+    )
+    templates: Path = Field(
+        default_factory=lambda: Path(user_documents_dir()) / "Chirp" / "templates"
+    )
 
     @field_validator("*", mode="before")
     @classmethod
@@ -75,13 +83,12 @@ class ChirpSettings(BaseModel):
     @classmethod
     def create_default_config(cls) -> "ChirpSettings":
         """Create a default config with user-friendly defaults."""
-        from platformdirs import user_data_dir
 
-        data_dir = Path(user_data_dir("chirp"))
+        data_dir = Path(user_documents_dir()) / "Chirp"
 
         settings = cls()
-        settings.directories.raw_audio = data_dir / "to-transcribe"
-        settings.directories.transcriptions = data_dir / "transcriptions"
+        settings.directories.raw_audio = data_dir / "recordings"
+        settings.directories.transcriptions = data_dir / "transcripts"
         settings.directories.notes = data_dir / "notes"
         settings.directories.templates = data_dir / "templates"
         settings.notes_chat.index_dir = data_dir / "notes_index"
@@ -133,6 +140,11 @@ class ChirpSettings(BaseModel):
             self.notes_chat.index_dir / "cache",
         ]:
             directory.mkdir(parents=True, exist_ok=True)
+
+        from notes.template_engine import TemplateEngine
+
+        template_engine = TemplateEngine(self)
+        template_engine.create_default_templates()
 
 
 def get_settings() -> ChirpSettings:

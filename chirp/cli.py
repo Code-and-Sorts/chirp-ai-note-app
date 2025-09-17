@@ -55,6 +55,33 @@ def _test_llm_model_available(settings):
         return False
 
 
+def _test_embedding_model_available(settings):
+    """Test if the configured embedding model is available in Ollama"""
+    try:
+        import requests
+
+        response = requests.get(f"{settings.models.ollama_url}/api/tags", timeout=5)
+        if response.status_code == 200:
+            models = response.json().get("models", [])
+            available_models = [model["name"] for model in models]
+
+            if settings.notes_chat.emb_model in available_models:
+                return True
+
+            if f"{settings.notes_chat.emb_model}:latest" in available_models:
+                return True
+
+            model_base = settings.notes_chat.emb_model.split(":")[0]
+            for model in available_models:
+                if model.startswith(f"{model_base}:"):
+                    return True
+
+            return False
+        return False
+    except Exception:
+        return False
+
+
 def _test_notes_index(settings):
     """Test if notes index exists and is accessible"""
     try:
@@ -86,13 +113,16 @@ def _test_chroma_db(settings):
 @app.command(rich_help_panel=RECORDING_PANEL)
 def record(
     duration: Optional[int] = typer.Option(
-        None, "--duration", "-d", help="Recording duration in minutes"
+        None,
+        "--duration",
+        "-d",
+        help="Recording duration in minutes (press Ctrl+C to stop if not specified)",
     ),
     title: Optional[str] = typer.Option(
         None, "--title", "-t", help="Meeting title for filename"
     ),
 ):
-    """Start recording a meeting"""
+    """Start recording a meeting (press Ctrl+C to stop if no duration specified)"""
     settings = get_settings()
     device_manager = DeviceManager()
 
@@ -412,8 +442,12 @@ def test():
     if ollama_connected:
         llm_available = _test_llm_model_available(settings)
         config_tests.append(("LLM Model Available", llm_available))
+
+        embedding_available = _test_embedding_model_available(settings)
+        config_tests.append(("Embedding Model Available", embedding_available))
     else:
         config_tests.append(("LLM Model Available", False))
+        config_tests.append(("Embedding Model Available", False))
 
     notes_index_built = _test_notes_index(settings)
     config_tests.append(("Notes Index", notes_index_built))
