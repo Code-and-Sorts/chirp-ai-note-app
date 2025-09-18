@@ -25,6 +25,7 @@ class AudioRecorder:
         self.recording_thread: Optional[Timer] = None
         self.monitor: Optional[MeetingMonitor] = None
         self.start_time: Optional[datetime] = None
+        self.title: Optional[str] = None
 
     def __del__(self):
         if self.audio:
@@ -59,6 +60,7 @@ class AudioRecorder:
         self.frames = []
         self.is_recording = True
         self.start_time = datetime.now()
+        self.title = title
 
         self.stream = self.audio.open(
             format=pyaudio.paInt16,
@@ -97,7 +99,7 @@ class AudioRecorder:
         finally:
             self._cleanup_recording()
 
-        self._save_recording(file_path, max_channels, sample_rate)
+        self._save_recording(file_path, max_channels, sample_rate, self.title)
 
         return filename
 
@@ -126,7 +128,13 @@ class AudioRecorder:
             self.recording_thread.cancel()
             self.recording_thread = None
 
-    def _save_recording(self, file_path: Path, channels: int, sample_rate: int):
+    def _save_recording(
+        self,
+        file_path: Path,
+        channels: int,
+        sample_rate: int,
+        title: Optional[str] = None,
+    ):
         if not self.frames:
             raise RuntimeError("No audio data recorded")
 
@@ -135,6 +143,19 @@ class AudioRecorder:
             wave_file.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
             wave_file.setframerate(sample_rate)
             wave_file.writeframes(b"".join(self.frames))
+
+        if title:
+            import json
+
+            metadata_file = file_path.with_suffix(f"{file_path.suffix}.meta")
+            metadata = {
+                "title": title,
+                "recorded_at": self.start_time.isoformat() if self.start_time else None,
+                "channels": channels,
+                "sample_rate": sample_rate,
+            }
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2)
 
     def _on_warning(self, elapsed_minutes: int):
         from utils.popup_manager import PopupManager

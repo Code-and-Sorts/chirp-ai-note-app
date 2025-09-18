@@ -1,7 +1,7 @@
 import platform
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from faster_whisper import WhisperModel
 
@@ -93,6 +93,7 @@ class WhisperTranscriber:
             processing_time = (datetime.now() - start_time).total_seconds()
 
             recording_timestamp = parse_timestamp_from_filename(audio_file_path.name)
+            audio_metadata = self._read_audio_metadata(audio_file_path)
 
             result = {
                 "success": True,
@@ -112,6 +113,7 @@ class WhisperTranscriber:
                     if recording_timestamp
                     else None,
                     "transcribed_at": datetime.now().isoformat(),
+                    "title": audio_metadata.get("title") if audio_metadata else None,
                 },
                 "error": None,
             }
@@ -160,6 +162,21 @@ class WhisperTranscriber:
             "cpu_threads": self._get_cpu_threads(),
             "loaded": self.model is not None,
         }
+
+    def _read_audio_metadata(self, audio_file_path: Path) -> Optional[dict]:
+        import json
+
+        metadata_file = audio_file_path.with_suffix(f"{audio_file_path.suffix}.meta")
+
+        if metadata_file.exists():
+            try:
+                with open(metadata_file, encoding="utf-8") as f:
+                    data = json.load(f)
+                    return dict(data) if isinstance(data, dict) else None
+            except Exception:
+                pass
+
+        return None
 
     def __del__(self):
         if hasattr(self, "model") and self.model:

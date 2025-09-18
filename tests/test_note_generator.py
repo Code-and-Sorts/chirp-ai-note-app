@@ -65,3 +65,116 @@ class TestNoteGenerator:
 
                             with pytest.raises(Exception, match="Connection error"):
                                 generator._call_ollama("test prompt")
+
+    def test_generate_meeting_notes_uses_provided_title(self, mock_settings):
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        with patch.object(
+                            generator, "_generate_structured_notes"
+                        ) as mock_structured:
+                            mock_structured.return_value = {
+                                "participants": "Test participant",
+                                "executive_summary": "Test summary",
+                                "key_points": ["Key point 1"],
+                                "decisions": ["Decision 1"],
+                                "action_items": ["Action 1"],
+                                "next_steps": ["Next step 1"],
+                            }
+
+                            transcription_data = {
+                                "full_text": "This is a test transcript with sufficient length to pass validation",
+                                "metadata": {
+                                    "title": "Provided Meeting Title",
+                                    "duration": 300,
+                                },
+                            }
+
+                            result = generator._generate_meeting_notes(
+                                transcription_data
+                            )
+
+                            assert result is not None
+                            assert result["meeting_title"] == "Provided Meeting Title"
+
+    def test_generate_meeting_notes_generates_title_when_none_provided(
+        self, mock_settings
+    ):
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        with patch.object(
+                            generator, "_generate_structured_notes"
+                        ) as mock_structured:
+                            with patch.object(
+                                generator, "_generate_meeting_title"
+                            ) as mock_title:
+                                mock_structured.return_value = {
+                                    "participants": "Test participant",
+                                    "executive_summary": "Test summary",
+                                    "key_points": ["Key point 1"],
+                                    "decisions": ["Decision 1"],
+                                    "action_items": ["Action 1"],
+                                    "next_steps": ["Next step 1"],
+                                }
+                                mock_title.return_value = "Generated Meeting Title"
+
+                                transcription_data = {
+                                    "full_text": "This is a test transcript with sufficient length to pass validation",
+                                    "metadata": {"duration": 300},
+                                }
+
+                                result = generator._generate_meeting_notes(
+                                    transcription_data
+                                )
+
+                                assert result is not None
+                                assert (
+                                    result["meeting_title"] == "Generated Meeting Title"
+                                )
+                                mock_title.assert_called_once()
+
+    def test_generate_meeting_notes_generates_title_when_metadata_missing(
+        self, mock_settings
+    ):
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        with patch.object(
+                            generator, "_generate_structured_notes"
+                        ) as mock_structured:
+                            with patch.object(
+                                generator, "_generate_meeting_title"
+                            ) as mock_title:
+                                mock_structured.return_value = {
+                                    "participants": "Test participant",
+                                    "executive_summary": "Test summary",
+                                    "key_points": ["Key point 1"],
+                                    "decisions": ["Decision 1"],
+                                    "action_items": ["Action 1"],
+                                    "next_steps": ["Next step 1"],
+                                }
+                                mock_title.return_value = "Generated Meeting Title"
+
+                                transcription_data = {
+                                    "full_text": "This is a test transcript with sufficient length to pass validation"
+                                }
+
+                                result = generator._generate_meeting_notes(
+                                    transcription_data
+                                )
+
+                                assert result is not None
+                                assert (
+                                    result["meeting_title"] == "Generated Meeting Title"
+                                )
+                                mock_title.assert_called_once()

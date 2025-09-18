@@ -146,7 +146,14 @@ class NoteGenerator:
             return None
 
         try:
-            meeting_title = self._generate_meeting_title(transcript_text)
+            metadata = transcription_data.get("metadata", {})
+            provided_title = metadata.get("title")
+
+            if provided_title:
+                meeting_title = provided_title
+            else:
+                meeting_title = self._generate_meeting_title(transcript_text)
+
             structured_notes = self._generate_structured_notes(transcript_text)
 
             if not structured_notes:
@@ -196,8 +203,8 @@ Generate only a title, no additional text. Keep it under 60 characters."""
         prompt = f"""Please analyze this meeting transcript and extract structured information. Return a JSON object with the following fields:
 
 - participants: String with participant names/roles if mentioned, or "Not specified"
-- executive_summary: 2-3 sentence summary of the meeting
-- key_points: Array of main discussion points (3-5 items)
+- executive_summary: 3-5 sentence summary of the meeting
+- key_points: Array of main discussion points
 - decisions: Array of decisions made (if any)
 - action_items: Array of action items or tasks assigned (if any)
 - next_steps: Array of next steps or follow-up items (if any)

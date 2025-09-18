@@ -301,3 +301,70 @@ class TestWhisperTranscriber:
             info = transcriber.get_model_info()
 
             assert info["loaded"] is False
+
+    def test_read_audio_metadata_file_exists(self, mock_settings):
+        with patch("transcriber.whisper_transcriber.WhisperModel"):
+            transcriber = WhisperTranscriber(mock_settings)
+
+            test_audio_file = Path("test_audio.wav")
+            test_metadata = {
+                "title": "Test Meeting Title",
+                "recorded_at": "2025-09-17T14:30:00",
+                "channels": 2,
+                "sample_rate": 16000,
+            }
+
+            with patch("builtins.open", create=True):
+                with patch("json.load", return_value=test_metadata):
+                    with patch.object(Path, "exists", return_value=True):
+                        result = transcriber._read_audio_metadata(test_audio_file)
+
+                        assert result == test_metadata
+                        assert result["title"] == "Test Meeting Title"
+
+    def test_read_audio_metadata_file_not_exists(self, mock_settings):
+        with patch("transcriber.whisper_transcriber.WhisperModel"):
+            transcriber = WhisperTranscriber(mock_settings)
+
+            test_audio_file = Path("test_audio.wav")
+
+            with patch.object(Path, "exists", return_value=False):
+                result = transcriber._read_audio_metadata(test_audio_file)
+
+                assert result is None
+
+    def test_read_audio_metadata_file_corrupted(self, mock_settings):
+        with patch("transcriber.whisper_transcriber.WhisperModel"):
+            transcriber = WhisperTranscriber(mock_settings)
+
+            test_audio_file = Path("test_audio.wav")
+
+            with patch("builtins.open", create=True):
+                with patch("json.load", side_effect=Exception("JSON decode error")):
+                    with patch.object(Path, "exists", return_value=True):
+                        result = transcriber._read_audio_metadata(test_audio_file)
+
+                        assert result is None
+
+    def test_metadata_includes_title_when_provided(self, mock_settings):
+        with patch("transcriber.whisper_transcriber.WhisperModel"):
+            transcriber = WhisperTranscriber(mock_settings)
+
+            test_metadata = {
+                "title": "Important Meeting",
+                "recorded_at": "2025-09-17T14:30:00",
+            }
+
+            with patch.object(
+                transcriber, "_read_audio_metadata", return_value=test_metadata
+            ):
+                metadata = transcriber._read_audio_metadata(Path("test.wav"))
+                assert metadata["title"] == "Important Meeting"
+
+    def test_metadata_returns_none_when_no_title(self, mock_settings):
+        with patch("transcriber.whisper_transcriber.WhisperModel"):
+            transcriber = WhisperTranscriber(mock_settings)
+
+            with patch.object(transcriber, "_read_audio_metadata", return_value=None):
+                metadata = transcriber._read_audio_metadata(Path("test.wav"))
+                assert metadata is None

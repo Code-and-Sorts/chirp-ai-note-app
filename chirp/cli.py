@@ -13,7 +13,11 @@ from notes.note_generator import NoteGenerator
 from recorder.audio_recorder import AudioRecorder
 from recorder.device_manager import DeviceManager
 from transcriber.batch_processor import BatchProcessor
-from utils.file_utils import get_audio_files, get_notes_files, get_transcription_files
+from utils.file_utils import (
+    get_audio_files,
+    get_notes_files,
+    get_transcription_files,
+)
 
 app = typer.Typer(
     name="chirp",
@@ -135,15 +139,33 @@ def record(
 
     recorder = AudioRecorder(settings, device_manager)
 
+    if title:
+        console.print(f"[cyan]📝 Title: {title}[/cyan]")
+    if duration:
+        console.print(f"[cyan]⏱️ Planned duration: {duration} minutes[/cyan]")
+
     try:
         with console.status("[bold green]🎙️ Recording in progress..."):
             filename = recorder.start_recording(duration_minutes=duration, title=title)
 
-        console.print(f"[green]✅ Recording saved: {filename}[/green]")
+        if recorder.start_time:
+            from utils.time_utils import format_duration, get_recording_duration
+
+            actual_duration = get_recording_duration(recorder.start_time)
+            duration_str = format_duration(actual_duration)
+            console.print(f"[green]✅ Recording saved: {filename}[/green]")
+            console.print(f"[dim]Actual duration: {duration_str}[/dim]")
+        else:
+            console.print(f"[green]✅ Recording saved: {filename}[/green]")
+
         console.print("[dim]Use 'chirp transcribe' to process this recording[/dim]")
 
     except KeyboardInterrupt:
         console.print("[yellow]Recording stopped by user[/yellow]")
+        if recorder.start_time:
+            actual_duration = get_recording_duration(recorder.start_time)
+            duration_str = format_duration(actual_duration)
+            console.print(f"[dim]Final recording duration: {duration_str}[/dim]")
     except AudioDeviceError as e:
         console.print(f"[red]❌ Audio device error: {str(e)}[/red]")
         console.print("[dim]Try 'chirp devices' to see available audio devices[/dim]")
