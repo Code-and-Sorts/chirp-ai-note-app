@@ -82,6 +82,9 @@ jobs:
           echo "portaudio already installed (from cache)"
         fi
 
+        # Ensure portaudio is linked (handles case where it's installed but not linked)
+        brew link --overwrite portaudio
+
     - name: 📦 Cache apt packages (Linux)
       if: runner.os == 'Linux'
       uses: actions/cache@v4
