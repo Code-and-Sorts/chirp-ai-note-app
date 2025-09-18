@@ -74,8 +74,8 @@ jobs:
     - name: 🔧 Install system dependencies (macOS)
       if: runner.os == 'macOS'
       run: |
-        # Check if portaudio is already installed (from cache)
-        if ! brew list portaudio &>/dev/null; then
+        # Check if portaudio library exists and is properly linked
+        if [ ! -f "/opt/homebrew/opt/portaudio/lib/libportaudio.2.dylib" ] && [ ! -f "/usr/local/opt/portaudio/lib/libportaudio.2.dylib" ]; then
           echo "Installing portaudio..."
           brew install portaudio
         else
