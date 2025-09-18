@@ -27,4 +27,4 @@ class TestChirpSettings:
         with patch.object(Path, "mkdir") as mock_mkdir:
             settings.ensure_directories_exist()
 
-            assert mock_mkdir.call_count == 7
+            assert mock_mkdir.call_count == 8
