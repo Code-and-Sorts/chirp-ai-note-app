@@ -1,5 +1,6 @@
-## {meeting_title} - {meeting_time}
+## {meeting_title}
 
+**Time:** {meeting_time}
 **Duration:** {duration}
 **Participants:** {participants}
 

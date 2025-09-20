@@ -24,7 +24,10 @@ class NoteGenerator:
         self.console = Console()
 
     def generate_daily_notes(
-        self, transcription_files: list[Path], force: bool = False
+        self,
+        transcription_files: list[Path],
+        force: bool = False,
+        filename_override: Optional[str] = None,
     ) -> dict[str, Any]:
         try:
             daily_groups = self.daily_aggregator.group_transcriptions_by_day(
@@ -34,7 +37,9 @@ class NoteGenerator:
             results = []
 
             for date, files in daily_groups.items():
-                result = self._generate_notes_for_day(date, files, force)
+                result = self._generate_notes_for_day(
+                    date, files, force, filename_override
+                )
                 results.append(result)
 
             successful_results = [r for r in results if r["success"]]
@@ -54,9 +59,20 @@ class NoteGenerator:
             return {"success": False, "error": str(e)}
 
     def _generate_notes_for_day(
-        self, date: datetime, transcription_files: list[Path], force: bool
+        self,
+        date: datetime,
+        transcription_files: list[Path],
+        force: bool,
+        filename_override: Optional[str] = None,
     ) -> dict[str, Any]:
-        notes_filename = get_daily_note_filename(date)
+        if filename_override:
+            notes_filename = (
+                filename_override
+                if filename_override.endswith(".md")
+                else f"{filename_override}.md"
+            )
+        else:
+            notes_filename = get_daily_note_filename(date)
         notes_path = self.settings.directories.notes / notes_filename
 
         if notes_path.exists() and not force:

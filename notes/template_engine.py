@@ -47,12 +47,27 @@ class TemplateEngine:
         recorded_at = meeting_data.get("metadata", {}).get("recorded_at")
         if recorded_at:
             try:
-                meeting_datetime = datetime.fromisoformat(
-                    recorded_at.replace("Z", "+00:00")
-                )
+                if recorded_at.endswith("Z"):
+                    meeting_datetime = datetime.fromisoformat(
+                        recorded_at.replace("Z", "+00:00")
+                    )
+                elif "+" in recorded_at or recorded_at.endswith("00:00"):
+                    meeting_datetime = datetime.fromisoformat(recorded_at)
+                else:
+                    meeting_datetime = datetime.fromisoformat(recorded_at)
+
                 meeting_time = format_meeting_time(meeting_datetime)
-            except Exception:
-                meeting_time = "Unknown time"
+            except (ValueError, TypeError):
+                try:
+                    clean_timestamp = (
+                        recorded_at.split("T")[0]
+                        + "T"
+                        + recorded_at.split("T")[1].split(".")[0]
+                    )
+                    meeting_datetime = datetime.fromisoformat(clean_timestamp)
+                    meeting_time = format_meeting_time(meeting_datetime)
+                except Exception:
+                    meeting_time = "Unknown time"
         else:
             meeting_time = "Unknown time"
 

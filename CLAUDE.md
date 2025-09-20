@@ -67,10 +67,25 @@ Follow principles from **"Clean Code" by Robert C. Martin**:
 
 #### Comments
 
-- **Code should be self-documenting**
-- Only add comments when code cannot express intent
-- Avoid redundant, misleading, or outdated comments
-- Use docstrings for public APIs
+- **NEVER add comments unless explicitly necessary** - Code should be self-documenting
+- **Comments are a failure** - If you need a comment, the code isn't clear enough
+- **Refactor instead of commenting** - Use better names, extract methods, simplify logic
+- **Only acceptable comments:**
+  - Legal comments (copyright notices)
+  - Informative comments explaining regex patterns or complex algorithms
+  - Warning comments about consequences
+  - TODO comments for temporary code
+  - Amplification comments that emphasize importance
+  - Public API docstrings (not implementation details)
+- **FORBIDDEN comments:**
+  - Redundant comments that repeat what code does
+  - Misleading or outdated comments
+  - Journal comments tracking changes
+  - Noise comments stating the obvious
+  - Position markers or dividers
+  - Commented-out code
+  - HTML/markup comments in code
+  - Implementation detail explanations that should be code
 
 #### Error Handling
 

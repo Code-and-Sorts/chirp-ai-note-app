@@ -276,6 +276,12 @@ def generate(
     force: bool = typer.Option(
         False, "--force", "-f", help="Regenerate notes even if they exist"
     ),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        "-n",
+        help="Override the default filename for generated notes",
+    ),
 ):
     """Generate meeting notes from transcriptions"""
     settings = get_settings()
@@ -292,7 +298,9 @@ def generate(
     note_generator = NoteGenerator(settings)
 
     with console.status("[bold blue]🧠 Generating notes with AI..."):
-        result = note_generator.generate_daily_notes(transcription_files, force=force)
+        result = note_generator.generate_daily_notes(
+            transcription_files, force=force, filename_override=filename
+        )
 
     if result["success"]:
         console.print(f"[green]✅ Notes generated: {result['filename']}[/green]")
@@ -311,13 +319,19 @@ def transcribe_and_generate(
         "-f",
         help="Process all files, including already processed ones",
     ),
+    filename: Optional[str] = typer.Option(
+        None,
+        "--filename",
+        "-n",
+        help="Override the default filename for generated notes",
+    ),
 ):
     """Process audio files (transcribe + generate notes)"""
     get_settings()
 
     try:
         transcribe(input_dir=input_dir, force=force)
-        generate(force=force)
+        generate(force=force, filename=filename)
     except Exception as e:
         console.print(f"[red]Error in process command: {e}[/red]")
 

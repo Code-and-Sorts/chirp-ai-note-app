@@ -178,3 +178,108 @@ class TestNoteGenerator:
                                     result["meeting_title"] == "Generated Meeting Title"
                                 )
                                 mock_title.assert_called_once()
+
+    def test_generate_daily_notes_with_filename_override(self, mock_settings):
+        from datetime import datetime
+        from pathlib import Path
+
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator") as mock_aggregator:
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        test_date = datetime(2024, 1, 15)
+                        mock_transcription_file = Path("/test/transcription.json")
+                        mock_aggregator_instance = mock_aggregator.return_value
+                        mock_aggregator_instance.group_transcriptions_by_day.return_value = {
+                            test_date: [mock_transcription_file]
+                        }
+
+                        with patch.object(
+                            generator, "_generate_notes_for_day"
+                        ) as mock_generate_day:
+                            mock_generate_day.return_value = {
+                                "success": True,
+                                "filename": "custom-notes.md",
+                                "path": "/notes/custom-notes.md",
+                                "date": test_date.isoformat(),
+                            }
+
+                            result = generator.generate_daily_notes(
+                                [mock_transcription_file],
+                                force=False,
+                                filename_override="custom-notes",
+                            )
+
+                            mock_generate_day.assert_called_once_with(
+                                test_date,
+                                [mock_transcription_file],
+                                False,
+                                "custom-notes",
+                            )
+
+                            assert result["success"] is True
+                            assert result["filename"] == "custom-notes.md"
+
+    def test_generate_notes_for_day_filename_override_with_extension(
+        self, mock_settings
+    ):
+        from datetime import datetime
+        from pathlib import Path
+
+        mock_settings.directories = Mock()
+        mock_settings.directories.notes = Path("/test/notes")
+
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        test_date = datetime(2024, 1, 15)
+                        mock_transcription_file = Path("/test/transcription.json")
+
+                        with patch("pathlib.Path.exists", return_value=False):
+                            with patch.object(
+                                generator, "_generate_meeting_notes", return_value=None
+                            ):
+                                result = generator._generate_notes_for_day(
+                                    test_date,
+                                    [mock_transcription_file],
+                                    False,
+                                    "custom-notes.md",
+                                )
+
+                                assert result["success"] is False
+
+    def test_generate_notes_for_day_filename_override_without_extension(
+        self, mock_settings
+    ):
+        from datetime import datetime
+        from pathlib import Path
+
+        mock_settings.directories = Mock()
+        mock_settings.directories.notes = Path("/test/notes")
+
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        test_date = datetime(2024, 1, 15)
+                        mock_transcription_file = Path("/test/transcription.json")
+
+                        with patch("pathlib.Path.exists", return_value=False):
+                            with patch.object(
+                                generator, "_generate_meeting_notes", return_value=None
+                            ):
+                                result = generator._generate_notes_for_day(
+                                    test_date,
+                                    [mock_transcription_file],
+                                    False,
+                                    "custom-notes",
+                                )
+
+                                assert result["success"] is False
