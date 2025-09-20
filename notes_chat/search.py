@@ -67,6 +67,7 @@ class LiveSearchSession:
                 (meeting_title, filename, full_path)
                 for meeting_title, filename, full_path in self.notes
                 if self.search_term.lower() in meeting_title.lower()
+                or self.search_term.lower() in filename.lower()
             ]
 
         terminal_height = shutil.get_terminal_size().lines

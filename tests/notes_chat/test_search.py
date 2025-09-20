@@ -174,6 +174,27 @@ class TestLiveSearchSession:
         assert len(filtered_titles) == 1
         assert "Meeting Notes - September 13, 2025" in filtered_titles
 
+    def test_filter_notes_filename_search(self, search_session):
+        """Test searching by filename"""
+        search_session.search_term = "meetings_2025_09_14"
+        search_session.filter_notes()
+
+        filtered_titles = [
+            meeting_title for meeting_title, _, _ in search_session.filtered_notes
+        ]
+        assert len(filtered_titles) == 1
+        assert "Meeting Notes - September 14, 2025" in filtered_titles
+
+    def test_filter_notes_filename_partial_match(self, search_session):
+        """Test partial filename matching"""
+        search_session.search_term = "2025_09"
+        search_session.filter_notes()
+
+        filtered_titles = [
+            meeting_title for meeting_title, _, _ in search_session.filtered_notes
+        ]
+        assert len(filtered_titles) == 3  # All files have "2025_09" in filename
+
     def test_filter_notes_multiple_matches(self, search_session):
         """Test filtering with multiple matches"""
         search_session.search_term = "2025"
