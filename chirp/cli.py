@@ -184,6 +184,23 @@ def record(
 
 
 @app.command(rich_help_panel=CHAT_PANEL)
+def search():
+    """Live search through your note titles"""
+    try:
+        settings = get_settings()
+        from notes_chat.search import LiveSearchSession
+
+        session = LiveSearchSession(settings)
+        session.start()
+
+    except KeyboardInterrupt:
+        console.print("\n[dim]Search cancelled[/dim]")
+    except Exception as e:
+        console.print(f"[red]❌ Error during search: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command(rich_help_panel=CHAT_PANEL)
 def ask(
     question: Optional[str] = typer.Option(
         None,
