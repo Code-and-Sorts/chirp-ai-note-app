@@ -27,7 +27,7 @@ app = typer.Typer(
 console = Console()
 
 RECORDING_PANEL = "🎙️  Recording"
-CHAT_PANEL = "💬 Ask"
+CHAT_PANEL = "💬 Notes"
 PROCESSING_PANEL = "⚡ Processing"
 SETUP_PANEL = "⚙️  Setup & Diagnostics"
 INFO_PANEL = "ℹ️  Information"
@@ -271,30 +271,8 @@ def transcribe(
         )
 
 
-@app.command(name="transcribe-and-notes", rich_help_panel=PROCESSING_PANEL)
-def transcribe_and_notes(
-    input_dir: Optional[Path] = typer.Option(
-        None, "--input", "-i", help="Input directory for audio files"
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Process all files, including already processed ones",
-    ),
-):
-    """Process audio files (transcribe + generate notes)"""
-    get_settings()
-
-    try:
-        transcribe(input_dir=input_dir, force=force)
-        generate_notes(force=force)
-    except Exception as e:
-        console.print(f"[red]Error in process command: {e}[/red]")
-
-
-@app.command(name="generate-notes", rich_help_panel=PROCESSING_PANEL)
-def generate_notes(
+@app.command(rich_help_panel=PROCESSING_PANEL)
+def generate(
     force: bool = typer.Option(
         False, "--force", "-f", help="Regenerate notes even if they exist"
     ),
@@ -322,8 +300,30 @@ def generate_notes(
         console.print(f"[red]❌ Failed to generate notes: {result['error']}[/red]")
 
 
-@app.command(name="notes-index", rich_help_panel=PROCESSING_PANEL)
-def notes_index(
+@app.command(name="transcribe-and-generate", rich_help_panel=PROCESSING_PANEL)
+def transcribe_and_generate(
+    input_dir: Optional[Path] = typer.Option(
+        None, "--input", "-i", help="Input directory for audio files"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Process all files, including already processed ones",
+    ),
+):
+    """Process audio files (transcribe + generate notes)"""
+    get_settings()
+
+    try:
+        transcribe(input_dir=input_dir, force=force)
+        generate(force=force)
+    except Exception as e:
+        console.print(f"[red]Error in process command: {e}[/red]")
+
+
+@app.command(rich_help_panel=PROCESSING_PANEL)
+def index(
     force: bool = typer.Option(False, "--force", help="Force full rebuild of index"),
 ):
     """Build or rebuild the notes search index"""
