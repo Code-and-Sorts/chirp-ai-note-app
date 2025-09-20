@@ -93,96 +93,112 @@ def test_ac7_clean_exit_conditions():
     assert should_exit_on_double_ctrl_c
 
 
-@patch("notes_chat.interactive.retrieve_context")
-@patch("notes_chat.interactive.get_cached_answer")
-@patch("notes_chat.interactive.generate_answer")
-@patch("notes_chat.interactive.cache_answer")
+@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
 @patch("notes_chat.interactive.console.print")
-def test_handle_question_success(
-    mock_print, mock_cache, mock_generate, mock_get_cached, mock_retrieve, chat_session
-):
-    mock_retrieve.return_value = {
-        "success": True,
-        "context": "test context",
-        "retrieved_ids": ["id1", "id2"],
-        "sources": ["source1", "source2"],
-    }
-    mock_get_cached.return_value = None
-    mock_generate.return_value = {"success": True, "answer": "test answer"}
+def test_handle_question_search_success(mock_print, mock_stream, chat_session):
+    mock_stream.return_value = [
+        {"type": "thinking", "message": "Searching..."},
+        {"type": "token", "content": "test"},
+        {"type": "token", "content": " answer"},
+        {
+            "type": "complete",
+            "answer": "test answer",
+            "sources": ["source1", "source2"],
+        },
+    ]
 
-    chat_session.handle_question("test question")
+    chat_session.handle_question("what was discussed in the meeting")
 
-    mock_retrieve.assert_called_once_with(chat_session.config, "test question")
-    mock_generate.assert_called_once_with(
-        chat_session.config, "test question", "test context"
+    mock_stream.assert_called_once_with(
+        chat_session.config, "what was discussed in the meeting"
     )
-    mock_cache.assert_called_once_with("test question", ["id1", "id2"], "test answer")
 
 
-@patch("notes_chat.interactive.retrieve_context")
+@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
 @patch("notes_chat.interactive.console.print")
-def test_handle_question_no_documents_found(mock_print, mock_retrieve, chat_session):
-    mock_retrieve.return_value = {
-        "success": False,
-        "error": "No documents found matching your query",
-        "suggestion": "Try different keywords",
-    }
+def test_handle_question_conversational_success(mock_print, mock_stream, chat_session):
+    mock_stream.return_value = [
+        {"type": "thinking", "message": "Having a chat..."},
+        {"type": "token", "content": "Hello!"},
+        {"type": "token", "content": " I'm Chirp"},
+        {"type": "complete", "answer": "Hello! I'm Chirp"},
+    ]
+
+    chat_session.handle_question("hi")
+
+    mock_stream.assert_called_once_with(chat_session.config, "hi")
+
+
+@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
+@patch("notes_chat.interactive.console.print")
+def test_handle_question_conversational_failure(mock_print, mock_stream, chat_session):
+    mock_stream.return_value = [
+        {"type": "thinking", "message": "Processing..."},
+        {"type": "error", "message": "Connection failed"},
+    ]
+
+    chat_session.handle_question("hello")
+
+    mock_stream.assert_called_once_with(chat_session.config, "hello")
+
+
+@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
+@patch("notes_chat.interactive.console.print")
+def test_handle_question_no_documents_found(mock_print, mock_stream, chat_session):
+    mock_stream.return_value = [
+        {"type": "thinking", "message": "Searching..."},
+        {
+            "type": "thinking",
+            "message": "No results found, generating helpful response...",
+        },
+        {"type": "token", "content": "I couldn't find"},
+        {"type": "token", "content": " any relevant information"},
+        {"type": "complete", "answer": "I couldn't find any relevant information"},
+    ]
 
     chat_session.handle_question("test question")
-    mock_retrieve.assert_called_once_with(chat_session.config, "test question")
+    mock_stream.assert_called_once_with(chat_session.config, "test question")
 
 
-@patch("notes_chat.interactive.retrieve_context")
-@patch("notes_chat.interactive.get_cached_answer")
+@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
 @patch("notes_chat.interactive.console.print")
-def test_handle_question_cached_answer(
-    mock_print, mock_get_cached, mock_retrieve, chat_session
-):
-    mock_retrieve.return_value = {
-        "success": True,
-        "context": "test context",
-        "retrieved_ids": ["id1", "id2"],
-        "sources": ["source1", "source2"],
-    }
-    mock_get_cached.return_value = "cached answer"
-
-    with patch("notes_chat.interactive.generate_answer") as mock_generate:
-        chat_session.handle_question("test question")
-        mock_retrieve.assert_called_once_with(chat_session.config, "test question")
-        mock_get_cached.assert_called_once_with("test question", ["id1", "id2"])
-        mock_generate.assert_not_called()
-
-
-@patch("notes_chat.interactive.retrieve_context")
-@patch("notes_chat.interactive.console.print")
-def test_handle_question_retrieval_error(mock_print, mock_retrieve, chat_session):
-    mock_retrieve.return_value = {"success": False, "error": "Index error"}
+def test_handle_question_cached_answer(mock_print, mock_stream, chat_session):
+    mock_stream.return_value = [
+        {"type": "thinking", "message": "Searching..."},
+        {
+            "type": "complete",
+            "answer": "cached answer",
+            "sources": ["source1"],
+            "from_cache": True,
+        },
+    ]
 
     chat_session.handle_question("test question")
-    mock_retrieve.assert_called_once_with(chat_session.config, "test question")
+    mock_stream.assert_called_once_with(chat_session.config, "test question")
 
 
-@patch("notes_chat.interactive.retrieve_context")
-@patch("notes_chat.interactive.get_cached_answer")
-@patch("notes_chat.interactive.generate_answer")
+@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
 @patch("notes_chat.interactive.console.print")
-def test_handle_question_generation_failure(
-    mock_print, mock_generate, mock_get_cached, mock_retrieve, chat_session
-):
-    mock_retrieve.return_value = {
-        "success": True,
-        "context": "test context",
-        "retrieved_ids": ["id1", "id2"],
-        "sources": ["source1", "source2"],
-    }
-    mock_get_cached.return_value = None
-    mock_generate.return_value = {"success": False, "error": "Generation failed"}
+def test_handle_question_retrieval_error(mock_print, mock_stream, chat_session):
+    mock_stream.return_value = [
+        {"type": "thinking", "message": "Searching..."},
+        {"type": "error", "message": "Index error"},
+    ]
 
     chat_session.handle_question("test question")
-    mock_retrieve.assert_called_once_with(chat_session.config, "test question")
-    mock_generate.assert_called_once_with(
-        chat_session.config, "test question", "test context"
-    )
+    mock_stream.assert_called_once_with(chat_session.config, "test question")
+
+
+@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
+@patch("notes_chat.interactive.console.print")
+def test_handle_question_generation_failure(mock_print, mock_stream, chat_session):
+    mock_stream.return_value = [
+        {"type": "thinking", "message": "Generating answer..."},
+        {"type": "error", "message": "Generation failed"},
+    ]
+
+    chat_session.handle_question("test question")
+    mock_stream.assert_called_once_with(chat_session.config, "test question")
 
 
 def test_empty_input_logic():

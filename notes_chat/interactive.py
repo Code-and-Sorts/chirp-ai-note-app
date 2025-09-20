@@ -1,15 +1,12 @@
 import signal
 import sys
-from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from config.settings import ChirpSettings
-from notes_chat.cache import cache_answer, get_cached_answer
-from notes_chat.prompting import generate_answer
-from notes_chat.retrieval import retrieve_context
+from notes_chat.prompting import enhanced_search_and_answer_stream
 
 console = Console()
 
@@ -104,7 +101,6 @@ class InteractiveChatSession:
     def __init__(self, config: ChirpSettings):
         self.config = config
         self.exit_attempts = 0
-        self.chat_history: list[dict[str, Any]] = []
 
     def start(self):
         console.print(
@@ -114,6 +110,7 @@ class InteractiveChatSession:
                 "[dim]Press Ctrl+C twice to exit[/dim]",
                 border_style="blue",
                 padding=(1, 2),
+                expand=False,
             )
         )
 
@@ -125,7 +122,6 @@ class InteractiveChatSession:
 
                 if question.strip():
                     self.exit_attempts = 0
-                    self._add_to_history("question", question)
                     self.handle_question(question)
 
                 elif question == "" and not was_ctrl_c:
@@ -137,7 +133,7 @@ class InteractiveChatSession:
                 elif was_ctrl_c and not was_typing:
                     self.exit_attempts += 1
                     if self.exit_attempts >= 2:
-                        console.print("\n[dim]Goodbye![/dim]")
+                        console.print("\n[dim]Goodbye![/dim]\n")
                         sys.exit(0)
                     else:
                         console.print("\n[dim]Press Ctrl+C again to exit[/dim]")
@@ -145,103 +141,106 @@ class InteractiveChatSession:
             except KeyboardInterrupt:
                 self.exit_attempts += 1
                 if self.exit_attempts >= 2:
-                    console.print("\n[dim]Goodbye![/dim]")
+                    console.print("\n[dim]Goodbye![/dim]\n")
                     sys.exit(0)
                 else:
                     console.print("\n[dim]Press Ctrl+C again to exit[/dim]")
             except EOFError:
-                console.print("\n[dim]Goodbye![/dim]")
+                console.print("\n[dim]Goodbye![/dim]\n")
                 sys.exit(0)
             except Exception as e:
                 console.print(f"[red]Error: {e}[/red]")
 
-    def _add_to_history(self, entry_type, content):
-        self.chat_history.append({"type": entry_type, "content": content})
-
-    def _display_chat_in_box(self):
-        """Display the current chat history in a bordered box"""
-        if not self.chat_history:
-            return
-
-        recent_history = self.chat_history[-10:]
-        chat_lines = []
-
-        for entry in recent_history:
-            if entry["type"] == "question":
-                chat_lines.append(f"[bold blue]Q:[/bold blue] {entry['content']}")
-            elif entry["type"] == "answer":
-                chat_lines.append(f"[green]A:[/green] {entry['content']}")
-            elif entry["type"] == "message":
-                chat_lines.append(f"[dim]{entry['content']}[/dim]")
-
-        chat_content = "\n".join(chat_lines)
-        console.print(
-            Panel(
-                chat_content, border_style="cyan", title="Chat History", padding=(1, 2)
-            )
-        )
-
     def handle_question(self, question: str):
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            task = progress.add_task("Searching...", total=None)
+        progress = None
+        current_thinking_msg = ""
+        console.print("")  # Add spacing
 
-            try:
-                context_result = retrieve_context(self.config, question)
+        try:
+            answer_parts = []
+            sources = None
+            from_cache = False
 
-                if not context_result.get("success"):
-                    error = context_result.get("error", "Unknown error")
-                    if "no documents found" in error.lower():
-                        self._add_to_history(
-                            "message", "📭 No relevant documents found."
+            for stream_event in enhanced_search_and_answer_stream(
+                self.config, question
+            ):
+                event_type = stream_event.get("type", "")
+
+                if event_type == "thinking":
+                    thinking_msg = stream_event.get("message", "Processing...")
+                    if thinking_msg != current_thinking_msg:
+                        if progress:
+                            progress.stop()
+                        progress = Progress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            console=console,
+                            transient=True,
                         )
-                        if context_result.get("suggestion"):
-                            self._add_to_history(
-                                "message", f"💡 Try: {context_result['suggestion']}"
-                            )
-                    else:
-                        self._add_to_history(
-                            "message", f"❌ Context retrieval failed: {error}"
+                        progress.start()
+                        progress.add_task(thinking_msg, total=None)
+                        current_thinking_msg = thinking_msg
+
+                elif event_type == "token":
+                    if progress:
+                        progress.stop()
+                        progress = None
+                    token = stream_event.get("content", "")
+                    answer_parts.append(token)
+
+                    if len(answer_parts) == 1:
+                        console.print(
+                            "[magenta]>[/magenta] chirp 🐣: ", end="", highlight=False
                         )
-                    self._display_chat_in_box()
+
+                    console.print(token, end="", highlight=False)
+
+                elif event_type == "complete":
+                    if progress:
+                        progress.stop()
+                        progress = None
+
+                    answer = stream_event.get("answer", "")
+                    sources = stream_event.get("sources")
+                    from_cache = stream_event.get("from_cache", False)
+
+                    # If we didn't stream tokens (cached response), print the full answer
+                    if not answer_parts and answer:
+                        console.print(
+                            "[magenta]>[/magenta] chirp 🐣: ", end="", highlight=False
+                        )
+                        console.print(answer)
+
+                    break
+
+                elif event_type == "error":
+                    if progress:
+                        progress.stop()
+                        progress = None
+                    error_msg = stream_event.get("message", "Unknown error")
+                    console.print(f"\n❌ {error_msg}")
                     return
 
-                context = context_result["context"]
-                retrieved_ids = context_result["retrieved_ids"]
+            # Clean up progress if still running
+            if progress:
+                progress.stop()
 
-                cached_answer = get_cached_answer(question, retrieved_ids)
-                if cached_answer:
-                    progress.update(task, description="Using cached answer...")
-                    answer = cached_answer
-                else:
-                    progress.update(task, description="Generating answer...")
-                    answer_result = generate_answer(self.config, question, context)
+            # Print sources if available
+            if sources:
+                console.print("")  # Add spacing
+                sources_text = "📚 Sources:\n" + "\n".join(
+                    f"  • {source}" for source in sources
+                )
+                console.print(f"[dim]{sources_text}[/dim]")
 
-                    if not answer_result.get("success"):
-                        self._add_to_history(
-                            "message",
-                            f"❌ Answer generation failed: {answer_result.get('error', 'Unknown error')}",
-                        )
-                        self._display_chat_in_box()
-                        return
+            # Print metadata
+            if from_cache:
+                console.print("\n[dim]cached[/dim]")
 
-                    answer = answer_result["answer"]
-                    cache_answer(question, retrieved_ids, answer)
-
-                self._add_to_history("answer", answer)
-                self._display_chat_in_box()
-
-                if context_result.get("sources"):
-                    sources_text = "📚 Sources:\n" + "\n".join(
-                        f"  • {source}" for source in context_result["sources"]
-                    )
-                    self._add_to_history("message", sources_text)
-                    console.print(f"\n[dim]{sources_text}[/dim]")
-
-            except Exception as e:
-                self._add_to_history("message", f"❌ Query failed: {e}")
-                self._display_chat_in_box()
+        except Exception as e:
+            if progress:
+                progress.stop()
+            console.print(f"\n❌ Query failed: {e}")
+        finally:
+            if progress:
+                progress.stop()

@@ -28,6 +28,9 @@ dev-install: install-deps ## Install development dependencies
 	uv pip install -e .
 	uv run pre-commit install
 
+install-venv: ## Install chirp to current virtual environment in editable mode
+	uv pip install -e .
+
 # Development commands
 run: ## Run Chirp in development mode
 	uv run python -m chirp.cli
