@@ -1,5 +1,3 @@
-import os
-import subprocess
 import sys
 import termios
 import tty
@@ -10,6 +8,7 @@ from rich.live import Live
 from rich.text import Text
 
 from config.settings import ChirpSettings
+from notes.note_editor import ManualNoteEditor
 
 console = Console()
 
@@ -25,14 +24,15 @@ def set_testing_mode(enabled: bool):
 class LiveSearchSession:
     def __init__(self, config: ChirpSettings):
         self.config = config
-        self.notes: list[tuple[str, Path]] = []
-        self.filtered_notes: list[tuple[str, Path]] = []
+        self.notes: list[tuple[str, str, Path]] = []
+        self.filtered_notes: list[tuple[str, str, Path]] = []
         self.selected_index = 0
         self.search_term = ""
-        self.live = None
+        self.live: Live | None = None
+        self.pending_note_path: Path | None = None
         self.load_notes()
 
-    def load_notes(self):
+    def load_notes(self) -> None:
         """Load meeting names from the notes directory"""
         notes_dir = Path(self.config.directories.notes)
         if not notes_dir.exists():
@@ -55,7 +55,7 @@ class LiveSearchSession:
 
         self.filtered_notes = []
 
-    def filter_notes(self):
+    def filter_notes(self) -> None:
         """Filter notes based on current search term"""
         import shutil
 
@@ -76,7 +76,7 @@ class LiveSearchSession:
         if self.selected_index > max_visible_index:
             self.selected_index = max(0, max_visible_index)
 
-    def create_display(self):
+    def create_display(self) -> Group:
         """Create the display content for Rich Live"""
         import shutil
 
@@ -115,32 +115,21 @@ class LiveSearchSession:
         display_items = [search_text, Text(""), header_text, results_text]
         return Group(*display_items)
 
-    def update_display(self):
+    def update_display(self) -> None:
         """Update the live display"""
         if self.live:
             self.live.update(self.create_display())
 
-    def open_selected_note(self):
+    def open_selected_note(self) -> None:
         """Open the selected note file"""
         if not self.filtered_notes or self.selected_index >= len(self.filtered_notes):
             return
 
         _, _, note_path = self.filtered_notes[self.selected_index]
+        self.pending_note_path = note_path
 
         if _TESTING_MODE:
             console.print(f"\n[dim]Testing mode: Would open {note_path}[/dim]")
-            return
-
-        try:
-            if os.name == "posix":  # macOS/Linux
-                subprocess.run(["open", str(note_path)], check=True)
-            elif os.name == "nt":  # Windows
-                subprocess.run(["start", str(note_path)], shell=True, check=True)
-        except subprocess.CalledProcessError:
-            console.print(f"\n[green]Note location:[/green] {note_path}")
-        except Exception as e:
-            console.print(f"\n[yellow]Could not open file: {e}[/yellow]")
-            console.print(f"[green]Note location:[/green] {note_path}")
 
     def handle_key(self, key_code: int) -> bool:
         """Handle keyboard input. Returns True to continue, False to exit"""
@@ -179,7 +168,7 @@ class LiveSearchSession:
 
         return True
 
-    def start(self):
+    def start(self) -> None:
         """Start the interactive search session"""
         if not self.notes:
             console.print(
@@ -201,6 +190,7 @@ class LiveSearchSession:
             )
             return
 
+        note_to_open: Path | None = None
         try:
             tty.setcbreak(sys.stdin.fileno())
 
@@ -230,6 +220,8 @@ class LiveSearchSession:
 
                 self.update_display()
 
+            note_to_open = self.pending_note_path
+
         except KeyboardInterrupt:
             pass
         finally:
@@ -237,4 +229,125 @@ class LiveSearchSession:
                 self.live.stop()
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, original_settings)
             console.clear()
-            console.print("\n[dim]Search ended[/dim]")
+
+        self.pending_note_path = None
+
+        if note_to_open and not _TESTING_MODE:
+            self._open_note_in_editor(note_to_open)
+
+        console.print("\n[dim]Search ended[/dim]")
+
+    def _open_note_in_editor(self, note_path: Path) -> None:
+        try:
+            original_content = note_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            console.print(f"[yellow]Note not found: {note_path}[/yellow]")
+            return
+        except Exception as exc:
+            console.print(f"[red]Failed to read note: {exc}[/red]")
+            return
+
+        metadata, body = self._parse_front_matter(original_content)
+        readonly = self._is_readonly(metadata, note_path)
+        display_content = body if metadata else original_content
+        title = self._extract_title(display_content, note_path)
+
+        editor = ManualNoteEditor(title, display_content, readonly=readonly)
+
+        try:
+            result = editor.run()
+        except KeyboardInterrupt:
+            console.print("\n[dim]Editor cancelled[/dim]")
+            return
+        except Exception as exc:
+            console.print(f"[red]❌ Editor error: {exc}[/red]")
+            return
+
+        if readonly or not result.saved:
+            if readonly:
+                console.print("[dim]Closed read-only note without changes.[/dim]")
+            else:
+                console.print("[dim]No changes saved.[/dim]")
+            return
+
+        updated_content = result.content
+        if metadata:
+            updated_content = self._apply_front_matter(updated_content, metadata)
+
+        try:
+            note_path.write_text(updated_content, encoding="utf-8")
+            console.print(f"[green]✅ Saved changes to {note_path.name}[/green]")
+        except Exception as exc:
+            console.print(f"[red]❌ Failed to write note: {exc}[/red]")
+
+    def _parse_front_matter(self, content: str) -> tuple[list[tuple[str, str]], str]:
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return [], content
+
+        metadata_lines: list[str] = []
+        closing_index = None
+        for idx in range(1, len(lines)):
+            if lines[idx].strip() == "---":
+                closing_index = idx
+                break
+            metadata_lines.append(lines[idx])
+
+        if closing_index is None:
+            return [], content
+
+        body_lines = lines[closing_index + 1 :]
+        body = "\n".join(body_lines)
+        if content.endswith("\n"):
+            body += "\n"
+
+        metadata: list[tuple[str, str]] = []
+        for line in metadata_lines:
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            metadata.append((key.strip(), value.strip()))
+
+        return metadata, body
+
+    def _apply_front_matter(self, body: str, metadata: list[tuple[str, str]]) -> str:
+        if not metadata:
+            return body
+
+        header_lines = ["---"]
+        header_lines.extend(f"{key}: {value}" for key, value in metadata)
+        header_lines.append("---")
+
+        stripped_body = body.lstrip("\n")
+        content = "\n".join(header_lines)
+        if stripped_body:
+            content = f"{content}\n\n{stripped_body}"
+        else:
+            content = f"{content}\n"
+
+        if not content.endswith("\n"):
+            content += "\n"
+
+        return content
+
+    def _is_readonly(self, metadata: list[tuple[str, str]], note_path: Path) -> bool:
+        if not metadata:
+            return False
+
+        normalized = {key.lower(): value for key, value in metadata}
+        readonly_value = normalized.get("readonly")
+        if readonly_value and readonly_value.lower() in {"true", "1", "yes"}:
+            return True
+
+        source = normalized.get("chirp_source")
+        if source and source.lower() == "generated":
+            return True
+
+        return False
+
+    def _extract_title(self, content: str, note_path: Path) -> str:
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# "):
+                return stripped[2:].strip() or note_path.stem
+        return note_path.stem

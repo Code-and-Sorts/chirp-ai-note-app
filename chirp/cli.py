@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,8 @@ from rich.table import Table
 
 from chirp.exceptions import *
 from config.settings import get_settings
+from notes.manual_note_manager import ManualNoteManager
+from notes.note_editor import ManualNoteEditor
 from notes.note_generator import NoteGenerator
 from recorder.audio_recorder import AudioRecorder
 from recorder.device_manager import DeviceManager
@@ -198,6 +201,61 @@ def search():
     except Exception as e:
         console.print(f"[red]❌ Error during search: {str(e)}[/red]")
         raise typer.Exit(1)
+
+
+@app.command(rich_help_panel=CHAT_PANEL)
+def notes(
+    name: Optional[str] = typer.Argument(
+        None,
+        metavar="[NAME]",
+        help="Optional name for the note (defaults to note-YYYY-MM-DD)",
+    ),
+):
+    """Create or edit manual notes in the terminal editor."""
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        console.print(
+            "[yellow]Interactive notes editor requires a terminal. Please run from an interactive shell.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    settings = get_settings()
+    manager = ManualNoteManager(settings)
+
+    try:
+        context = manager.prepare_note(name)
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[red]❌ Failed to prepare note: {exc}[/red]")
+        raise typer.Exit(1)
+
+    editor = ManualNoteEditor(context.title, context.content)
+
+    try:
+        result = editor.run()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Editor cancelled[/dim]")
+        raise typer.Exit(1)
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[red]❌ Editor error: {exc}[/red]")
+        raise typer.Exit(1)
+
+    if not result.saved:
+        if context.is_new:
+            console.print("[yellow]Note discarded (not saved).[/yellow]")
+        else:
+            console.print("[yellow]Changes not saved.[/yellow]")
+        raise typer.Exit(0)
+
+    try:
+        context.path.write_text(result.content, encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[red]❌ Failed to write note: {exc}[/red]")
+        raise typer.Exit(1)
+
+    if context.is_new:
+        console.print(f"[green]✅ Created note: {context.path}[/green]")
+    else:
+        console.print(f"[green]✅ Updated note: {context.path}[/green]")
 
 
 @app.command(rich_help_panel=CHAT_PANEL)

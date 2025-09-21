@@ -283,3 +283,45 @@ class TestNoteGenerator:
                                 )
 
                                 assert result["success"] is False
+
+    def test_generated_note_includes_front_matter(self, mock_settings, tmp_path):
+        from datetime import datetime
+        from pathlib import Path
+
+        mock_settings.directories = Mock()
+        mock_settings.directories.notes = tmp_path
+
+        with patch("notes.note_generator.TemplateEngine") as mock_template_engine:
+            template_instance = mock_template_engine.return_value
+            template_instance.render_daily_notes.return_value = "# Daily Summary\n"
+            template_instance.render_meeting_section.return_value = "Section"
+
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor") as mock_compressor:
+                    mock_compressor.return_value.decompress_json.return_value = {
+                        "success": True
+                    }
+
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        with patch.object(
+                            generator,
+                            "_generate_meeting_notes",
+                            return_value={"dummy": "data"},
+                        ):
+                            transcription_file = tmp_path / "example.json"
+                            transcription_file.write_text("{}", encoding="utf-8")
+
+                            result = generator._generate_notes_for_day(
+                                datetime(2024, 1, 1), [transcription_file], force=True
+                            )
+
+        assert result["success"] is True
+        note_path = Path(result["path"])
+        content = note_path.read_text(encoding="utf-8")
+
+        assert content.startswith("---\n")
+        assert "chirp_source: generated" in content.splitlines()
+        assert "readonly: true" in content.splitlines()
+        assert "# Daily Summary" in content

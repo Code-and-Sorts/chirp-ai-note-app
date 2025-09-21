@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from config.settings import ChirpSettings
+from notes.note_editor import EditorResult
 from notes_chat.search import LiveSearchSession
 
 
@@ -15,19 +16,7 @@ def enable_testing_mode():
 
     set_testing_mode(True)
 
-    def no_subprocess(*args, **kwargs):
-        """Mock function that prevents any subprocess execution"""
-        return None
-
-    with (
-        patch("subprocess.run", side_effect=no_subprocess) as mock_run,
-        patch(
-            "notes_chat.search.subprocess.run", side_effect=no_subprocess
-        ) as mock_search_run,
-        patch("subprocess.Popen", side_effect=no_subprocess) as mock_popen,
-        patch("os.system", side_effect=no_subprocess) as mock_system,
-    ):
-        yield mock_run, mock_search_run, mock_popen, mock_system
+    yield
 
     set_testing_mode(False)
 
@@ -330,6 +319,7 @@ class TestLiveSearchSession:
         mock_print.assert_called()
         call_args = mock_print.call_args[0][0]
         assert "Testing mode: Would open" in call_args
+        assert search_session.pending_note_path is not None
 
     @patch("notes_chat.search.console.print")
     def test_open_selected_note_failure(self, mock_print, search_session):
@@ -343,6 +333,7 @@ class TestLiveSearchSession:
         mock_print.assert_called()
         call_args = mock_print.call_args[0][0]
         assert "Testing mode: Would open" in call_args
+        assert search_session.pending_note_path is not None
 
     def test_open_selected_note_empty_results(self, search_session):
         """Test opening note with empty filtered results"""
@@ -368,6 +359,56 @@ class TestLiveSearchSession:
         mock_print.assert_called()
         call_args = mock_print.call_args[0][0]
         assert "Testing mode: Would open" in call_args
+        assert search_session.pending_note_path is not None
+
+    def test_open_note_in_editor_readonly(self, tmp_path, mock_config, monkeypatch):
+        note_path = tmp_path / "note.md"
+        note_path.write_text(
+            "---\nchirp_source: generated\nreadonly: true\n---\n\n# Title\nContent\n",
+            encoding="utf-8",
+        )
+
+        session = LiveSearchSession(mock_config)
+
+        captured = {}
+
+        class DummyEditor:
+            def __init__(self, title, content, readonly):
+                captured["title"] = title
+                captured["content"] = content
+                captured["readonly"] = readonly
+
+            def run(self):
+                return EditorResult(content=captured["content"], saved=False)
+
+        monkeypatch.setattr("notes_chat.search.ManualNoteEditor", DummyEditor)
+
+        session._open_note_in_editor(note_path)
+
+        assert captured["readonly"] is True
+        assert note_path.read_text(encoding="utf-8").startswith("---")
+
+    def test_open_note_in_editor_writable(self, tmp_path, mock_config, monkeypatch):
+        note_path = tmp_path / "manual_note.md"
+        note_path.write_text("# Title\nOriginal\n", encoding="utf-8")
+
+        session = LiveSearchSession(mock_config)
+
+        class DummyEditor:
+            def __init__(self, title, content, readonly):
+                self.title = title
+                self.content = content
+                self.readonly = readonly
+
+            def run(self):
+                return EditorResult(content="# Title\nUpdated\n", saved=True)
+
+        monkeypatch.setattr("notes_chat.search.ManualNoteEditor", DummyEditor)
+
+        session._open_note_in_editor(note_path)
+
+        updated = note_path.read_text(encoding="utf-8")
+        assert "Updated" in updated
 
     @patch("notes_chat.search.console.print")
     def test_start_with_no_notes(self, mock_print):

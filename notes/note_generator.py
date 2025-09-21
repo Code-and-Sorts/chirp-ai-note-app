@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -134,10 +134,12 @@ class NoteGenerator:
                 date, meeting_sections, len(meeting_sections), total_duration
             )
 
+            note_content = self._format_generated_note(daily_notes, date)
+
             self.settings.directories.notes.mkdir(parents=True, exist_ok=True)
 
             with open(notes_path, "w", encoding="utf-8") as f:
-                f.write(daily_notes)
+                f.write(note_content)
 
             self._auto_index_note(notes_path)
 
@@ -192,6 +194,57 @@ class NoteGenerator:
 
         except Exception:
             return None
+
+    def _format_generated_note(self, body: str, note_date: datetime) -> str:
+        metadata = {
+            "chirp_source": "generated",
+            "readonly": True,
+            "generated_at": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat(),
+            "note_date": note_date.date().isoformat(),
+        }
+        cleaned_body = self._strip_front_matter(body)
+        return self._apply_front_matter(cleaned_body, metadata)
+
+    def _apply_front_matter(self, body: str, metadata: dict[str, Any]) -> str:
+        header_lines = ["---"]
+        for key, value in metadata.items():
+            header_lines.append(f"{key}: {self._format_front_matter_value(value)}")
+        header_lines.append("---")
+
+        header = "\n".join(header_lines)
+        stripped_body = body.lstrip("\n")
+
+        if stripped_body:
+            content = f"{header}\n\n{stripped_body}"
+        else:
+            content = f"{header}\n"
+
+        if not content.endswith("\n"):
+            content += "\n"
+
+        return content
+
+    def _strip_front_matter(self, content: str) -> str:
+        stripped = content.lstrip()
+        if not stripped.startswith("---"):
+            return content.lstrip("\n")
+
+        remainder = stripped[3:]
+        closing_index = remainder.find("\n---")
+        if closing_index == -1:
+            return content.lstrip("\n")
+
+        after = remainder[closing_index + len("\n---") :]
+        return after.lstrip("\n")
+
+    def _format_front_matter_value(self, value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
 
     def _generate_meeting_title(self, transcript_text: str) -> str:
         prompt = f"""Please analyze this meeting transcript and generate a concise, descriptive title that captures the main topic or purpose of the meeting.
