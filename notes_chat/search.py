@@ -43,7 +43,6 @@ class LiveSearchSession:
                 with open(note_file, encoding="utf-8") as f:
                     lines = f.readlines()
 
-                # Extract main meeting title from # header (first line)
                 for line in lines:
                     line = line.strip()
                     if line.startswith("# "):
@@ -89,24 +88,31 @@ class LiveSearchSession:
         search_text.append(self.search_term)
         search_text.append("█", style="bold")
 
+        header_text = Text()
+        header_text.append("File Name".ljust(30), style="bold blue")
+        header_text.append("Meeting Name", style="bold blue")
+
         results_text = Text()
         if self.filtered_notes:
-            for i, (meeting_title, filename, _full_path) in enumerate(
-                self.filtered_notes[:max_results]
-            ):
-                if i == self.selected_index:
-                    results_text.append("▶ ", style="bold magenta")
-                    results_text.append(filename, style="cyan")
-                    results_text.append(f" {meeting_title}")
-                else:
-                    results_text.append("  ")
-                    results_text.append(filename, style="cyan")
-                    results_text.append(f" {meeting_title}")
+            visible_notes = self.filtered_notes[:max_results]
+            last_index = len(visible_notes) - 1
 
-                if i < len(self.filtered_notes[:max_results]) - 1:
+            for i, (meeting_title, filename, _full_path) in enumerate(visible_notes):
+                line = Text()
+
+                if i == self.selected_index:
+                    line.append(f"{filename}".ljust(30), style="bold cyan on magenta")
+                    line.append(meeting_title, style="bold white on magenta")
+                else:
+                    line.append(f"{filename}".ljust(30), style="cyan")
+                    line.append(meeting_title)
+
+                results_text.append(line)
+
+                if i < last_index:
                     results_text.append("\n")
 
-        display_items = [search_text, Text(""), results_text]
+        display_items = [search_text, Text(""), header_text, results_text]
         return Group(*display_items)
 
     def update_display(self):
@@ -196,7 +202,7 @@ class LiveSearchSession:
             return
 
         try:
-            tty.setraw(sys.stdin.fileno())
+            tty.setcbreak(sys.stdin.fileno())
 
             self.live = Live(
                 self.create_display(), console=console, refresh_per_second=10
