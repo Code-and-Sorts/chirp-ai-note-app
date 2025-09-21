@@ -1,3 +1,0 @@
-## {meeting_date}
-
-{notes}
