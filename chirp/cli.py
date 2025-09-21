@@ -594,7 +594,7 @@ def test():
     else:
         if not external_passed:
             console.print(
-                "\n[red]⚠️  External dependencies missing. Install required software.[/red]"
+                "\n[red]⚠️  External dependencies missing. Install or run required software.[/red]"
             )
         if not config_passed:
             console.print(
