@@ -257,6 +257,32 @@ def notes(
     else:
         console.print(f"[green]✅ Updated note: {context.path}[/green]")
 
+    # Auto-index manual notes on save (minimal change, behind config flag)
+    try:
+        if settings.notes_chat.auto_index:
+            from notes_chat.index import IndexManager
+
+            index_manager = IndexManager(settings)
+            success = index_manager._add_to_index(context.path)
+
+            if success:
+                manifest = index_manager._load_manifest()
+                current_files = index_manager._scan_notes_files()
+
+                file_path = str(context.path)
+                if file_path in current_files:
+                    manifest[file_path] = current_files[file_path]
+                    index_manager._save_manifest(manifest)
+
+                index_manager._rebuild_bm25()
+                console.print(
+                    f"[dim green]✓ Auto-indexed {context.path.name}[/dim green]"
+                )
+    except Exception as e:  # pragma: no cover - defensive
+        console.print(
+            f"[dim yellow]⚠️ Auto-indexing failed for {context.path.name}: {e}[/dim yellow]"
+        )
+
 
 @app.command(rich_help_panel=CHAT_PANEL)
 def ask(
