@@ -1,4 +1,10 @@
-# 🐦 Chirp - Meeting Recorder CLI
+# 🐦 Chirp - AI Meeting Notes CLI
+
+<!-- markdownlint-disable MD033 -->
+<p align="center">
+   <img src=".docs/imgs/chirp-logo.png" alt="Chirp Logo" height="300" />
+</p>
+<!-- markdownlint-enable MD033 -->
 
 **Chirp** is a comprehensive CLI application that captures system audio, transcribes meetings using AI, and generates structured meeting notes automatically. Perfect for remote meetings, interviews, lectures, or any audio content you want to transcribe and summarize.
 
@@ -29,51 +35,35 @@ brew install chirp
 chirp setup
 ```
 
-### Installation (Local Development/Manual)
+### Install BlackHole audio driver
 
-For developers or users who want to run from source:
+- Download from [existential.audio/blackhole](https://existential.audio/blackhole/)
+- Follow the installation guide to set up a multi-output device
 
-1. **Clone and setup everything**:
+### Setup Ollama and AI Models
 
-   ```bash
-   git clone <repository-url>
-   cd chirp-ai-note-app
-   make setup
-   ```
+```bash
+# Install Ollama
+brew install ollama
 
-   This command automatically:
-   - Installs system dependencies (PortAudio)
-   - Installs Python dependencies with uv
-   - Creates required directories
-   - Sets up pre-commit hooks
+# Start Ollama service
+ollama serve
 
-2. **Install BlackHole audio driver**:
-   - Download from [existential.audio/blackhole](https://existential.audio/blackhole/)
-   - Follow the installation guide to set up a multi-output device
+# Install required models
+ollama pull llama3.1:8b        # LLM for note generation and Q&A
+ollama pull nomic-embed-text   # Embedding model for search indexing
+```
 
-3. **Setup Ollama and AI Models**:
+**Required Models**:
 
-   ```bash
-   # Install Ollama
-   brew install ollama
+- `llama3.1:8b`: Main language model for generating notes and answering questions
+- `nomic-embed-text`: Embedding model for semantic search functionality
 
-   # Start Ollama service
-   ollama serve
+### Verify setup
 
-   # Install required models
-   ollama pull llama3.1:8b        # LLM for note generation and Q&A
-   ollama pull nomic-embed-text   # Embedding model for search indexing
-   ```
-
-   **Required Models**:
-   - `llama3.1:8b`: Main language model for generating notes and answering questions
-   - `nomic-embed-text`: Embedding model for semantic search functionality
-
-4. **Verify setup**:
-
-   ```bash
-   make check-deps
-   ```
+```bash
+chirp status
+```
 
 ### Basic Usage
 
@@ -174,6 +164,7 @@ chirp notes ask
 ```
 
 **Features**:
+
 - Beautiful bordered chat interface with animated loading spinners
 - Conversation history displayed in organized panels
 - Smooth Ctrl+C behavior: clear while typing, double Ctrl+C to exit
@@ -212,11 +203,15 @@ chirp notes ask -q "team updates" --no-sources
 
 ### Managing Configuration
 
-```bash
-# View current settings
-chirp config --list
+View current settings:
 
-# Update directories
+```bash
+chirp config --list
+```
+
+Update directories:
+
+```bash
 chirp config --audio-dir ./my-recordings
 chirp config --notes-dir ./my-notes
 ```
@@ -234,155 +229,25 @@ chirp test
 chirp status
 ```
 
-## 🛠️ Development Setup
+## 🧰 Troubleshooting
 
-### Prerequisites
+### Interactive chat not starting
 
-- Python 3.9+
-- macOS (for BlackHole support)
-- Homebrew
-- Git
-
-### Setup
-
-1. **Clone and setup**:
-
-   ```bash
-   git clone <repository-url>
-   cd chirp-ai-note-app
-   make dev-install
-   ```
-
-   This installs all dependencies, sets up pre-commit hooks, and installs the package in development mode.
-
-2. **Install system dependencies**:
-
-   ```bash
-   make install-deps
-   ```
-
-3. **Run tests**:
-
-   ```bash
-   make test
-   make test-coverage
-   ```
-
-4. **Code quality checks**:
-
-   ```bash
-   make style-check  # Linting, formatting, spell check
-   make type-check   # Type checking with mypy
-   make check        # All quality checks
-   ```
-
-### Development Workflow
-
-```bash
-# Complete development workflow
-make dev-workflow  # Style, type-check, test, build
-
-# Individual commands
-make lint          # Check code with ruff
-make format        # Format code with ruff
-make spell-check   # Check spelling with codespell
-make validate      # Validate imports and compilation
-```
-
-### Project Structure
-
-```text
-chirp-ai-note-app/
-├── chirp/                 # Main CLI application
-│   ├── cli.py            # CLI interface with Typer
-│   └── exceptions.py     # Custom exceptions
-├── config/               # Configuration management
-│   └── settings.py      # Pydantic settings with YAML
-├── recorder/             # Audio recording modules
-│   ├── audio_recorder.py
-│   └── device_manager.py
-├── transcriber/          # Transcription and processing
-│   ├── whisper_transcriber.py
-│   ├── batch_processor.py
-│   └── compression.py
-├── notes/               # Note generation
-│   ├── note_generator.py
-│   ├── template_engine.py
-│   └── daily_aggregator.py
-├── notes_chat/          # Search and query functionality
-│   ├── index.py
-│   ├── retrieval.py
-│   ├── prompting.py
-│   └── cache.py
-├── utils/               # Utilities
-│   ├── file_utils.py
-│   ├── time_utils.py
-│   └── popup_manager.py
-├── templates/           # Markdown templates
-├── config/             # Configuration files
-├── pyproject.toml      # Project configuration
-├── Makefile           # Development commands
-└── .pre-commit-config.yaml
-```
-
-### Available Make Commands
-
-```bash
-make help              # Show all commands
-make install          # Install production dependencies
-make dev-install      # Install development dependencies
-make test             # Run tests
-make lint             # Run linting
-make format           # Format code
-make style-check      # Check code style
-make build            # Build package
-make clean            # Clean build artifacts
-```
-
-### Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run `make check` to ensure code quality
-5. Submit a pull request
-
-## 🎯 Use Cases
-
-- **Remote Meetings**: Record Zoom, Teams, or any video call audio
-- **Interviews**: Transcribe and summarize job interviews or research interviews
-- **Lectures**: Convert educational content into structured notes
-- **Brainstorming Sessions**: Capture ideas and generate actionable summaries
-- **Client Calls**: Create professional meeting summaries automatically
-- **Meeting Research**: Quickly find past decisions, action items, or specific discussions
-
-## 🔧 Troubleshooting
-
-### Search and Chat Issues
-
-**"No relevant documents found"**:
-1. Make sure you have generated notes: `chirp notes`
-2. Build the search index: `chirp notes index --force`
-3. Verify Ollama models are installed: `ollama list`
-
-**"Failed to get embeddings" during indexing**:
-1. Ensure Ollama is running: `ollama serve`
-2. Install the embedding model: `ollama pull nomic-embed-text`
-3. Check Ollama is accessible: `curl http://localhost:11434/api/version`
-
-**Interactive chat not starting**:
 1. Verify the index exists: `chirp notes index`
 2. Check that you have notes in the `notes-out/` directory
 3. Ensure all dependencies are installed: `chirp test`
+4. Check Ollama is accessible: `curl http://localhost:11434/api/version`
 
 ### Audio Recording Issues
 
 **BlackHole not detected**:
+
 1. Download and install BlackHole from [existential.audio/blackhole](https://existential.audio/blackhole/)
 2. Set up a multi-output device in Audio MIDI Setup
 3. Verify detection: `chirp devices`
 
 **Recording fails to start**:
+
 1. Check audio permissions in System Preferences > Security & Privacy > Microphone
 2. Verify BlackHole installation: `chirp test`
 3. List available devices: `chirp devices`
@@ -390,11 +255,13 @@ make clean            # Clean build artifacts
 ### AI/LLM Issues
 
 **Transcription fails**:
+
 1. Check that faster-whisper is properly installed
 2. Verify audio file format is supported
 3. Try with a smaller audio file first
 
 **Note generation fails**:
+
 1. Ensure Ollama is running: `ollama serve`
 2. Verify the model is installed: `ollama pull llama3.1:8b`
 3. Check Ollama logs for errors
@@ -402,6 +269,7 @@ make clean            # Clean build artifacts
 ### Configuration Issues
 
 **Wrong directories or missing files**:
+
 1. Check current configuration: `chirp config --list`
 2. Verify directory structure: `chirp status`
 3. Reset to defaults by removing `config/config.yaml`
@@ -423,4 +291,7 @@ make clean            # Clean build artifacts
 
 - Check `chirp --help` for command-line help
 - Run `chirp test` to diagnose setup issues
-- See the Makefile for all available development commands
+
+## 👩‍💻 For Developers
+
+Developer setup, commands, and contribution guidelines have moved to `.docs/DEVELOPMENT.md`.

@@ -1,4 +1,10 @@
-# Chirp - AI Meeting Notes CLI
+# 🐦 Chirp - AI Meeting Notes CLI
+
+<!-- markdownlint-disable MD033 -->
+<p align="center">
+   <img src=".docs/imgs/chirp-logo.png" alt="Chirp Logo" height="300" />
+</p>
+<!-- markdownlint-enable MD033 -->
 
 🐦 A powerful CLI tool that records meetings, transcribes audio to text, and generates AI-powered meeting notes with semantic search capabilities.
 
