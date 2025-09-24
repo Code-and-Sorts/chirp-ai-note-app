@@ -286,6 +286,7 @@ chirp status
 - **Real-time Transcription**: Live transcription during recording
 - **Multiple Export Formats**: PDF, DOCX, Notion, etc.
 - **Meeting Analytics**: Insights and patterns from meeting data
+- **OS Support**: Support Windows and Linux
 
 ## 🤝 Support
 
