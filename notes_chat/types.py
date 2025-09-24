@@ -19,7 +19,7 @@ class Chunk(BaseModel):
     path: Path
     content: str
     meta: NoteMeta
-    first_96_chars: str
+    content_hash: str
 
 
 class Diagnostics(BaseModel):

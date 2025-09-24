@@ -155,7 +155,7 @@ def _merge_and_dedupe(
     chroma_results: list[tuple[str, float, dict[str, Any]]],
     bm25_results: list[tuple[str, float, dict[str, Any]]],
 ) -> list[tuple[str, float, dict[str, Any]]]:
-    """Merge Chroma and BM25 results, deduplicating by (path, first_96_chars)."""
+    """Merge Chroma and BM25 results, deduplicating by (path, content_hash)."""
     seen_signatures: set[str] = set()
     merged = []
 
@@ -172,8 +172,8 @@ def _merge_and_dedupe(
     for chunk_id, score, data in all_results:
         if "metadata" in data:
             path = data["metadata"].get("path", "")
-            first_96 = data["metadata"].get("first_96_chars", "")
-            signature = f"{path}::{first_96}"
+            content_hash = data["metadata"].get("content_hash", "")
+            signature = f"{path}::{content_hash}"
         else:
             signature = chunk_id
 

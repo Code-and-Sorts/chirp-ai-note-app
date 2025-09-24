@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -248,7 +249,8 @@ class IndexManager:
 
             if len(section) <= self.settings.chunk_size:
                 chunk_id = f"{file_path.stem}_{i:03d}"
-                first_96 = section[:96].replace("\n", " ").strip()
+                norm = re.sub(r"\s+", " ", section.strip()).lower()
+                content_hash = hashlib.sha256(norm.encode()).hexdigest()[:16]
 
                 chunks.append(
                     Chunk(
@@ -256,13 +258,14 @@ class IndexManager:
                         path=file_path,
                         content=section,
                         meta=meta,
-                        first_96_chars=first_96,
+                        content_hash=content_hash,
                     )
                 )
             else:
                 for j, chunk_text in enumerate(self._split_large_section(section)):
                     chunk_id = f"{file_path.stem}_{i:03d}_{j:03d}"
-                    first_96 = chunk_text[:96].replace("\n", " ").strip()
+                    norm = re.sub(r"\s+", " ", chunk_text.strip()).lower()
+                    content_hash = hashlib.sha256(norm.encode()).hexdigest()[:16]
 
                     chunks.append(
                         Chunk(
@@ -270,14 +273,23 @@ class IndexManager:
                             path=file_path,
                             content=chunk_text,
                             meta=meta,
-                            first_96_chars=first_96,
+                            content_hash=content_hash,
                         )
                     )
 
         return chunks
 
     def _split_large_section(self, section: str) -> list[str]:
-        """Split large sections into smaller chunks with overlap."""
+        """Split large sections into smaller chunks with overlap.
+
+        Uses a simple words-based sliding window derived from character budgets via a
+        6-chars-per-word heuristic:
+        - chunk_words = chunk_size // 6
+        - overlap_words = overlap // 6
+
+        This keeps tuning intuitive in characters while producing reasonably sized
+        word chunks for embedding. Overlap reduces boundary information loss.
+        """
         words = section.split()
         chunks = []
 
@@ -329,7 +341,7 @@ class IndexManager:
             "date": chunk.meta.date.isoformat(),
             "participants": json.dumps(chunk.meta.participants),
             "duration": chunk.meta.duration,
-            "first_96_chars": chunk.first_96_chars,
+            "content_hash": chunk.content_hash,
         }
 
     def _rebuild_bm25(self):

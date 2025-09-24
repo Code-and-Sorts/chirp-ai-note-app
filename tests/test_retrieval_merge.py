@@ -12,7 +12,7 @@ class TestRetrievalMerge:
                     "content": "project planning",
                     "metadata": {
                         "path": "file1.md",
-                        "first_96_chars": "project planning meeting",
+                        "content_hash": "hash_planning",
                     },
                 },
             ),
@@ -23,7 +23,7 @@ class TestRetrievalMerge:
                     "content": "team discussion",
                     "metadata": {
                         "path": "file2.md",
-                        "first_96_chars": "team discussion notes",
+                        "content_hash": "hash_discussion",
                     },
                 },
             ),
@@ -46,8 +46,8 @@ class TestRetrievalMerge:
         scores = [score for _, score, _ in merged]
         assert scores == sorted(scores, reverse=True)
 
-    def test_dedupe_by_path_and_first96(self):
-        """Test deduplication by path and first 96 characters."""
+    def test_dedupe_by_path_and_content_hash(self):
+        """Test deduplication by path and content hash."""
         chroma_results = [
             (
                 "chunk1_001",
@@ -56,7 +56,7 @@ class TestRetrievalMerge:
                     "content": "content1",
                     "metadata": {
                         "path": "file1.md",
-                        "first_96_chars": "same content here",
+                        "content_hash": "abc123",
                     },
                 },
             ),
@@ -67,7 +67,7 @@ class TestRetrievalMerge:
                     "content": "content1",
                     "metadata": {
                         "path": "file1.md",
-                        "first_96_chars": "same content here",
+                        "content_hash": "abc123",
                     },
                 },
             ),
@@ -153,7 +153,7 @@ class TestRetrievalMerge:
                     "content": "high score chroma",
                     "metadata": {
                         "path": "file1.md",
-                        "first_96_chars": "high score chroma",
+                        "content_hash": "hash_high",
                     },
                 },
             ),
@@ -164,7 +164,7 @@ class TestRetrievalMerge:
                     "content": "low score chroma",
                     "metadata": {
                         "path": "file2.md",
-                        "first_96_chars": "low score chroma",
+                        "content_hash": "hash_low",
                     },
                 },
             ),
