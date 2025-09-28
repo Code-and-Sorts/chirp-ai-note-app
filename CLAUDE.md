@@ -16,7 +16,7 @@
 
 - **PyPI Name**: `chirp-notes-ai`
 - **CLI Command**: `chirp`
-- **Python Version**: 3.13+ (minimum 3.11)
+- **Python Version**: 3.11+
 - **Build System**: Hatchling
 - **Dependency Manager**: uv
 
