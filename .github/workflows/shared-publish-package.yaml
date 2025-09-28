@@ -26,6 +26,7 @@ jobs:
       pypi-repository: ${{ inputs.is-test-pypi && 'testpypi' || 'pypi' }}
     permissions:
       pull-requests: write
+      id-token: write
 
     steps:
     - name: 🐍 Set up Python ${{ inputs.python-version }}
