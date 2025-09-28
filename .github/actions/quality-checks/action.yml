@@ -1,0 +1,63 @@
+name: 'Quality Checks'
+description: 'Run formatting, linting, spell check, and type checking'
+
+inputs:
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+  uv-version:
+    description: 'UV version to use'
+    required: false
+    default: 'latest'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: true
+
+    - name: Install system dependencies (macOS)
+      shell: bash
+      run: |
+        if [[ "$RUNNER_OS" == "macOS" ]]; then
+          brew install portaudio
+        fi
+
+    - name: Install Python dependencies
+      shell: bash
+      run: |
+        uv sync --all-extras
+
+    - name: Run formatting check
+      shell: bash
+      run: |
+        uv run ruff format --check .
+
+    - name: Run linting
+      shell: bash
+      run: |
+        uv run ruff check .
+
+    - name: Run spell check
+      shell: bash
+      run: |
+        uv run codespell
+
+    - name: Run type checking
+      shell: bash
+      run: |
+        uv run mypy chirp config recorder transcriber notes utils --ignore-missing-imports
+
+    - name: Validate code compilation
+      shell: bash
+      run: |
+        make validate

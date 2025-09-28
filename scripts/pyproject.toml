@@ -1,0 +1,8 @@
+[project]
+name = "chirp-scripts"
+version = "0.1.0"
+readme = "pypi-readme.md"
+requires-python = ">=3.11"
+
+[project.scripts]
+update-pr-version = "update_pr_version:main"

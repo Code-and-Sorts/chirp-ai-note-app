@@ -1,0 +1,33 @@
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: 'Python version to use'
+        required: false
+        type: string
+        default: '3.11'
+      is-test-pypi:
+        description: 'Publish to TestPyPI instead of PyPI'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-and-test:
+    uses: ./.github/workflows/shared-build-and-test.yaml
+    with:
+      python-version: ${{ inputs.python-version }}
+      os-matrix: '["macos-latest"]'
+      upload-artifacts: true
+      update-version-for-pr: false
+      run-integration-tests: false
+
+  publish-package:
+    needs: build-and-test
+    uses: ./.github/workflows/shared-publish-package.yaml
+    with:
+      python-version: ${{ inputs.python-version }}
+      is-test-pypi: ${{ inputs.is-test-pypi }}
+    secrets: inherit

@@ -1,0 +1,40 @@
+name: Main Branch Build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  quality-and-build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run quality checks
+      uses: ./.github/actions/quality-checks
+
+    - name: Run tests
+      run: |
+        uv run pytest tests/ -v --cov=chirp --cov=config --cov=recorder --cov=transcriber --cov=notes --cov=utils --cov-report=xml
+
+    - name: Build package
+      run: |
+        uv build
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: chirp-package
+        path: dist/
+        retention-days: 30
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false

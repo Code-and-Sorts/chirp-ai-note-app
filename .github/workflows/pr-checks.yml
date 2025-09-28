@@ -1,0 +1,33 @@
+name: PR Quality Checks
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    if: github.event.pull_request.draft == false
+    uses: ./.github/workflows/shared-build-and-test.yaml
+    with:
+      python-version: '3.11'
+      os-matrix: '["macos-latest"]'
+      upload-artifacts: true
+      update-version-for-pr: true
+      run-integration-tests: false
+
+  publish-to-test-pypi:
+    needs: build-and-test
+    if: github.event.pull_request.draft == false
+    uses: ./.github/workflows/shared-publish-package.yaml
+    with:
+      python-version: '3.11'
+      is-test-pypi: true
+    secrets: inherit
+    permissions:
+      pull-requests: write
+      id-token: write

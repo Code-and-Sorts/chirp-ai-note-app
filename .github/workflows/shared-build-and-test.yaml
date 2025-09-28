@@ -1,0 +1,182 @@
+name: Build and Test
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: 'Python version to use'
+        required: false
+        type: string
+        default: '3.11'
+      os-matrix:
+        description: 'Operating systems to test on (JSON array)'
+        required: false
+        type: string
+        default: '["macos-latest", "windows-latest"]'
+      upload-artifacts:
+        description: 'Whether to upload build artifacts'
+        required: false
+        type: boolean
+        default: true
+      artifact-name:
+        description: 'Name for the uploaded artifacts'
+        required: false
+        type: string
+        default: 'python-package-dist'
+      update-version-for-pr:
+        description: 'Whether to update version for PR builds'
+        required: false
+        type: boolean
+        default: false
+      run-integration-tests:
+        description: 'Whether to run integration tests'
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      build-successful:
+        description: 'Whether the build was successful'
+        value: 'true'
+
+jobs:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(inputs.os-matrix) }}
+
+    steps:
+    - name: ⤵️ Checkout code
+      uses: actions/checkout@v5
+
+    - name: 🐍 Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: 🚀 Install uv with caching
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+
+    - name: 📦 Cache Homebrew packages (macOS)
+      if: runner.os == 'macOS'
+      uses: actions/cache@v4
+      with:
+        path: |
+          /opt/homebrew/Cellar/portaudio
+          /usr/local/Cellar/portaudio
+        key: ${{ runner.os }}-homebrew-portaudio-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-homebrew-portaudio-
+
+    - name: 🔧 Install system dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        # Check if portaudio library exists and is properly linked
+        if [ ! -f "/opt/homebrew/opt/portaudio/lib/libportaudio.2.dylib" ] && [ ! -f "/usr/local/opt/portaudio/lib/libportaudio.2.dylib" ]; then
+          echo "Installing portaudio..."
+          brew install portaudio
+        else
+          echo "portaudio already installed (from cache)"
+        fi
+
+        # Ensure portaudio is linked (handles case where it's installed but not linked)
+        brew link --overwrite portaudio
+
+    - name: 📦 Cache apt packages (Linux)
+      if: runner.os == 'Linux'
+      uses: actions/cache@v4
+      with:
+        path: /var/cache/apt
+        key: ${{ runner.os }}-apt-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-apt-
+
+    - name: 🔧 Install system dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y portaudio19-dev python3-dev
+
+    - name: 🔧 Install system dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        # Windows PyAudio wheels are available, no system deps needed
+        echo "Windows uses precompiled wheels"
+
+    - name: 🔗 Check lock file consistency (uv.lock)
+      run: uv lock --check
+
+    - name: ♻️ Cache .venv
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: ${{ runner.os }}-python-${{ inputs.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-${{ hashFiles('uv.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-python-${{ inputs.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-
+          ${{ runner.os }}-python-${{ inputs.python-version }}-venv-
+
+    - name: ✅ Install dependencies
+      run: uv sync --dev
+
+    - name: ✨ Lint with Ruff using uv
+      run: |
+        uv pip install --system -e .[dev]
+        uv run ruff check --output-format=github .
+
+    - name: ⬆️ Update version in pyproject.toml for PR
+      if: inputs.update-version-for-pr
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        RUN_NUMBER: ${{ github.run_number }}
+      run: cd scripts && uv run python update_pr_version.py
+
+    - name: 🏗️ Build
+      run: uv build
+
+    - name: 🧪 Run tests
+      run: uv run pytest
+
+    - name: 📤 Upload build artifacts
+      if: ${{ inputs.upload-artifacts }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: dist/
+        retention-days: 30
+
+  integration-test:
+    if: ${{ inputs.run-integration-tests }}
+    needs: build-and-test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJson(inputs.os-matrix) }}
+
+    steps:
+    - name: ⤵️ Checkout code
+      uses: actions/checkout@v5
+
+    - name: 🐍 Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: 🚀 Install uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: ⤵️ Download dist artifacts
+      uses: actions/download-artifact@v5
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: dist/
+
+    - name: 🧪 Run integration tests
+      run: |
+        # Install the built package
+        uv pip install dist/*.whl --system
+        # Run integration tests (customize as needed)
+        echo "Integration tests would run here"
