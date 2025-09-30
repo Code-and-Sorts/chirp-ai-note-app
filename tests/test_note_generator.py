@@ -23,6 +23,85 @@ class TestNoteGenerator:
                         generator = NoteGenerator(mock_settings)
                         assert generator.settings == mock_settings
 
+    def test_parse_xml_response_valid(self, mock_settings):
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        xml_response = """<?xml version="1.0" encoding="UTF-8"?>
+<MEETING_NOTES>
+    <MEETING_TITLE>Project Alpha Sync</MEETING_TITLE>
+    <EXECUTIVE_SUMMARY>Discussed project timeline and resource allocation.</EXECUTIVE_SUMMARY>
+    <AGENDA>
+        <ITEM>Review Q1 goals</ITEM>
+        <ITEM>Discuss budget</ITEM>
+    </AGENDA>
+    <ACTION_ITEMS>
+        <ITEM task="Review budget proposal" owner="John" deadline="2024-01-15"/>
+        <ITEM task="Update timeline" owner="Sarah" deadline=""/>
+    </ACTION_ITEMS>
+    <NEXT_STEPS>
+        <ITEM>Follow up meeting next week</ITEM>
+    </NEXT_STEPS>
+    <DECISIONS>
+        <ITEM>Approved new feature X</ITEM>
+    </DECISIONS>
+    <OPEN_QUESTIONS>
+        <ITEM>What is the final budget?</ITEM>
+    </OPEN_QUESTIONS>
+    <DISCUSSION_HIGHLIGHTS>
+        <ITEM>Team discussed resource constraints</ITEM>
+    </DISCUSSION_HIGHLIGHTS>
+</MEETING_NOTES>"""
+
+                        result = generator._parse_xml_response(xml_response)
+
+                        assert result is not None
+                        assert result["meeting_title"] == "Project Alpha Sync"
+                        assert (
+                            "Discussed project timeline" in result["executive_summary"]
+                        )
+                        assert len(result["agenda"]) == 2
+                        assert len(result["action_items"]) == 2
+                        assert "Review budget proposal" in result["action_items"][0]
+                        assert len(result["decisions"]) == 1
+                        assert len(result["open_questions"]) == 1
+                        assert len(result["discussion_highlights"]) == 1
+
+    def test_parse_xml_response_with_none_sections(self, mock_settings):
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        xml_response = """<?xml version="1.0" encoding="UTF-8"?>
+<MEETING_NOTES>
+    <MEETING_TITLE>Brief Check-in</MEETING_TITLE>
+    <EXECUTIVE_SUMMARY>Short informal chat.</EXECUTIVE_SUMMARY>
+    <AGENDA>None</AGENDA>
+    <ACTION_ITEMS>None</ACTION_ITEMS>
+    <NEXT_STEPS>None</NEXT_STEPS>
+    <DECISIONS>None</DECISIONS>
+    <OPEN_QUESTIONS>None</OPEN_QUESTIONS>
+    <DISCUSSION_HIGHLIGHTS>
+        <ITEM>Casual discussion</ITEM>
+    </DISCUSSION_HIGHLIGHTS>
+</MEETING_NOTES>"""
+
+                        result = generator._parse_xml_response(xml_response)
+
+                        assert result is not None
+                        assert result["meeting_title"] == "Brief Check-in"
+                        assert result["agenda"] == []
+                        assert result["action_items"] == []
+                        assert result["next_steps"] == []
+                        assert result["decisions"] == []
+                        assert result["open_questions"] == []
+                        assert len(result["discussion_highlights"]) == 1
+
     def test_parse_fallback_response(self, mock_settings):
         with patch("notes.note_generator.TemplateEngine"):
             with patch("notes.note_generator.DailyAggregator"):
@@ -34,6 +113,14 @@ class TestNoteGenerator:
                         result = generator._parse_fallback_response(response)
 
                         assert isinstance(result, dict)
+                        assert "meeting_title" in result
+                        assert "executive_summary" in result
+                        assert "agenda" in result
+                        assert "action_items" in result
+                        assert "next_steps" in result
+                        assert "decisions" in result
+                        assert "open_questions" in result
+                        assert "discussion_highlights" in result
 
     def test_call_ollama_success(self, mock_settings):
         with patch("notes.note_generator.TemplateEngine"):
@@ -77,12 +164,14 @@ class TestNoteGenerator:
                             generator, "_generate_structured_notes"
                         ) as mock_structured:
                             mock_structured.return_value = {
-                                "participants": "Test participant",
+                                "meeting_title": "Generated Title",
                                 "executive_summary": "Test summary",
-                                "key_points": ["Key point 1"],
-                                "decisions": ["Decision 1"],
+                                "agenda": ["Agenda item 1"],
                                 "action_items": ["Action 1"],
                                 "next_steps": ["Next step 1"],
+                                "decisions": ["Decision 1"],
+                                "open_questions": ["Question 1"],
+                                "discussion_highlights": ["Highlight 1"],
                             }
 
                             transcription_data = {
@@ -112,33 +201,28 @@ class TestNoteGenerator:
                         with patch.object(
                             generator, "_generate_structured_notes"
                         ) as mock_structured:
-                            with patch.object(
-                                generator, "_generate_meeting_title"
-                            ) as mock_title:
-                                mock_structured.return_value = {
-                                    "participants": "Test participant",
-                                    "executive_summary": "Test summary",
-                                    "key_points": ["Key point 1"],
-                                    "decisions": ["Decision 1"],
-                                    "action_items": ["Action 1"],
-                                    "next_steps": ["Next step 1"],
-                                }
-                                mock_title.return_value = "Generated Meeting Title"
+                            mock_structured.return_value = {
+                                "meeting_title": "Generated Meeting Title",
+                                "executive_summary": "Test summary",
+                                "agenda": ["Agenda item 1"],
+                                "action_items": ["Action 1"],
+                                "next_steps": ["Next step 1"],
+                                "decisions": ["Decision 1"],
+                                "open_questions": ["Question 1"],
+                                "discussion_highlights": ["Highlight 1"],
+                            }
 
-                                transcription_data = {
-                                    "full_text": "This is a test transcript with sufficient length to pass validation",
-                                    "metadata": {"duration": 300},
-                                }
+                            transcription_data = {
+                                "full_text": "This is a test transcript with sufficient length to pass validation",
+                                "metadata": {"duration": 300},
+                            }
 
-                                result = generator._generate_meeting_notes(
-                                    transcription_data
-                                )
+                            result = generator._generate_meeting_notes(
+                                transcription_data
+                            )
 
-                                assert result is not None
-                                assert (
-                                    result["meeting_title"] == "Generated Meeting Title"
-                                )
-                                mock_title.assert_called_once()
+                            assert result is not None
+                            assert result["meeting_title"] == "Generated Meeting Title"
 
     def test_generate_meeting_notes_generates_title_when_metadata_missing(
         self, mock_settings
@@ -152,32 +236,27 @@ class TestNoteGenerator:
                         with patch.object(
                             generator, "_generate_structured_notes"
                         ) as mock_structured:
-                            with patch.object(
-                                generator, "_generate_meeting_title"
-                            ) as mock_title:
-                                mock_structured.return_value = {
-                                    "participants": "Test participant",
-                                    "executive_summary": "Test summary",
-                                    "key_points": ["Key point 1"],
-                                    "decisions": ["Decision 1"],
-                                    "action_items": ["Action 1"],
-                                    "next_steps": ["Next step 1"],
-                                }
-                                mock_title.return_value = "Generated Meeting Title"
+                            mock_structured.return_value = {
+                                "meeting_title": "Generated Meeting Title",
+                                "executive_summary": "Test summary",
+                                "agenda": ["Agenda item 1"],
+                                "action_items": ["Action 1"],
+                                "next_steps": ["Next step 1"],
+                                "decisions": ["Decision 1"],
+                                "open_questions": ["Question 1"],
+                                "discussion_highlights": ["Highlight 1"],
+                            }
 
-                                transcription_data = {
-                                    "full_text": "This is a test transcript with sufficient length to pass validation"
-                                }
+                            transcription_data = {
+                                "full_text": "This is a test transcript with sufficient length to pass validation"
+                            }
 
-                                result = generator._generate_meeting_notes(
-                                    transcription_data
-                                )
+                            result = generator._generate_meeting_notes(
+                                transcription_data
+                            )
 
-                                assert result is not None
-                                assert (
-                                    result["meeting_title"] == "Generated Meeting Title"
-                                )
-                                mock_title.assert_called_once()
+                            assert result is not None
+                            assert result["meeting_title"] == "Generated Meeting Title"
 
     def test_generate_daily_notes_with_filename_override(self, mock_settings):
         from datetime import datetime

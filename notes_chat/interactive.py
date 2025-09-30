@@ -28,7 +28,7 @@ class InteractiveChatSession:
             }
         )
 
-        self._session = PromptSession(style=toolbar_style)
+        self._session: PromptSession = PromptSession(style=toolbar_style)
         self._kb = KeyBindings()
         self._hint_timer = None
         self._QUIT = "__CHIRP_QUIT__"

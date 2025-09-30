@@ -1,4 +1,4 @@
-import json
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -12,6 +12,124 @@ from notes.template_engine import TemplateEngine
 from transcriber.compression import JSONCompressor
 from utils.popup_manager import PopupManager
 from utils.time_utils import get_daily_note_filename
+
+SYSTEM_PROMPT = """You are Chirp, the user's meeting note co-pilot.
+Your sole purpose is to transform raw meeting transcripts into structured meeting notes.
+Always produce notes in a consistent format. Never invent content.
+Always produce notes using the canonical tags below. Never invent content.
+
+<core_principles>
+- Output only what is explicitly stated in the transcript.
+- **NEVER** infer, guess, or fabricate tasks, owners, deadlines, or decisions.
+- Always prioritize the latest statement if contradictions appear.
+  • Example of prioritize latest statement:
+
+    ```text
+    Transcript:
+      • "We'll launch feature X on June 1."
+      • "Actually, make that June 15."
+
+    Notes:
+      • Decisions: Launch feature X on June 15.
+    ```
+
+- If transcript contains no actionable content, output:
+  "Transcript contained no actionable content. No notes available."
+- Maintain professional, neutral, concise tone.
+</core_principles>
+
+<output_contract>
+- Emit a SINGLE well-formed UTF-8 XML document with this exact structure:
+  - XML declaration: <?xml version="1.0" encoding="UTF-8"?>
+  - Root element: <MEETING_NOTES> ... </MEETING_NOTES>
+  - Inside the root, ALWAYS include these child tags in this order:
+    1) <MEETING_TITLE>...</MEETING_TITLE>
+    2) <EXECUTIVE_SUMMARY>...</EXECUTIVE_SUMMARY>
+    3) <AGENDA> <ITEM>...</ITEM> ... </AGENDA>
+    4) <ACTION_ITEMS> <ITEM task="..." owner="..." deadline="..."/> ... </ACTION_ITEMS>
+    5) <NEXT_STEPS> <ITEM>...</ITEM> ... </NEXT_STEPS>
+    6) <DECISIONS> <ITEM>...</ITEM> ... </DECISIONS>
+    7) <OPEN_QUESTIONS> <ITEM>...</ITEM> ... </OPEN_QUESTIONS>
+    8) <DISCUSSION_HIGHLIGHTS> <ITEM>...</ITEM> ... </DISCUSSION_HIGHLIGHTS>
+
+- If a section has no content, include the tag with a single text node "None"
+  (e.g., <AGENDA>None</AGENDA>), except:
+  - For ACTION_ITEMS when empty, emit <ACTION_ITEMS>None</ACTION_ITEMS> (no ITEM children).
+- Do NOT output markdown fences or prose. XML ONLY.
+- Escape XML special characters (&, <, >) in text nodes.
+- For code snippets or multi-line technical blocks, wrap content in <![CDATA[ ... ]]> within the relevant ITEM.
+</output_contract>
+
+<tag_definitions>
+
+<MEETING_TITLE>
+• Short headline (≤6 words, e.g., "Project Alpha Sync")
+</MEETING_TITLE>
+
+<EXECUTIVE_SUMMARY>
+• 2-4 sentences maximum
+• High-level overview of meeting purpose, key outcomes, and tone
+• No action details — keep those in ACTION_ITEMS / NEXT_STEPS
+• If transcript lacks substance, output "None"
+</EXECUTIVE_SUMMARY>
+
+<AGENDA>
+• Agenda items mentioned by participants
+• If none stated, output "None"
+</AGENDA>
+
+<ACTION_ITEMS>
+• Format: [Task] — [Owner if stated] — [Deadline if stated]
+• If owner missing: "Unassigned"
+• If deadline missing: leave blank
+• Always use the latest statement if contradictions occur
+</ACTION_ITEMS>
+
+<NEXT_STEPS>
+• Broader follow-ups not tied to an individual
+• Team-level actions or reminders
+• Future agenda items
+• If none present, output "None"
+</NEXT_STEPS>
+
+<DECISIONS>
+• Record only explicit, final conclusions
+• If later statements revise earlier ones, keep the most recent
+• If unresolved conflict remains: "Unresolved: conflicting statements on [topic]"
+</DECISIONS>
+
+<OPEN_QUESTIONS>
+• Capture unresolved questions or risks explicitly raised
+• If none present, output "None"
+</OPEN_QUESTIONS>
+
+<DISCUSSION_HIGHLIGHTS>
+• Short bullets (≤15 words each)
+• Optional sub-bullets for context (≤20 words)
+• Do not include small talk
+• Prioritize final statements when contradictions occur
+</DISCUSSION_HIGHLIGHTS>
+
+</tag_definitions>
+
+<handling_rules>
+- Do not include small talk or filler unless relevant to work.
+- If technical/code discussed:
+  • Render in fenced code blocks
+  • Add concise explanatory bullets below
+- If transcript mentions topics but no detail:
+  • Record: "Limited info available on [topic]"
+- Do not use pronouns; use names/roles if stated.
+</handling_rules>
+
+<consistency_requirements>
+- Always output all sections, even if "None".
+- Use Markdown formatting for clarity.
+- Keep responses deterministic and repeatable.
+- Maintain Markdown-safe formatting inside tags where applicable.
+- Keep bullets crisp, no prose paragraphs except in technical explanations.
+</consistency_requirements>
+"""
 
 
 class NoteGenerator:
@@ -167,26 +285,32 @@ class NoteGenerator:
             metadata = transcription_data.get("metadata", {})
             provided_title = metadata.get("title")
 
-            if provided_title:
-                meeting_title = provided_title
-            else:
-                meeting_title = self._generate_meeting_title(transcript_text)
-
-            structured_notes = self._generate_structured_notes(transcript_text)
+            structured_notes = self._generate_structured_notes(
+                transcript_text, provided_title
+            )
 
             if not structured_notes:
                 return None
 
+            meeting_title = (
+                provided_title
+                if provided_title
+                else structured_notes.get("meeting_title", "Meeting Notes")
+            )
+
             meeting_notes = {
                 "meeting_title": meeting_title,
-                "participants": structured_notes.get("participants", "Not specified"),
                 "executive_summary": structured_notes.get(
                     "executive_summary", "No summary available"
                 ),
-                "key_points": structured_notes.get("key_points", []),
-                "decisions": structured_notes.get("decisions", []),
+                "agenda": structured_notes.get("agenda", []),
                 "action_items": structured_notes.get("action_items", []),
                 "next_steps": structured_notes.get("next_steps", []),
+                "decisions": structured_notes.get("decisions", []),
+                "open_questions": structured_notes.get("open_questions", []),
+                "discussion_highlights": structured_notes.get(
+                    "discussion_highlights", []
+                ),
                 "metadata": transcription_data.get("metadata", {}),
             }
 
@@ -246,55 +370,25 @@ class NoteGenerator:
             return value.isoformat()
         return str(value)
 
-    def _generate_meeting_title(self, transcript_text: str) -> str:
-        prompt = f"""Please analyze this meeting transcript and generate a concise, descriptive title that captures the main topic or purpose of the meeting.
-
-Transcript excerpt (first 500 characters):
-{transcript_text[:500]}
-
-Generate only a title, no additional text. Keep it under 60 characters."""
-
-        try:
-            response = self._call_ollama(prompt)
-            title = response.strip().strip('"').strip("'")
-
-            if len(title) > 60:
-                title = title[:57] + "..."
-
-            return title if title else "Meeting Notes"
-
-        except Exception:
-            return "Meeting Notes"
-
     def _generate_structured_notes(
-        self, transcript_text: str
+        self, transcript_text: str, provided_title: Optional[str] = None
     ) -> Optional[dict[str, Any]]:
-        prompt = f"""Please analyze this meeting transcript and extract structured information. Return a JSON object with the following fields:
+        title_instruction = ""
+        if provided_title:
+            title_instruction = f"\n\nIMPORTANT: Use this exact meeting title in the MEETING_TITLE tag: {provided_title}"
 
-- participants: String with participant names/roles if mentioned, or "Not specified"
-- executive_summary: 3-5 sentence summary of the meeting
-- key_points: Array of main discussion points
-- decisions: Array of decisions made (if any)
-- action_items: Array of action items or tasks assigned (if any)
-- next_steps: Array of next steps or follow-up items (if any)
+        prompt = f"""{SYSTEM_PROMPT}
+
+{title_instruction}
 
 Transcript:
 {transcript_text}
 
-Return only valid JSON, no additional text or formatting."""
+Return ONLY the XML document, no additional text before or after."""
 
         try:
             response = self._call_ollama(prompt)
-
-            json_start = response.find("{")
-            json_end = response.rfind("}") + 1
-
-            if json_start != -1 and json_end > json_start:
-                json_str = response[json_start:json_end]
-                data = json.loads(json_str)
-                return dict(data) if isinstance(data, dict) else None
-            else:
-                return self._parse_fallback_response(response)
+            return self._parse_xml_response(response)
 
         except Exception:
             return None
@@ -316,64 +410,97 @@ Return only valid JSON, no additional text or formatting."""
         response_text = result.get("response", "")
         return str(response_text).strip() if response_text else ""
 
+    def _parse_xml_response(self, response: str) -> Optional[dict[str, Any]]:
+        try:
+            xml_start = response.find("<?xml")
+            if xml_start == -1:
+                xml_start = response.find("<MEETING_NOTES>")
+
+            if xml_start == -1:
+                return self._parse_fallback_response(response)
+
+            xml_content = response[xml_start:]
+            xml_end = xml_content.find("</MEETING_NOTES>")
+            if xml_end != -1:
+                xml_content = xml_content[: xml_end + len("</MEETING_NOTES>")]
+
+            root = ET.fromstring(xml_content)
+
+            def get_text(element_name: str) -> str:
+                elem = root.find(element_name)
+                if (
+                    elem is not None
+                    and elem.text
+                    and elem.text.strip()
+                    and elem.text.strip().lower() != "none"
+                ):
+                    return elem.text.strip()
+                return ""
+
+            def get_items(element_name: str) -> list[str]:
+                parent = root.find(element_name)
+                if parent is None:
+                    return []
+
+                if parent.text and parent.text.strip().lower() == "none":
+                    return []
+
+                items = []
+                for item in parent.findall("ITEM"):
+                    if element_name == "ACTION_ITEMS":
+                        task = item.get("task", "").strip()
+                        owner = item.get("owner", "").strip()
+                        deadline = item.get("deadline", "").strip()
+
+                        parts = []
+                        if task:
+                            parts.append(task)
+                        if owner:
+                            parts.append(f"Owner: {owner}")
+                        if deadline:
+                            parts.append(f"Deadline: {deadline}")
+
+                        if parts:
+                            items.append(" — ".join(parts))
+                    else:
+                        text = item.text.strip() if item.text else ""
+                        if text:
+                            items.append(text)
+
+                return items
+
+            return {
+                "meeting_title": get_text("MEETING_TITLE") or "Meeting Notes",
+                "executive_summary": get_text("EXECUTIVE_SUMMARY")
+                or "No summary available",
+                "agenda": get_items("AGENDA"),
+                "action_items": get_items("ACTION_ITEMS"),
+                "next_steps": get_items("NEXT_STEPS"),
+                "decisions": get_items("DECISIONS"),
+                "open_questions": get_items("OPEN_QUESTIONS"),
+                "discussion_highlights": get_items("DISCUSSION_HIGHLIGHTS"),
+            }
+
+        except ET.ParseError:
+            return self._parse_fallback_response(response)
+        except Exception:
+            return None
+
     def _parse_fallback_response(self, response: str) -> dict[str, Any]:
         return {
-            "participants": "Not specified",
+            "meeting_title": "Meeting Notes",
             "executive_summary": response[:200] + "..."
             if len(response) > 200
             else response,
-            "key_points": ["Unable to parse structured notes from AI response"],
-            "decisions": [],
+            "agenda": [],
             "action_items": [],
             "next_steps": [],
+            "decisions": [],
+            "open_questions": [],
+            "discussion_highlights": [
+                "Unable to parse structured notes from AI response"
+            ],
         }
-
-    def test_ollama_connection(self) -> dict[str, Any]:
-        try:
-            url = f"{self.settings.models.ollama_url}/api/version"
-            response = requests.get(url, timeout=5)
-
-            if response.status_code == 200:
-                version_info = response.json()
-
-                models_url = f"{self.settings.models.ollama_url}/api/tags"
-                models_response = requests.get(models_url, timeout=5)
-
-                available_models = []
-                if models_response.status_code == 200:
-                    models_data = models_response.json()
-                    available_models = [
-                        model["name"] for model in models_data.get("models", [])
-                    ]
-
-                return {
-                    "connected": True,
-                    "version": version_info.get("version", "Unknown"),
-                    "url": self.settings.models.ollama_url,
-                    "configured_model": self.settings.models.llm,
-                    "available_models": available_models,
-                    "model_available": self.settings.models.llm in available_models,
-                }
-            else:
-                return {
-                    "connected": False,
-                    "error": f"HTTP {response.status_code}",
-                    "url": self.settings.models.ollama_url,
-                }
-
-        except requests.exceptions.ConnectionError:
-            return {
-                "connected": False,
-                "error": "Connection refused - is Ollama running?",
-                "url": self.settings.models.ollama_url,
-            }
-
-        except Exception as e:
-            return {
-                "connected": False,
-                "error": str(e),
-                "url": self.settings.models.ollama_url,
-            }
 
     def _auto_index_note(self, notes_path: Path):
         if not self.settings.notes_chat.auto_index:
