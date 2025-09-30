@@ -2,7 +2,7 @@
 
 # Default help command
 help: ## Show this help message
-	@echo "🐦 Chirp Development Makefile"
+	@echo "🐣 Chirp Development Makefile"
 	@echo ""
 	@echo "Available commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -218,7 +218,7 @@ docs: ## Show documentation locations
 
 # System information
 info: ## Show system and version information
-	@echo "🐦 Chirp System Information:"
+	@echo "🐣 Chirp System Information:"
 	@echo "Python: $(shell python --version)"
 	@echo "UV: $(shell uv --version)"
 	@echo "Project: $(shell grep '^version' pyproject.toml | cut -d'"' -f2)"
