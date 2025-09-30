@@ -37,8 +37,16 @@ chirp setup
 
 ### Install BlackHole audio driver
 
-- Download from [existential.audio/blackhole](https://existential.audio/blackhole/)
-- Follow the installation guide to set up a multi-output device
+```bash
+# Install Blackhole
+brew install blackhole-2ch
+```
+
+- Set up a multi-output device using `Audio MIDI Setup`:
+  - Open Audio MIDI Setup (Applications/Utilities)
+  - Create a Multi-Output Device
+  - Include both your speakers and BlackHole
+  - Set this as your default output device
 
 ### Setup Ollama and AI Models
 

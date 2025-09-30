@@ -16,11 +16,14 @@
 
 ```bash
 # Install required system libraries
-brew install portaudio ollama
-
-# Install BlackHole for system audio capture
-# Download from: https://existential.audio/blackhole/
+brew install portaudio ollama blackhole-2ch
 ```
+
+- Set up a multi-output device using `Audio MIDI Setup`:
+  - Open Audio MIDI Setup (Applications/Utilities)
+  - Create a Multi-Output Device
+  - Include both your speakers and BlackHole
+  - Set this as your default output device
 
 **Linux (Ubuntu/Debian):**
 
@@ -50,9 +53,8 @@ pip install chirp-notes-ai
 
 Chirp requires **Ollama** for AI processing:
 
-1. **Install Ollama**: Download from [https://ollama.ai](https://ollama.ai)
-2. **Start Ollama**: Run `ollama serve` in a terminal
-3. **Download models**:
+1. **Start Ollama**: Run `ollama serve` in a terminal
+2. **Download models**:
 
    ```bash
    # For meeting note generation

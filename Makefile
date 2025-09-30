@@ -140,11 +140,12 @@ setup-dirs: ## Create required directories
 	mkdir -p to-transcribe transcription-out notes-out config templates
 
 setup-blackhole: ## Show BlackHole installation instructions
-	@echo "🎵 BlackHole Audio Driver Installation:"
+	@echo "🎵 BlackHole Audio Driver Installation"
 	@echo ""
-	@echo "1. Download BlackHole from: https://existential.audio/blackhole/"
-	@echo "2. Install the .pkg file"
-	@echo "3. Configure Audio MIDI Setup:"
+	@echo "1. Install BlackHole:"
+	@echo "   brew install blackhole-2ch"
+	@echo ""
+	@echo "2. Configure Audio MIDI Setup:"
 	@echo "   - Open Audio MIDI Setup (Applications/Utilities)"
 	@echo "   - Create a Multi-Output Device"
 	@echo "   - Include both your speakers and BlackHole"
@@ -153,7 +154,7 @@ setup-blackhole: ## Show BlackHole installation instructions
 	@echo "4. Test with: make devices"
 
 setup-ollama: ## Show Ollama setup instructions
-	@echo "🧠 Ollama Setup Instructions:"
+	@echo "🧠 Ollama Setup Instructions"
 	@echo ""
 	@echo "1. Install Ollama:"
 	@echo "   brew install ollama"
