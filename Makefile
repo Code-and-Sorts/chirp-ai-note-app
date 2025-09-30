@@ -71,7 +71,7 @@ test: ## Run unit tests
 	uv run pytest
 
 test-coverage: ## Run tests with coverage report
-	uv run pytest --cov=chirp --cov=config --cov=recorder --cov=transcriber --cov=notes --cov=notes_chat --cov=utils --cov-report=html --cov-report=term
+	uv run pytest --cov --cov-report=html --cov-report=term
 
 test-failed: ## Run only failed tests from last run
 	uv run pytest --lf
