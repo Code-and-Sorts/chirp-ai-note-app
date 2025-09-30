@@ -41,9 +41,7 @@ class InteractiveChatSession:
                 and (now - self.last_interrupt_time) <= self.interrupt_timeout
             ):
                 event.current_buffer.reset()
-                event.app.exit(
-                    result=self._QUIT
-                )  # cleanly stop session; no new prompt drawn
+                event.app.exit(result=self._QUIT)
                 return
             self.last_interrupt_time = now
             event.current_buffer.reset()

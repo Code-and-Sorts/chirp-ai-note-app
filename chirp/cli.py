@@ -257,7 +257,6 @@ def notes(
     else:
         console.print(f"[green]✅ Updated note: {context.path}[/green]")
 
-    # Auto-index manual notes on save (minimal change, behind config flag)
     try:
         if settings.notes_chat.auto_index:
             from notes_chat.index import IndexManager

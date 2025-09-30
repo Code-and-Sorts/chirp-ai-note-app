@@ -441,15 +441,12 @@ def enhanced_search_and_answer(config: ChirpSettings, question: str) -> dict[str
     from notes_chat.cache import cache_answer, get_cached_answer
     from notes_chat.retrieval import retrieve_context
 
-    # Fast path for simple conversational queries
     if is_simple_conversational(question):
         return generate_conversational_response(config, question)
 
-    # Fast path for obvious search queries
     if is_obvious_search(question):
         return fast_search_and_answer(config, question)
 
-    # Full orchestration for complex queries
     try:
         orchestration_result = orchestrate_search(config, question)
         if not orchestration_result.get("success"):
@@ -528,7 +525,6 @@ def enhanced_search_and_answer_stream(
     from notes_chat.cache import cache_answer, get_cached_answer
     from notes_chat.retrieval import retrieve_context
 
-    # Fast path for simple conversational queries
     if is_simple_conversational(question):
         yield {"type": "thinking", "message": "Having a chat..."}
         full_response = ""
@@ -541,7 +537,6 @@ def enhanced_search_and_answer_stream(
         yield {"type": "complete", "answer": full_response}
         return
 
-    # Fast path for obvious search queries
     if is_obvious_search(question):
         yield {"type": "thinking", "message": "Searching quickly..."}
         try:
@@ -581,12 +576,10 @@ def enhanced_search_and_answer_stream(
         except Exception:
             pass
 
-    # Full orchestration for complex queries
     yield {"type": "thinking", "message": "Analyzing question..."}
     try:
         orchestration_result = orchestrate_search(config, question)
         if not orchestration_result.get("success"):
-            # Fallback to fast search
             yield {"type": "thinking", "message": "Falling back to search..."}
             try:
                 context_result = retrieve_context(config, question)
@@ -640,7 +633,6 @@ def enhanced_search_and_answer_stream(
 
         context_result = retrieve_context(config, search_terms, time_filter)
         if not context_result.get("success"):
-            # Fallback to conversational response about no results
             yield {
                 "type": "thinking",
                 "message": "No results found, generating helpful response...",

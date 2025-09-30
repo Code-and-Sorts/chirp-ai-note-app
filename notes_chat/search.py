@@ -203,7 +203,6 @@ class LiveSearchSession:
                 char = sys.stdin.read(1)
                 key_code = ord(char)
 
-                # Handle escape sequences (arrow keys)
                 if key_code == 27:  # Esc sequence start
                     try:
                         seq = char + sys.stdin.read(2)
