@@ -530,6 +530,82 @@ Return ONLY the XML document, no additional text before or after."""
         except Exception:
             return None
 
+    def _parse_xml_response(self, response: str) -> Optional[dict[str, Any]]:
+        try:
+            xml_start = response.find("<?xml")
+            if xml_start == -1:
+                xml_start = response.find("<MEETING_NOTES>")
+
+            if xml_start == -1:
+                return self._parse_fallback_response(response)
+
+            xml_content = response[xml_start:]
+            xml_end = xml_content.find("</MEETING_NOTES>")
+            if xml_end != -1:
+                xml_content = xml_content[: xml_end + len("</MEETING_NOTES>")]
+
+            root = ET.fromstring(xml_content)
+
+            def get_text(element_name: str) -> str:
+                elem = root.find(element_name)
+                if (
+                    elem is not None
+                    and elem.text
+                    and elem.text.strip()
+                    and elem.text.strip().lower() != "none"
+                ):
+                    return elem.text.strip()
+                return ""
+
+            def get_items(element_name: str) -> list[str]:
+                parent = root.find(element_name)
+                if parent is None:
+                    return []
+
+                if parent.text and parent.text.strip().lower() == "none":
+                    return []
+
+                items = []
+                for item in parent.findall("ITEM"):
+                    if element_name == "ACTION_ITEMS":
+                        task = item.get("task", "").strip()
+                        owner = item.get("owner", "").strip()
+                        deadline = item.get("deadline", "").strip()
+
+                        parts = []
+                        if task:
+                            parts.append(task)
+                        if owner:
+                            parts.append(f"Owner: {owner}")
+                        if deadline:
+                            parts.append(f"Deadline: {deadline}")
+
+                        if parts:
+                            items.append(" — ".join(parts))
+                    else:
+                        text = item.text.strip() if item.text else ""
+                        if text:
+                            items.append(text)
+
+                return items
+
+            return {
+                "meeting_title": get_text("MEETING_TITLE") or "Meeting Notes",
+                "executive_summary": get_text("EXECUTIVE_SUMMARY")
+                or "No summary available",
+                "agenda": get_items("AGENDA"),
+                "action_items": get_items("ACTION_ITEMS"),
+                "next_steps": get_items("NEXT_STEPS"),
+                "decisions": get_items("DECISIONS"),
+                "open_questions": get_items("OPEN_QUESTIONS"),
+                "discussion_highlights": get_items("DISCUSSION_HIGHLIGHTS"),
+            }
+
+        except ET.ParseError:
+            return self._parse_fallback_response(response)
+        except Exception:
+            return None
+
     def _parse_fallback_response(self, response: str) -> dict[str, Any]:
         return {
             "meeting_title": DEFAULT_MEETING_NAME,
