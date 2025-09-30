@@ -48,6 +48,9 @@ notes: ## Generate meeting notes
 process: ## Process audio files (transcribe + notes)
 	uv run chirp process $(if $(FORCE),--force)
 
+ask: ## Ask with your notes
+	uv run chirp ask
+
 # Notes search commands
 notes-index: ## Build notes search index
 	uv run notes index $(if $(FORCE),--force)
