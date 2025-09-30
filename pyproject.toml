@@ -22,6 +22,7 @@ dependencies = [
     "rank-bm25>=0.2.0",
     "python-dateutil>=2.8.0",
     "platformdirs>=4.0.0",
+    "prompt-toolkit>=3.0.52",
 ]
 
 [project.scripts]

@@ -45,6 +45,7 @@
     "isort",
     "mypy",
     "nomic",
+    "noreverse",
     "ollama",
     "portaudio",
     "pyaudio",
