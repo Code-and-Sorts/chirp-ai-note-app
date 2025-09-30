@@ -1,4 +1,4 @@
-.PHONY: help install dev-install test lint format type-check clean run build setup-blackhole check-deps
+.PHONY: help install dev-install test lint format type-check clean run build setup check-deps
 
 # Default help command
 help: ## Show this help message
@@ -48,15 +48,14 @@ notes: ## Generate meeting notes
 process: ## Process audio files (transcribe + notes)
 	uv run chirp process $(if $(FORCE),--force)
 
-ask: ## Ask with your notes
-	uv run chirp ask
+ask: ## Start interactive chat with your notes
+	uv run chirp notes ask
 
-# Notes search commands
 notes-index: ## Build notes search index
-	uv run notes index $(if $(FORCE),--force)
+	uv run chirp notes index $(if $(FORCE),--force)
 
 notes-ask: ## Ask a question about your notes (requires QUESTION)
-	uv run notes ask "$(QUESTION)" $(if $(WHEN),--when "$(WHEN)")
+	uv run chirp notes ask --question "$(QUESTION)" $(if $(WHEN),--when "$(WHEN)")
 
 status: ## Show Chirp status
 	uv run chirp status
@@ -69,13 +68,17 @@ devices: ## List audio devices
 
 # Testing commands
 test: ## Run unit tests
-	uv run pytest tests/ -v
+	uv run pytest
 
 test-coverage: ## Run tests with coverage report
-	uv run pytest tests/ -v --cov=chirp --cov=config --cov=recorder --cov=transcriber --cov=notes --cov=notes_chat --cov=utils --cov-report=html --cov-report=term
+	uv run pytest --cov=chirp --cov=config --cov=recorder --cov=transcriber --cov=notes --cov=notes_chat --cov=utils --cov-report=html --cov-report=term
 
-test-watch: ## Run tests in watch mode
-	uv run pytest-watch tests/ --clear
+test-failed: ## Run only failed tests from last run
+	uv run pytest --lf
+
+test-verbose: ## Run tests with verbose output
+	uv run pytest -vv
+
 
 # Code quality commands
 lint: ## Run linting with ruff
@@ -100,7 +103,7 @@ style-check: ## Check linting, formatting, and spelling
 	@$(MAKE) spell-check
 
 type-check: ## Run type checking with mypy
-	uv run mypy chirp config recorder transcriber notes notes_chat utils --ignore-missing-imports
+	uv run mypy
 
 spell-check: ## Check spelling with codespell
 	uv run codespell
@@ -120,6 +123,8 @@ validate: ## Validate code compiles and imports work
 # Quality check combination
 check: validate style-check type-check ## Run all quality checks (excluding tests)
 
+ci: lint format-check type-check test ## Run CI checks (lint, format, type-check, test)
+
 # Dependency management
 check-deps: ## Check if all dependencies are available
 	uv run chirp test
@@ -128,16 +133,13 @@ update: ## Update dependencies
 	uv sync --upgrade
 
 # Setup commands
-setup: install setup-dirs ## Initial setup for new installations
+setup: install ## Initial setup for new installations
 	uv run pre-commit install
 	@echo "✅ Chirp setup complete!"
 	@echo "Next steps:"
 	@echo "  1. Install BlackHole: make setup-blackhole"
 	@echo "  2. Install Ollama: make setup-ollama"
 	@echo "  3. Run 'make check-deps' to verify setup"
-
-setup-dirs: ## Create required directories
-	mkdir -p to-transcribe transcription-out notes-out config templates
 
 setup-blackhole: ## Show BlackHole installation instructions
 	@echo "🎵 BlackHole Audio Driver Installation"
@@ -172,12 +174,6 @@ setup-ollama: ## Show Ollama setup instructions
 build: ## Build package
 	uv build
 
-# Docker commands (optional)
-docker-build: ## Build Docker image
-	docker build -t chirp:latest .
-
-docker-run: ## Run Chirp in Docker container
-	docker run -it --rm -v $(PWD)/to-transcribe:/app/to-transcribe -v $(PWD)/transcription-out:/app/transcription-out -v $(PWD)/notes-out:/app/notes-out chirp:latest
 
 # Cleaning commands
 clean: ## Clean build artifacts and cache
@@ -190,19 +186,7 @@ clean: ## Clean build artifacts and cache
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 
-clean-audio: ## Clean audio files (be careful!)
-	@echo "⚠️  This will delete all audio files. Are you sure? (y/N)"
-	@read confirmation && [ "$$confirmation" = "y" ] && rm -rf to-transcribe/*.wav to-transcribe/*.m4a to-transcribe/*.mp3
-
-clean-transcriptions: ## Clean transcription files
-	@echo "⚠️  This will delete all transcription files. Are you sure? (y/N)"
-	@read confirmation && [ "$$confirmation" = "y" ] && rm -rf transcription-out/*.json.gz
-
-clean-notes: ## Clean generated notes
-	@echo "⚠️  This will delete all generated notes. Are you sure? (y/N)"
-	@read confirmation && [ "$$confirmation" = "y" ] && rm -rf notes-out/*.md
-
-clean-all: clean clean-audio clean-transcriptions clean-notes ## Clean everything (DANGEROUS!)
+clean-all: clean ## Clean everything including build artifacts
 
 # Development workflow shortcuts
 dev-workflow: ## Complete development workflow (style, type-check, test, build)
@@ -226,10 +210,10 @@ demo: ## Run a complete demo workflow
 	@echo "✅ Demo complete! Ready to record with 'make record'"
 
 # Documentation
-docs: ## Generate documentation (if implemented)
-	@echo "📚 Documentation generation not yet implemented"
-	@echo "Current documentation:"
-	@echo "  - README.md"
+docs: ## Show documentation locations
+	@echo "📚 Chirp Documentation:"
+	@echo "  - README.md - Main documentation"
+	@echo "  - .docs/DEVELOPMENT.md - Developer guide"
 	@echo "  - CLI help: uv run chirp --help"
 
 # System information
