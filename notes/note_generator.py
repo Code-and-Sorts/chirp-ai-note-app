@@ -590,7 +590,7 @@ Return ONLY the XML document, no additional text before or after."""
                 return items
 
             return {
-                "meeting_title": get_text("MEETING_TITLE") or "Meeting Notes",
+                "meeting_title": get_text("MEETING_TITLE") or DEFAULT_MEETING_NAME,
                 "executive_summary": get_text("EXECUTIVE_SUMMARY")
                 or "No summary available",
                 "agenda": get_items("AGENDA"),
