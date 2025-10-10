@@ -7,6 +7,7 @@ import requests
 from rich.console import Console
 
 from config.settings import ChirpSettings
+from notes.constants import DEFAULT_MEETING_NAME
 from notes.daily_aggregator import DailyAggregator
 from notes.template_engine import TemplateEngine
 from transcriber.compression import JSONCompressor
@@ -209,11 +210,16 @@ class NoteGenerator:
 
             for transcription_file in transcription_files:
                 transcription_data = self.compressor.decompress_json(transcription_file)
+                metadata = transcription_data.get("metadata", {})
+                recording_label = (
+                    metadata.get("recording_id")
+                    or metadata.get("meeting_name")
+                    or transcription_file.parent.name
+                    or transcription_file.stem
+                )
 
                 if not transcription_data.get("success", False):
-                    skipped_files.append(
-                        (transcription_file.name, "Failed transcription")
-                    )
+                    skipped_files.append((recording_label, "Failed transcription"))
                     continue
 
                 meeting_notes = self._generate_meeting_notes(transcription_data)
@@ -223,8 +229,13 @@ class NoteGenerator:
                     )
                     meeting_sections.append(meeting_section)
 
-                    duration = transcription_data.get("metadata", {}).get("duration", 0)
-                    total_duration += duration
+                    duration = metadata.get(
+                        "recording_length_seconds", metadata.get("duration", 0)
+                    )
+                    try:
+                        total_duration += float(duration)
+                    except (TypeError, ValueError):
+                        pass
                 else:
                     transcript_text = transcription_data.get("full_text", "").strip()
                     reason = (
@@ -232,7 +243,7 @@ class NoteGenerator:
                         if len(transcript_text) < 50
                         else "Failed to generate notes"
                     )
-                    skipped_files.append((transcription_file.name, reason))
+                    skipped_files.append((recording_label, reason))
 
             if skipped_files:
                 self.console.print(
@@ -295,7 +306,7 @@ class NoteGenerator:
             meeting_title = (
                 provided_title
                 if provided_title
-                else structured_notes.get("meeting_title", "Meeting Notes")
+                else structured_notes.get("meeting_title", DEFAULT_MEETING_NAME)
             )
 
             meeting_notes = {
@@ -470,7 +481,7 @@ Return ONLY the XML document, no additional text before or after."""
                 return items
 
             return {
-                "meeting_title": get_text("MEETING_TITLE") or "Meeting Notes",
+                "meeting_title": get_text("MEETING_TITLE") or DEFAULT_MEETING_NAME,
                 "executive_summary": get_text("EXECUTIVE_SUMMARY")
                 or "No summary available",
                 "agenda": get_items("AGENDA"),
@@ -488,7 +499,7 @@ Return ONLY the XML document, no additional text before or after."""
 
     def _parse_fallback_response(self, response: str) -> dict[str, Any]:
         return {
-            "meeting_title": "Meeting Notes",
+            "meeting_title": DEFAULT_MEETING_NAME,
             "executive_summary": response[:200] + "..."
             if len(response) > 200
             else response,

@@ -1,13 +1,14 @@
 import platform
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
 from faster_whisper import WhisperModel
 
 from config.settings import ChirpSettings
+from notes.constants import DEFAULT_MEETING_NAME
 from utils.file_utils import get_file_size_mb
-from utils.time_utils import parse_timestamp_from_filename
+from utils.time_utils import derive_recording_id, parse_timestamp_from_filename
 
 
 class WhisperTranscriber:
@@ -62,6 +63,14 @@ class WhisperTranscriber:
             raise RuntimeError("Whisper model not loaded")
 
         start_time = datetime.now()
+        audio_metadata = self._read_audio_metadata(audio_file_path)
+        recording_datetime = self._get_recording_datetime(
+            audio_file_path, audio_metadata
+        )
+        recording_id = derive_recording_id(audio_file_path)
+        meeting_name = self._get_meeting_name(audio_metadata)
+        device = self._get_optimal_device()
+        compute_type = self._get_compute_type()
 
         try:
             segments, info = self.model.transcribe(
@@ -76,60 +85,101 @@ class WhisperTranscriber:
                 initial_prompt=None,
             )
 
-            transcript_segments = []
-            full_text = ""
+            transcript_segments: list[dict[str, Any]] = []
+            transcript_text_parts: list[str] = []
 
             for segment in segments:
+                segment_text = segment.text.strip()
                 segment_data = {
                     "start": segment.start,
                     "end": segment.end,
-                    "text": segment.text.strip(),
+                    "text": segment_text,
                     "avg_logprob": segment.avg_logprob,
                     "no_speech_prob": segment.no_speech_prob,
                 }
                 transcript_segments.append(segment_data)
-                full_text += segment.text.strip() + " "
+                if segment_text:
+                    transcript_text_parts.append(segment_text)
 
-            processing_time = (datetime.now() - start_time).total_seconds()
+            full_text = " ".join(transcript_text_parts).strip()
+            end_time = datetime.now()
+            processing_time = (end_time - start_time).total_seconds()
+            transcribed_at = end_time.isoformat()
+            segment_count = len(transcript_segments)
+            word_count = len(full_text.split()) if full_text else 0
+            character_count = len(full_text)
+            recording_completed_at = (
+                recording_datetime + timedelta(seconds=info.duration)
+                if info.duration
+                else None
+            )
 
-            recording_timestamp = parse_timestamp_from_filename(audio_file_path.name)
-            audio_metadata = self._read_audio_metadata(audio_file_path)
+            metadata = {
+                "schema_version": 2,
+                "recording_id": recording_id,
+                "recording_filename": audio_file_path.name,
+                "recording_path": str(audio_file_path.resolve()),
+                "meeting_name": meeting_name,
+                "recording_datetime": recording_datetime.isoformat()
+                if recording_datetime
+                else None,
+                "recording_completed_at": recording_completed_at.isoformat()
+                if recording_completed_at
+                else None,
+                "recorded_at": recording_datetime.isoformat()
+                if recording_datetime
+                else None,
+                "recording_length_seconds": info.duration,
+                "duration": info.duration,
+                "language": info.language,
+                "language_probability": info.language_probability,
+                "transcribed_at": transcribed_at,
+                "transcription_time": processing_time,
+                "transcription_time_seconds": processing_time,
+                "model": self.settings.models.whisper,
+                "device": device,
+                "compute_type": compute_type,
+                "file_size_mb": get_file_size_mb(audio_file_path),
+                "segment_count": segment_count,
+                "word_count": word_count,
+                "character_count": character_count,
+                "title": audio_metadata.get("title") if audio_metadata else None,
+                "audio_metadata": audio_metadata or {},
+            }
 
-            result = {
+            return {
                 "success": True,
                 "filename": audio_file_path.name,
-                "full_text": full_text.strip(),
+                "full_text": full_text,
                 "segments": transcript_segments,
-                "metadata": {
-                    "language": info.language,
-                    "language_probability": info.language_probability,
-                    "duration": info.duration,
-                    "transcription_time": processing_time,
-                    "model": self.settings.models.whisper,
-                    "device": self._get_optimal_device(),
-                    "compute_type": self._get_compute_type(),
-                    "file_size_mb": get_file_size_mb(audio_file_path),
-                    "recorded_at": recording_timestamp.isoformat()
-                    if recording_timestamp
-                    else None,
-                    "transcribed_at": datetime.now().isoformat(),
-                    "title": audio_metadata.get("title") if audio_metadata else None,
-                },
+                "metadata": metadata,
                 "error": None,
             }
 
-            return result
-
         except Exception as e:
+            end_time = datetime.now()
+            processing_time = (end_time - start_time).total_seconds()
+            error_metadata = {
+                "schema_version": 2,
+                "recording_id": recording_id,
+                "recording_filename": audio_file_path.name,
+                "recording_path": str(audio_file_path.resolve()),
+                "meeting_name": meeting_name,
+                "recording_datetime": recording_datetime.isoformat()
+                if recording_datetime
+                else None,
+                "transcription_time": processing_time,
+                "transcription_time_seconds": processing_time,
+                "transcribed_at": end_time.isoformat(),
+                "title": audio_metadata.get("title") if audio_metadata else None,
+            }
+
             return {
                 "success": False,
                 "filename": audio_file_path.name,
                 "full_text": "",
                 "segments": [],
-                "metadata": {
-                    "transcription_time": (datetime.now() - start_time).total_seconds(),
-                    "transcribed_at": datetime.now().isoformat(),
-                },
+                "metadata": error_metadata,
                 "error": str(e),
             }
 
@@ -141,13 +191,30 @@ class WhisperTranscriber:
                 result = self.transcribe_file(audio_file)
                 results.append(result)
             except Exception as e:
+                audio_metadata = self._read_audio_metadata(audio_file)
+                recording_datetime = self._get_recording_datetime(
+                    audio_file, audio_metadata
+                )
                 results.append(
                     {
                         "success": False,
                         "filename": audio_file.name,
                         "full_text": "",
                         "segments": [],
-                        "metadata": {"transcribed_at": datetime.now().isoformat()},
+                        "metadata": {
+                            "schema_version": 2,
+                            "recording_id": derive_recording_id(audio_file),
+                            "recording_filename": audio_file.name,
+                            "recording_path": str(audio_file.resolve()),
+                            "meeting_name": self._get_meeting_name(audio_metadata),
+                            "recording_datetime": recording_datetime.isoformat()
+                            if recording_datetime
+                            else None,
+                            "title": audio_metadata.get("title")
+                            if audio_metadata
+                            else None,
+                            "transcribed_at": datetime.now().isoformat(),
+                        },
                         "error": str(e),
                     }
                 )
@@ -177,6 +244,34 @@ class WhisperTranscriber:
                 pass
 
         return None
+
+    def _get_recording_datetime(
+        self, audio_file_path: Path, audio_metadata: Optional[dict]
+    ) -> datetime:
+        if audio_metadata:
+            recorded_at = audio_metadata.get("recorded_at")
+            if isinstance(recorded_at, str) and recorded_at.strip():
+                cleaned = recorded_at.strip().replace("Z", "+00:00")
+                try:
+                    return datetime.fromisoformat(cleaned)
+                except ValueError:
+                    pass
+
+        parsed = parse_timestamp_from_filename(audio_file_path.name)
+        if parsed:
+            return parsed
+
+        try:
+            return datetime.fromtimestamp(audio_file_path.stat().st_mtime)
+        except (OSError, ValueError):
+            return datetime.now()
+
+    def _get_meeting_name(self, audio_metadata: Optional[dict]) -> str:
+        if audio_metadata:
+            title = audio_metadata.get("title")
+            if isinstance(title, str) and title.strip():
+                return title.strip()
+        return DEFAULT_MEETING_NAME
 
     def __del__(self):
         if hasattr(self, "model") and self.model:

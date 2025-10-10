@@ -4,6 +4,7 @@ from utils.file_utils import (
     generate_audio_filename,
     get_audio_files,
     get_file_size_mb,
+    get_transcription_files,
     sanitize_filename,
 )
 
@@ -76,3 +77,28 @@ class TestFileUtils:
         result = get_file_size_mb(mock_path)
 
         assert result == 0.0
+
+    def test_get_transcription_files_in_nested_structure(self, tmp_path):
+        transcription_dir = tmp_path / "transcriptions"
+        recording_dir = transcription_dir / "20250101_120000"
+        recording_dir.mkdir(parents=True)
+
+        transcript_file = recording_dir / "20250101_120000.json.gz"
+        transcript_file.write_bytes(b"compressed")
+        metadata_file = recording_dir / "metadata.json"
+        metadata_file.write_text("{}", encoding="utf-8")
+
+        files = get_transcription_files(transcription_dir)
+
+        assert files == [transcript_file]
+
+    def test_get_transcription_files_ignores_metadata_json(self, tmp_path):
+        transcription_dir = tmp_path / "transcriptions"
+        transcription_dir.mkdir(parents=True)
+
+        metadata_file = transcription_dir / "metadata.json"
+        metadata_file.write_text("{}", encoding="utf-8")
+
+        files = get_transcription_files(transcription_dir)
+
+        assert files == []

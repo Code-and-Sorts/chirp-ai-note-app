@@ -36,13 +36,17 @@ def get_transcription_files(directory: Path) -> list[Path]:
     if not directory.exists():
         return []
 
+    transcription_paths: dict[Path, float] = {}
+
+    for file_path in directory.rglob("*.json.gz"):
+        if file_path.is_file() and file_path.name != "metadata.json":
+            try:
+                transcription_paths[file_path] = file_path.stat().st_mtime
+            except (OSError, ValueError):
+                continue
+
     return sorted(
-        [
-            f
-            for f in directory.iterdir()
-            if f.is_file() and f.name.endswith((".json", ".json.gz"))
-        ],
-        key=lambda x: x.stat().st_mtime,
+        transcription_paths.keys(), key=lambda path: transcription_paths[path]
     )
 
 

@@ -1,0 +1,1 @@
+DEFAULT_MEETING_NAME = "Meeting Notes"
