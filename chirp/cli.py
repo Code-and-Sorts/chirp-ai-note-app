@@ -159,6 +159,17 @@ def record(
     title: Optional[str] = typer.Option(
         None, "--title", "-t", help="Meeting title for filename"
     ),
+    live_transcribe: bool = typer.Option(
+        False,
+        "--live-transcribe/--no-live-transcribe",
+        help="Stream live transcription while recording",
+    ),
+    debug_live: bool = typer.Option(
+        False,
+        "--debug-live",
+        help="Debug live transcription (captures intermediate audio chunks)",
+        hidden=True,
+    ),
 ):
     """Start recording a meeting (press Ctrl+C to stop if no duration specified)"""
     from recorder.audio_recorder import AudioRecorder
@@ -167,12 +178,11 @@ def record(
     settings = get_settings()
     device_manager = DeviceManager()
 
-    if not device_manager.check_blackhole_available():
-        console.print(
-            "[red]❌ BlackHole not detected. Please install BlackHole audio driver.[/red]"
+    if live_transcribe:
+        _run_live_transcription(
+            settings, device_manager, title, duration, debug_live=debug_live
         )
-        console.print("Run 'chirp setup' for installation and configuration guide.")
-        raise typer.Exit(1)
+        return
 
     recorder = AudioRecorder(settings, device_manager)
 
@@ -254,6 +264,48 @@ def record(
         console.print(f"[red]❌ Unexpected error: {str(e)}[/red]")
         console.print("[dim]Please report this issue if it persists[/dim]")
         raise typer.Exit(1)
+
+
+def _run_live_transcription(
+    settings,
+    device_manager,
+    title: Optional[str],
+    duration: Optional[int],
+    debug_live: bool = False,
+):
+    from recorder.live_session import LiveSessionResult, LiveTranscriptionSession
+
+    if title:
+        console.print(f"[cyan]📝 Title: {title}[/cyan]")
+    if duration:
+        console.print(f"[cyan]⏱️ Planned duration: {duration} minutes[/cyan]")
+
+    session = LiveTranscriptionSession(
+        settings=settings,
+        device_manager=device_manager,
+        console=console,
+        title=title,
+        duration_minutes=duration,
+        debug=debug_live,
+    )
+
+    try:
+        result: LiveSessionResult = session.run()
+    except RecordingError as e:
+        console.print(f"[red]❌ Live recording error: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+    from utils.time_utils import format_duration
+
+    console.print()
+    console.print("[green]✅ Live recording complete[/green]")
+    console.print(f"[dim]Audio saved to:[/dim] {result.audio_path}")
+    console.print(
+        f"[dim]Duration:[/dim] {format_duration(result.duration_seconds)}  •  [dim]Live words transcribed:[/dim] {result.total_words}"
+    )
+    console.print(
+        "[dim]Run 'chirp transcribe' to generate the high-quality transcript.[/dim]"
+    )
 
 
 @app.command(rich_help_panel=CHAT_PANEL)
@@ -383,6 +435,9 @@ def transcribe(
     force: bool = typer.Option(
         False, "--force", "-f", help="Re-transcribe already processed files"
     ),
+    stream: bool = typer.Option(
+        True, "--stream/--no-stream", help="Stream transcription as it processes"
+    ),
 ):
     """Transcribe audio files to text"""
     from transcriber.batch_processor import BatchProcessor
@@ -400,18 +455,51 @@ def transcribe(
 
     processor = BatchProcessor(settings)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Transcribing audio files...", total=len(audio_files))
+    segment_callback = None
+    if stream:
+        from rich.live import Live
+        from rich.text import Text
 
-        results = processor.process_files(
-            audio_files,
-            force=force,
-            progress_callback=lambda: progress.update(task, advance=1),
-        )
+        streaming_text = Text()
+
+        def on_segment(segment):
+            text = segment.get("text", "").strip()
+            if text:
+                streaming_text.append(text + " ", style="cyan")
+
+        segment_callback = on_segment
+
+        with Live(streaming_text, console=console, refresh_per_second=4):
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    "Transcribing audio files...", total=len(audio_files)
+                )
+
+                results = processor.process_files(
+                    audio_files,
+                    force=force,
+                    progress_callback=lambda: progress.update(task, advance=1),
+                    on_segment=segment_callback,
+                )
+    else:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(
+                "Transcribing audio files...", total=len(audio_files)
+            )
+
+            results = processor.process_files(
+                audio_files,
+                force=force,
+                progress_callback=lambda: progress.update(task, advance=1),
+            )
 
     success_count = sum(1 for r in results if r["success"])
     processed_count = len(results)
@@ -657,9 +745,12 @@ def devices():
     console.print()
     if device_manager.check_blackhole_available():
         console.print("[green]✅ BlackHole detected and ready[/green]")
+    elif device_manager.check_aggregate_available():
+        console.print("[green]✅ Aggregate device detected and ready[/green]")
     else:
-        console.print("[red]❌ BlackHole not found[/red]")
-        console.print("Install from: https://existential.audio/blackhole/")
+        console.print("[red]❌ No suitable input device found[/red]")
+        console.print("Install BlackHole from: https://existential.audio/blackhole/")
+        console.print("Or create an Aggregate Device in Audio MIDI Setup")
     console.print("[dim]Run 'chirp setup' for audio configuration guide[/dim]")
 
 

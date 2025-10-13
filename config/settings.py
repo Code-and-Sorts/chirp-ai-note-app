@@ -34,7 +34,7 @@ class DirectoriesConfig(BaseModel):
 
 
 class ModelsConfig(BaseModel):
-    whisper: str = "base"
+    whisper: str = "large-v3-turbo"
     llm: str = "llama3.1:8b"
     ollama_url: str = "http://localhost:11434"
     num_predict: int = 4096

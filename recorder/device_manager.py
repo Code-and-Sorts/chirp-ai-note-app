@@ -4,6 +4,14 @@ import pyaudio
 
 
 class DeviceManager:
+    """
+    Manages audio devices using PyAudio.
+
+    Uses the system's default input device for recording. Helper methods
+    are provided to detect and verify specific device types (BlackHole,
+    aggregate devices) for diagnostics and user feedback.
+    """
+
     def __init__(self):
         self.audio = None
         self._initialize_audio()
@@ -51,16 +59,53 @@ class DeviceManager:
         for device in devices:
             device_name = device["name"].lower()
             for blackhole_name in blackhole_names:
-                if (
-                    blackhole_name.lower() in device_name
-                    and device["max_input_channels"] > 0
-                ):
+                if blackhole_name.lower() in device_name:
+                    if device["max_input_channels"] > 0:
+                        return int(device["index"])
+
+        return None
+
+    def find_aggregate_device(self) -> Optional[int]:
+        devices = self.list_devices()
+
+        for device in devices:
+            device_name = device["name"].lower()
+            if "aggregate" in device_name or "multi-output" in device_name:
+                if self._test_device_input(device["index"]):
+                    return int(device["index"])
+
+        for device in devices:
+            if device["name"] in ["BlackHole 2ch", "BlackHole 16ch", "BlackHole"]:
+                continue
+            if device["max_input_channels"] >= 4:
+                if self._test_device_input(device["index"]):
                     return int(device["index"])
 
         return None
 
+    def _test_device_input(self, device_index: int) -> bool:
+        if not self.audio:
+            return False
+
+        try:
+            stream = self.audio.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=16000,
+                input=True,
+                input_device_index=device_index,
+                frames_per_buffer=1024,
+            )
+            stream.close()
+            return True
+        except Exception:
+            return False
+
     def check_blackhole_available(self) -> bool:
         return self.find_blackhole_device() is not None
+
+    def check_aggregate_available(self) -> bool:
+        return self.find_aggregate_device() is not None
 
     def get_default_input_device(self) -> Optional[int]:
         if not self.audio:

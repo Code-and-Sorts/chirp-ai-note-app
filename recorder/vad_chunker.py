@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+import collections
+import queue
+import threading
+from typing import Callable
+
+import webrtcvad
+
+from recorder.live_types import AudioFrame, SpeechChunk
+
+
+class VADChunker(threading.Thread):
+    def __init__(
+        self,
+        frame_queue: queue.Queue[AudioFrame],
+        chunk_queue: queue.Queue[SpeechChunk],
+        stop_event: threading.Event,
+        sample_rate: int,
+        frame_ms: int = 20,
+        padding_ms: int = 300,
+        aggressiveness: int = 2,
+        vad_factory: Callable[[], webrtcvad.Vad] | None = None,
+        energy_threshold: float = 0.01,
+        event_queue: queue.Queue | None = None,
+        max_chunk_seconds: float = 10.0,
+    ):
+        super().__init__(daemon=True)
+        self.frame_queue = frame_queue
+        self.chunk_queue = chunk_queue
+        self.stop_event = stop_event
+        self.sample_rate = sample_rate
+        self.frame_ms = frame_ms
+        self.padding_ms = padding_ms
+        self.aggressiveness = max(0, min(3, aggressiveness))
+        self.vad = vad_factory() if vad_factory else webrtcvad.Vad(self.aggressiveness)
+        self.energy_threshold = energy_threshold
+        self.event_queue = event_queue
+        self.max_chunk_seconds = max_chunk_seconds
+
+        self._padding_frames = max(1, int(self.padding_ms / self.frame_ms))
+        self._ring_buffer: collections.deque[tuple[AudioFrame, bool]] = (
+            collections.deque(maxlen=self._padding_frames)
+        )
+        self._triggered = False
+        self._voiced_frames: list[AudioFrame] = []
+        self._frame_count = 0
+        self._speech_frame_count = 0
+        self._chunk_count = 0
+
+    def run(self):
+        while not self.stop_event.is_set():
+            try:
+                frame = self.frame_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            self._frame_count += 1
+            is_speech = self._is_speech(frame)
+            if is_speech:
+                self._speech_frame_count += 1
+
+            self._update_state(frame, is_speech)
+
+            if self._frame_count % 50 == 0:
+                self._publish_event(
+                    "vad_status",
+                    {
+                        "frames": self._frame_count,
+                        "speech_frames": self._speech_frame_count,
+                        "triggered": self._triggered,
+                        "chunks_emitted": self._chunk_count,
+                    },
+                )
+
+        if self._triggered and self._voiced_frames:
+            tail_frames = [f for f, _ in self._ring_buffer]
+            self._emit_chunk(tail_frames)
+
+    def _is_speech(self, frame: AudioFrame) -> bool:
+        if frame.level >= self.energy_threshold:
+            return True
+
+        expected_bytes = int(self.sample_rate * (self.frame_ms / 1000.0)) * 2
+        if len(frame.data) != expected_bytes:
+            return False
+
+        try:
+            return bool(self.vad.is_speech(frame.data, self.sample_rate))
+        except Exception:
+            return False
+
+    def _update_state(self, frame: AudioFrame, is_speech: bool):
+        self._ring_buffer.append((frame, is_speech))
+
+        if not self._triggered:
+            num_voiced = len([1 for _, speech in self._ring_buffer if speech])
+            if num_voiced > 0.5 * self._padding_frames:
+                self._triggered = True
+                self._voiced_frames.extend(f for f, _ in self._ring_buffer)
+                self._ring_buffer.clear()
+        else:
+            self._voiced_frames.append(frame)
+
+            if self._voiced_frames:
+                chunk_duration = (
+                    self._voiced_frames[-1].timestamp
+                    + self._voiced_frames[-1].duration
+                    - self._voiced_frames[0].timestamp
+                )
+                if chunk_duration >= self.max_chunk_seconds:
+                    self._emit_chunk()
+                    self._triggered = False
+                    self._ring_buffer.clear()
+                    self._voiced_frames.clear()
+                    return
+
+            num_unvoiced = len([1 for _, speech in self._ring_buffer if not speech])
+            if num_unvoiced > 0.9 * self._padding_frames:
+                tail_frames = [f for f, _ in self._ring_buffer]
+                self._emit_chunk(tail_frames)
+                self._triggered = False
+                self._ring_buffer.clear()
+                self._voiced_frames.clear()
+
+    def _emit_chunk(self, tail_frames: list[AudioFrame] | None = None):
+        if not self._voiced_frames:
+            return
+        frames = list(self._voiced_frames)
+        if tail_frames:
+            frames.extend(tail_frames)
+        data = b"".join(frame.data for frame in frames)
+        start = frames[0].timestamp
+        end = frames[-1].timestamp + frames[-1].duration
+        chunk = SpeechChunk(data=data, start=start, end=end)
+        try:
+            self.chunk_queue.put_nowait(chunk)
+            self._chunk_count += 1
+            self._publish_event(
+                "chunk_emitted",
+                {
+                    "chunk_id": self._chunk_count,
+                    "duration": end - start,
+                    "frames": len(frames),
+                },
+            )
+        except queue.Full:
+            pass
+
+    def _publish_event(self, event_type: str, payload: dict):
+        if self.event_queue is None:
+            return
+        from recorder.live_types import DashboardEvent
+
+        event = DashboardEvent(type=event_type, payload=payload)
+        try:
+            self.event_queue.put_nowait(event)
+        except queue.Full:
+            pass
