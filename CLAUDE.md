@@ -6,8 +6,9 @@
 
 ### Core Functionality
 
-- **Audio Recording**: High-quality meeting recording with system audio capture
-- **Transcription**: Speech-to-text using OpenAI's Whisper models
+- **Audio Recording**: High-quality meeting recording with system audio capture (uses default input device)
+- **Live Transcription**: Real-time transcription with scrollable dashboard during recording
+- **Transcription**: Speech-to-text using OpenAI's Whisper models (large-v3-turbo)
 - **AI Notes**: Generate structured meeting summaries using Ollama LLMs
 - **Semantic Search**: Query meeting notes with ChromaDB vector search
 - **Interactive Chat**: Ask questions about meeting content
@@ -26,18 +27,19 @@
 
 - **`chirp/`**: Main CLI module with Typer commands
 - **`config/`**: Settings management with Pydantic and platform-specific paths
-- **`recorder/`**: Audio recording with PyAudio and device management
-- **`transcriber/`**: Whisper-based transcription with batch processing
+- **`recorder/`**: Audio recording with PyAudio, device management, live transcription with scrollable dashboard
+- **`transcriber/`**: Whisper-based transcription with batch processing and streaming support
 - **`notes/`**: AI note generation using Ollama
 - **`notes_chat/`**: Semantic search and interactive chat features
 - **`utils/`**: Shared utilities for file operations and time handling
 
 ### External Dependencies
 
-- **Audio**: PyAudio, PortAudio (system), BlackHole (macOS)
-- **AI Models**: Ollama (llama3.1:8b, nomic-embed-text)
+- **Audio**: PyAudio, PortAudio (system), optional BlackHole/aggregate devices (macOS)
+- **AI Models**: Ollama (llama3.1:8b for notes, nomic-embed-text for search), faster-whisper (large-v3-turbo)
 - **Database**: ChromaDB for vector search
-- **CLI**: Typer with Rich for beautiful terminal output
+- **CLI**: Typer with Rich for beautiful terminal output, including scrollable live dashboard
+- **VAD**: WebRTC VAD for speech detection in live transcription
 
 ## Development Guidelines
 

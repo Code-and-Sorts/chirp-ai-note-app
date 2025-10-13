@@ -1,7 +1,7 @@
 import platform
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from faster_whisper import WhisperModel
 
@@ -53,9 +53,17 @@ class WhisperTranscriber:
         import os
 
         cpu_count = os.cpu_count()
+        if cpu_count and cpu_count >= 8:
+            return max(4, cpu_count - 2)
         return max(1, cpu_count // 2) if cpu_count else 1
 
-    def transcribe_file(self, audio_file_path: Path) -> dict[str, Any]:
+    def transcribe_file(
+        self,
+        audio_file_path: Path,
+        fast_mode: bool = False,
+        language: str | None = None,
+        on_segment: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         if not audio_file_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_file_path}")
 
@@ -72,17 +80,36 @@ class WhisperTranscriber:
         device = self._get_optimal_device()
         compute_type = self._get_compute_type()
 
+        if fast_mode:
+            beam_size = 1
+            best_of = 1
+            vad_filter = False
+            word_timestamps = False
+            hallucination_silence_threshold = None
+        else:
+            beam_size = 5
+            best_of = 5
+            vad_filter = True
+            word_timestamps = True
+            hallucination_silence_threshold = 2.0
+
         try:
             segments, info = self.model.transcribe(
                 str(audio_file_path),
-                beam_size=5,
-                language=None,
+                beam_size=beam_size,
+                best_of=best_of,
+                language=language,
                 condition_on_previous_text=False,
                 temperature=0.0,
                 compression_ratio_threshold=2.4,
                 log_prob_threshold=-1.0,
                 no_speech_threshold=0.6,
                 initial_prompt=None,
+                vad_filter=vad_filter,
+                word_timestamps=word_timestamps,
+                hallucination_silence_threshold=hallucination_silence_threshold,
+                repetition_penalty=1.0,
+                no_repeat_ngram_size=0,
             )
 
             transcript_segments: list[dict[str, Any]] = []
@@ -97,9 +124,22 @@ class WhisperTranscriber:
                     "avg_logprob": segment.avg_logprob,
                     "no_speech_prob": segment.no_speech_prob,
                 }
+                if word_timestamps and hasattr(segment, "words") and segment.words:
+                    segment_data["words"] = [
+                        {
+                            "word": word.word,
+                            "start": word.start,
+                            "end": word.end,
+                            "probability": word.probability,
+                        }
+                        for word in segment.words
+                    ]
                 transcript_segments.append(segment_data)
                 if segment_text:
                     transcript_text_parts.append(segment_text)
+
+                if on_segment and segment_text:
+                    on_segment(segment_data)
 
             full_text = " ".join(transcript_text_parts).strip()
             end_time = datetime.now()

@@ -10,7 +10,8 @@
 
 ## ✨ Features
 
-- **🎙️ System Audio Recording**: Capture high-quality audio from meetings, calls, or any system audio using BlackHole
+- **🎙️ System Audio Recording**: Capture high-quality audio from meetings, calls, or any system audio
+- **📺 Live Transcription**: Real-time transcription with scrollable dashboard while recording
 - **🤖 AI Transcription**: Powered by faster-whisper with Apple Silicon optimization for accurate speech-to-text
 - **📋 Smart Note Generation**: Uses Ollama + Llama 3.1 to generate structured meeting notes with key points, decisions, and action items
 - **📁 Batch Processing**: Process multiple audio files with progress indicators
@@ -35,18 +36,28 @@ brew install chirp
 chirp setup
 ```
 
-### Install BlackHole audio driver
+### Setup Audio Input Device
 
+Chirp uses your system's default input device for recording. You have several options:
+
+**Option 1: Use an Aggregate Device (Recommended for system audio + microphone)**
+- Open Audio MIDI Setup (Applications/Utilities)
+- Create an Aggregate Device combining:
+  - Your microphone (for your voice)
+  - BlackHole (for system audio)
+- Set this aggregate device as your default input in System Settings → Sound
+
+**Option 2: Use BlackHole Only (System audio only)**
 ```bash
-# Install Blackhole
+# Install BlackHole
 brew install blackhole-2ch
 ```
+- Set BlackHole as your default input device
+- Create a Multi-Output Device to hear audio while recording
 
-- Set up a multi-output device using `Audio MIDI Setup`:
-  - Open Audio MIDI Setup (Applications/Utilities)
-  - Create a Multi-Output Device
-  - Include both your speakers and BlackHole
-  - Set this as your default output device
+**Option 3: Use Built-in Microphone**
+- Just use your Mac's built-in microphone (no setup needed)
+- Set it as default input in System Settings → Sound
 
 ### Setup Ollama and AI Models
 
@@ -129,9 +140,28 @@ chirp record --duration 30 --title "Client Meeting"
 # Record indefinitely (stop with Ctrl+C)
 chirp record
 
+# Record with live transcription (real-time transcription while recording)
+chirp record --live-transcribe --title "Team Meeting"
+
 # Record with custom settings
 chirp record -d 45 -t "Project Planning"
 ```
+
+#### Live Transcription Mode
+
+When using `--live-transcribe`, you get a real-time dashboard showing:
+
+- **Live transcript**: See the transcription as it happens
+- **Audio levels**: Visual feedback of recording volume
+- **Speaker detection**: See when speech is detected
+- **Scrollable view**: Use arrow keys to scroll through the transcript while recording continues
+
+**Keyboard Controls During Live Transcription**:
+- `↑/↓` or `PgUp/PgDn`: Scroll through the transcript
+- `Space` or `Enter`: Jump back to latest transcription (resume auto-scroll)
+- `Ctrl+C`: Stop recording and save
+
+**Note**: Live transcription uses the `large-v3-turbo` Whisper model and provides near real-time results. The final high-quality transcript can be generated afterward with `chirp transcribe`.
 
 ### Processing Audio
 
@@ -248,17 +278,24 @@ chirp status
 
 ### Audio Recording Issues
 
-**BlackHole not detected**:
+**No audio being recorded**:
 
-1. Download and install BlackHole from [existential.audio/blackhole](https://existential.audio/blackhole/)
-2. Set up a multi-output device in Audio MIDI Setup
-3. Verify detection: `chirp devices`
+1. Check your default input device in System Settings → Sound
+2. Verify the device is working: `chirp devices`
+3. Check audio permissions in System Preferences > Security & Privacy > Microphone
 
 **Recording fails to start**:
 
 1. Check audio permissions in System Preferences > Security & Privacy > Microphone
-2. Verify BlackHole installation: `chirp test`
+2. Verify your default input device is set correctly
 3. List available devices: `chirp devices`
+4. Try a different input device
+
+**Want to record system audio**:
+
+1. Install BlackHole: `brew install blackhole-2ch`
+2. Create an Aggregate Device in Audio MIDI Setup
+3. Set the aggregate device as your default input
 
 ### AI/LLM Issues
 
@@ -286,12 +323,12 @@ chirp status
 
 ### Near-term
 
-- **Speaker Detection**: Identify different speakers in meetings
+- **Speaker Diarization**: Identify and label different speakers in meetings
+- **Streaming Transcription**: Segment-by-segment streaming display
 
 ### Long-term
 
 - **Calendar Integration**: Auto-trigger recording from macOS Calendar
-- **Real-time Transcription**: Live transcription during recording
 - **Multiple Export Formats**: PDF, DOCX, Notion, etc.
 - **Meeting Analytics**: Insights and patterns from meeting data
 - **OS Support**: Support Windows and Linux
