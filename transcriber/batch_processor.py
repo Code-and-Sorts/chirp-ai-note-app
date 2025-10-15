@@ -128,6 +128,10 @@ class BatchProcessor:
         recording_id = metadata.get("recording_id")
         output_path = self._get_output_path(audio_file, recording_id)
 
+        metadata = transcription_result.get("metadata", {})
+        recording_id = metadata.get("recording_id")
+        output_path = self._get_output_path(audio_file, recording_id)
+
         if transcription_result["success"]:
             if self.compressor.compress_json(transcription_result, output_path):
                 transcription_result["output_path"] = str(output_path)

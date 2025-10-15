@@ -24,7 +24,7 @@ dependencies = [
     "python-dateutil>=2.8.0",
     "platformdirs>=4.0.0",
     "prompt-toolkit>=3.0.52",
-    "webrtcvad>=2.0.10",
+    "webrtcvad>=2.0.10"
 ]
 
 [project.scripts]
