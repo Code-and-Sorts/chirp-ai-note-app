@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 
@@ -39,6 +40,23 @@ def parse_timestamp_from_filename(filename: str) -> Optional[datetime]:
     except (IndexError, ValueError):
         pass
     return None
+
+
+def derive_recording_id(
+    audio_file: Path, recorded_at: Optional[datetime] = None
+) -> str:
+    timestamp = parse_timestamp_from_filename(audio_file.name)
+
+    if timestamp is None and recorded_at is not None:
+        timestamp = recorded_at
+
+    if timestamp is None:
+        try:
+            timestamp = datetime.fromtimestamp(audio_file.stat().st_mtime)
+        except (OSError, ValueError):
+            timestamp = datetime.now()
+
+    return timestamp.strftime("%Y%m%d_%H%M%S")
 
 
 def get_recording_duration(start_time: datetime) -> float:

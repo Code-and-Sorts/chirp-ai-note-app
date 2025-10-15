@@ -1,3 +1,4 @@
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -9,6 +10,7 @@ from transcriber.compression import JSONCompressor
 from transcriber.whisper_transcriber import WhisperTranscriber
 from utils.file_utils import get_audio_files
 from utils.popup_manager import PopupManager
+from utils.time_utils import derive_recording_id
 
 
 class BatchProcessor:
@@ -110,14 +112,19 @@ class BatchProcessor:
         return results
 
     def _process_single_file(self, audio_file: Path) -> dict[str, Any]:
-        output_path = self._get_output_path(audio_file)
-
         transcription_result = self.transcriber.transcribe_file(audio_file)
+
+        metadata = transcription_result.get("metadata", {})
+        recording_id = metadata.get("recording_id")
+        output_path = self._get_output_path(audio_file, recording_id)
 
         if transcription_result["success"]:
             if self.compressor.compress_json(transcription_result, output_path):
                 transcription_result["output_path"] = str(output_path)
                 transcription_result["compressed"] = True
+                metadata_path = self._write_metadata_file(output_path.parent, metadata)
+                if metadata_path:
+                    transcription_result["metadata_path"] = str(metadata_path)
             else:
                 transcription_result["compressed"] = False
                 transcription_result["compression_error"] = (
@@ -141,9 +148,28 @@ class BatchProcessor:
 
         return files_to_process
 
-    def _get_output_path(self, audio_file: Path) -> Path:
-        base_name = audio_file.stem
-        return self.settings.directories.transcriptions / f"{base_name}.json.gz"
+    def _get_output_path(
+        self, audio_file: Path, recording_id: Optional[str] = None
+    ) -> Path:
+        transcription_id = recording_id or derive_recording_id(audio_file)
+        transcription_dir = self.settings.directories.transcriptions / transcription_id
+        return transcription_dir / f"{transcription_id}.json.gz"
+
+    def _write_metadata_file(
+        self, target_directory: Path, metadata: dict[str, Any]
+    ) -> Optional[Path]:
+        if not metadata:
+            return None
+
+        metadata_path = target_directory / "metadata.json"
+
+        try:
+            target_directory.mkdir(parents=True, exist_ok=True)
+            with metadata_path.open("w", encoding="utf-8") as fh:
+                json.dump(metadata, fh, indent=2, ensure_ascii=False)
+            return metadata_path
+        except Exception:
+            return None
 
     def get_transcription_data(self, audio_file_path: Path) -> Optional[dict[str, Any]]:
         output_path = self._get_output_path(audio_file_path)
@@ -187,7 +213,7 @@ class BatchProcessor:
 
     def get_processing_stats(self) -> dict[str, Any]:
         transcription_files = list(
-            self.settings.directories.transcriptions.glob("*.json.gz")
+            self.settings.directories.transcriptions.rglob("*.json.gz")
         )
 
         total_files = len(transcription_files)

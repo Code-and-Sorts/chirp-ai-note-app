@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -5,7 +6,7 @@ from typing import Any
 
 from config.settings import ChirpSettings
 from transcriber.compression import JSONCompressor
-from utils.time_utils import is_same_day, parse_timestamp_from_filename
+from utils.time_utils import is_same_day
 
 
 class DailyAggregator:
@@ -28,26 +29,19 @@ class DailyAggregator:
         return dict(daily_groups)
 
     def _extract_meeting_date(self, transcription_file: Path) -> datetime:
-        audio_filename = transcription_file.stem.replace(".json", "")
+        metadata = self._load_metadata(transcription_file)
+        recorded_at = metadata.get("recording_datetime") or metadata.get("recorded_at")
 
-        timestamp_from_filename = parse_timestamp_from_filename(audio_filename)
-        if timestamp_from_filename:
-            return timestamp_from_filename
+        if isinstance(recorded_at, str):
+            try:
+                return datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+            except ValueError:
+                pass
 
         try:
-            transcription_data = self.compressor.decompress_json(transcription_file)
-            recorded_at = transcription_data.get("metadata", {}).get("recorded_at")
-
-            if recorded_at:
-                try:
-                    return datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-                except ValueError:
-                    pass
-        except Exception:
-            pass
-
-        file_mtime = datetime.fromtimestamp(transcription_file.stat().st_mtime)
-        return file_mtime
+            return datetime.fromtimestamp(transcription_file.stat().st_mtime)
+        except (OSError, ValueError):
+            return datetime.now()
 
     def get_transcriptions_for_date(
         self, target_date: datetime, transcription_files: list[Path]
@@ -71,22 +65,30 @@ class DailyAggregator:
         for date, files in daily_groups.items():
             day_duration = 0.0
             day_meetings = len(files)
+            file_metadata_pairs: list[tuple[Path, dict[str, Any]]] = []
 
             for transcription_file in files:
+                metadata = self._load_metadata(transcription_file)
+                file_metadata_pairs.append((transcription_file, metadata))
+                duration = metadata.get("recording_length_seconds")
+                if duration is None:
+                    duration = metadata.get("duration", 0)
                 try:
-                    transcription_data = self.compressor.decompress_json(
-                        transcription_file
-                    )
-                    duration = transcription_data.get("metadata", {}).get("duration", 0)
-                    day_duration += duration
-                except Exception:
-                    pass
+                    day_duration += float(duration)
+                except (TypeError, ValueError):
+                    continue
+
+            recording_ids = [
+                metadata.get("recording_id") or transcription_file.parent.name
+                for transcription_file, metadata in file_metadata_pairs
+            ]
 
             stats[date.strftime("%Y-%m-%d")] = {
                 "date": date,
                 "meeting_count": day_meetings,
                 "total_duration": day_duration,
-                "files": [f.name for f in files],
+                "recordings": recording_ids,
+                "files": recording_ids,
             }
 
             total_meetings += day_meetings
@@ -120,3 +122,23 @@ class DailyAggregator:
         return sorted(
             recent_files, key=lambda x: self._extract_meeting_date(x), reverse=True
         )
+
+    def _load_metadata(self, transcription_file: Path) -> dict[str, Any]:
+        metadata_path = transcription_file.parent / "metadata.json"
+
+        if metadata_path.exists():
+            try:
+                with metadata_path.open(encoding="utf-8") as fh:
+                    data = json.load(fh)
+                    if isinstance(data, dict):
+                        return dict(data)
+            except Exception:
+                pass
+
+        try:
+            transcription_data = self.compressor.decompress_json(transcription_file)
+        except Exception:
+            return {}
+
+        metadata = transcription_data.get("metadata", {})
+        return dict(metadata) if isinstance(metadata, dict) else {}

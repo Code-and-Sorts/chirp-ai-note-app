@@ -1,4 +1,4 @@
-# 🐦 Chirp - AI Meeting Notes CLI
+# 🐣 Chirp - AI Meeting Notes CLI
 
 <!-- markdownlint-disable MD033 -->
 <p align="center">

@@ -2,23 +2,30 @@
 
 **Time:** {meeting_time}
 **Duration:** {duration}
-**Participants:** {participants}
 
 ### Executive Summary
 
 {executive_summary}
 
-### Key Discussion Points
+### Agenda
 
-{key_points}
+{agenda}
+
+### Discussion Highlights
+
+{discussion_highlights}
+
+### Action Items
+
+{action_items}
 
 ### Decisions Made
 
 {decisions}
 
-### Action Items
+### Open Questions
 
-{action_items}
+{open_questions}
 
 ### Next Steps
 

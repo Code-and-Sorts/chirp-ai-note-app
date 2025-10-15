@@ -55,7 +55,7 @@ runs:
     - name: Run type checking
       shell: bash
       run: |
-        uv run mypy chirp config recorder transcriber notes utils --ignore-missing-imports
+        uv run mypy
 
     - name: Validate code compilation
       shell: bash

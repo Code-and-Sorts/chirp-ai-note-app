@@ -24,7 +24,7 @@ from utils.file_utils import (
 
 app = typer.Typer(
     name="chirp",
-    help="🐦 Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
+    help="🐣 Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
     rich_markup_mode="rich",
 )
 console = Console()
@@ -257,7 +257,6 @@ def notes(
     else:
         console.print(f"[green]✅ Updated note: {context.path}[/green]")
 
-    # Auto-index manual notes on save (minimal change, behind config flag)
     try:
         if settings.notes_chat.auto_index:
             from notes_chat.index import IndexManager
@@ -435,7 +434,7 @@ def stats():
     """Show Chirp statistics"""
     settings = get_settings()
 
-    table = Table(title="🐦 Chirp Statistics", show_header=True)
+    table = Table(title="🐣 Chirp Statistics", show_header=True)
     table.add_column("Category", style="cyan")
     table.add_column("Value", style="green")
 
@@ -495,7 +494,7 @@ Channels: {settings.audio.channels}
 [cyan]Monitoring:[/cyan]
 Warning: {settings.monitoring.warning_minutes} minutes
 Interval: {settings.monitoring.warning_interval} minutes""",
-            title="🐦 Chirp Configuration",
+            title="🐣 Chirp Configuration",
         )
         console.print(panel)
         return

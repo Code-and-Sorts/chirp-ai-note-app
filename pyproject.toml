@@ -22,6 +22,7 @@ dependencies = [
     "rank-bm25>=0.2.0",
     "python-dateutil>=2.8.0",
     "platformdirs>=4.0.0",
+    "prompt-toolkit>=3.0.52",
 ]
 
 [project.scripts]
@@ -77,9 +78,46 @@ convention = "google"
 [tool.ruff.lint.isort]
 known-first-party = ["chirp"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+omit = [
+    "tests/*",
+    "*/__pycache__/*",
+    "*/.venv/*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
+files = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]

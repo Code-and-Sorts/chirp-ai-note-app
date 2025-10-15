@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -213,6 +214,45 @@ class TestWhisperTranscriber:
                 assert result["segments"] == []
                 assert result["error"] == "Transcription failed"
                 assert "transcription_time" in result["metadata"]
+
+    def test_transcribe_file_includes_enhanced_metadata(
+        self, tmp_path, mock_settings, mock_whisper_model
+    ):
+        audio_path = tmp_path / "20250101_120000_sample.wav"
+        audio_path.write_bytes(b"fake audio data")
+
+        metadata_content = {
+            "title": "Strategy Sync",
+            "recorded_at": "2025-01-01T12:00:00",
+        }
+        metadata_file = audio_path.with_suffix(f"{audio_path.suffix}.meta")
+        metadata_file.write_text(json.dumps(metadata_content), encoding="utf-8")
+
+        with patch("transcriber.whisper_transcriber.WhisperModel") as mock_model_cls:
+            mock_model_cls.return_value = mock_whisper_model
+            with patch.object(
+                WhisperTranscriber, "_get_optimal_device", return_value="cpu"
+            ):
+                with patch.object(
+                    WhisperTranscriber, "_get_compute_type", return_value="int8"
+                ):
+                    with patch.object(
+                        WhisperTranscriber, "_get_cpu_threads", return_value=4
+                    ):
+                        transcriber = WhisperTranscriber(mock_settings)
+
+        result = transcriber.transcribe_file(audio_path)
+
+        metadata = result["metadata"]
+
+        assert metadata["recording_id"] == "20250101_120000"
+        assert metadata["meeting_name"] == "Strategy Sync"
+        assert metadata["title"] == "Strategy Sync"
+        assert metadata["recording_length_seconds"] == pytest.approx(5.0)
+        assert metadata["segment_count"] == 1
+        assert metadata["word_count"] == len("This is a test transcription.".split())
+        assert metadata["recording_datetime"].startswith("2025-01-01T12:00:00")
+        assert result["full_text"] == "This is a test transcription."
 
     @patch("os.cpu_count")
     @patch("platform.processor")

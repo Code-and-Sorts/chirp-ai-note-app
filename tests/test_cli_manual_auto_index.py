@@ -24,7 +24,6 @@ def test_notes_auto_index_enabled_success(tmp_path, monkeypatch):
     settings = _make_settings(tmp_path, enabled=True)
     monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
 
-    # Provide a deterministic note context
     note_path = tmp_path / "Test-Note.md"
     context = NoteContext(
         path=note_path,
