@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -317,6 +317,12 @@ dev = [
     { name = "types-requests" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "chromadb", specifier = ">=0.4.0" },
@@ -344,6 +350,12 @@ requires-dist = [
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "ruff", specifier = ">=0.12.12" },
+]
 
 [[package]]
 name = "chromadb"
