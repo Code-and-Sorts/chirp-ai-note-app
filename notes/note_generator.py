@@ -406,20 +406,52 @@ Return ONLY the XML document, no additional text before or after."""
 
     def _call_ollama(self, prompt: str) -> str:
         url = f"{self.settings.models.ollama_url}/api/generate"
+        num_predict = self.settings.models.num_predict
 
         payload = {
             "model": self.settings.models.llm,
             "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.3, "top_p": 0.9, "num_predict": 500},
+            "stream": True,
+            "options": {"temperature": 0.3, "top_p": 0.9, "num_predict": num_predict},
         }
 
-        response = requests.post(url, json=payload, timeout=60)
+        response = requests.post(url, json=payload, timeout=300, stream=True)
         response.raise_for_status()
 
-        result = response.json()
-        response_text = result.get("response", "")
-        return str(response_text).strip() if response_text else ""
+        import json
+
+        full_response = []
+        token_count = 0
+
+        for line in response.iter_lines():
+            if not line:
+                continue
+            try:
+                chunk = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            token = chunk.get("response", "")
+            if token:
+                full_response.append(token)
+                token_count += 1
+
+                if token_count % 20 == 0:
+                    self.console.print(
+                        f"[dim]  ↳ Generating... ({token_count} tokens)[/dim]",
+                        end="\r",
+                    )
+
+            if chunk.get("done", False):
+                break
+
+        if token_count > 0:
+            self.console.print(
+                f"[dim]  ↳ Generated {token_count} tokens[/dim]       "
+            )
+
+        response_text = "".join(full_response).strip()
+        return response_text
 
     def _parse_xml_response(self, response: str) -> Optional[dict[str, Any]]:
         try:

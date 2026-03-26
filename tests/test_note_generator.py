@@ -5,6 +5,21 @@ import pytest
 from notes.note_generator import NoteGenerator
 
 
+def _make_streaming_response(text: str):
+    import json
+
+    lines = []
+    for char in text:
+        lines.append(json.dumps({"response": char, "done": False}).encode())
+    lines.append(json.dumps({"response": "", "done": True}).encode())
+
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_response.iter_lines = Mock(return_value=iter(lines))
+    return mock_response
+
+
 class TestNoteGenerator:
     @pytest.fixture
     def mock_settings(self):
@@ -12,6 +27,7 @@ class TestNoteGenerator:
         models = Mock()
         models.ollama_url = "http://localhost:11434"
         models.llm = "llama3.1:8b"
+        models.num_predict = 500
         settings.models = models
         return settings
 
@@ -128,11 +144,9 @@ class TestNoteGenerator:
                 with patch("notes.note_generator.JSONCompressor"):
                     with patch("notes.note_generator.PopupManager"):
                         with patch("requests.post") as mock_post:
-                            mock_response = Mock()
-                            mock_response.json.return_value = {
-                                "response": "Test response"
-                            }
-                            mock_post.return_value = mock_response
+                            mock_post.return_value = _make_streaming_response(
+                                "Test response"
+                            )
 
                             generator = NoteGenerator(mock_settings)
                             result = generator._call_ollama("test prompt")
@@ -152,6 +166,26 @@ class TestNoteGenerator:
 
                             with pytest.raises(Exception, match="Connection error"):
                                 generator._call_ollama("test prompt")
+
+    def test_call_ollama_streams_response(self, mock_settings):
+        with patch("notes.note_generator.TemplateEngine"):
+            with patch("notes.note_generator.DailyAggregator"):
+                with patch("notes.note_generator.JSONCompressor"):
+                    with patch("notes.note_generator.PopupManager"):
+                        generator = NoteGenerator(mock_settings)
+
+                        xml = "<MEETING_NOTES><MEETING_TITLE>Test</MEETING_TITLE></MEETING_NOTES>"
+                        mock_resp = _make_streaming_response(xml)
+
+                        with patch(
+                            "notes.note_generator.requests.post",
+                            return_value=mock_resp,
+                        ):
+                            result = generator._call_ollama("test prompt")
+
+                        assert "MEETING_NOTES" in result
+                        assert "Test" in result
+                        mock_resp.iter_lines.assert_called_once()
 
     def test_generate_meeting_notes_uses_provided_title(self, mock_settings):
         with patch("notes.note_generator.TemplateEngine"):
