@@ -73,6 +73,9 @@ class WhisperTranscriber:
         compute_type = self._get_compute_type()
 
         try:
+            vad_enabled = self.settings.audio.vad_enabled
+            vad_params = self.settings.audio.vad_parameters if vad_enabled else None
+
             segments, info = self.model.transcribe(
                 str(audio_file_path),
                 beam_size=5,
@@ -83,6 +86,8 @@ class WhisperTranscriber:
                 log_prob_threshold=-1.0,
                 no_speech_threshold=0.6,
                 initial_prompt=None,
+                vad_filter=vad_enabled,
+                vad_parameters=vad_params,
             )
 
             transcript_segments: list[dict[str, Any]] = []

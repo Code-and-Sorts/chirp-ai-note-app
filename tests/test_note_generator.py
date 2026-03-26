@@ -29,7 +29,7 @@ class TestNoteGenerator:
         models = Mock()
         models.ollama_url = "http://localhost:11434"
         models.llm = "llama3.1:8b"
-        models.num_predict = 500
+        models.num_predict = 4096
         settings.models = models
         return settings
 

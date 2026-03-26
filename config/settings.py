@@ -37,7 +37,7 @@ class ModelsConfig(BaseModel):
     whisper: str = "base"
     llm: str = "llama3.1:8b"
     ollama_url: str = "http://localhost:11434"
-    num_predict: int = 500
+    num_predict: int = 4096
 
 
 class AudioConfig(BaseModel):
@@ -45,6 +45,14 @@ class AudioConfig(BaseModel):
     channels: int = 2
     chunk_size: int = 1024
     format: str = "wav"
+    vad_enabled: bool = True
+    vad_parameters: dict = Field(default_factory=lambda: {
+        "threshold": 0.5,
+        "min_speech_duration_ms": 250,
+        "min_silence_duration_ms": 1000,
+        "max_speech_duration_s": 30,
+        "speech_pad_ms": 300,
+    })
 
 
 class MonitoringConfig(BaseModel):
