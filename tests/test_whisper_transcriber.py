@@ -19,13 +19,15 @@ class TestWhisperTranscriber:
         settings.models = models
         audio = Mock()
         audio.vad_enabled = True
-        audio.vad_parameters = {
+        vad_params = Mock()
+        vad_params.model_dump.return_value = {
             "threshold": 0.5,
             "min_speech_duration_ms": 250,
             "min_silence_duration_ms": 1000,
             "max_speech_duration_s": 30,
             "speech_pad_ms": 300,
         }
+        audio.vad_parameters = vad_params
         settings.audio = audio
         return settings
 

@@ -40,19 +40,21 @@ class ModelsConfig(BaseModel):
     num_predict: int = 4096
 
 
+class VadParameters(BaseModel):
+    threshold: float = 0.5
+    min_speech_duration_ms: int = 250
+    min_silence_duration_ms: int = 1000
+    max_speech_duration_s: int = 30
+    speech_pad_ms: int = 300
+
+
 class AudioConfig(BaseModel):
     sample_rate: int = 16000
     channels: int = 2
     chunk_size: int = 1024
     format: str = "wav"
     vad_enabled: bool = True
-    vad_parameters: dict = Field(default_factory=lambda: {
-        "threshold": 0.5,
-        "min_speech_duration_ms": 250,
-        "min_silence_duration_ms": 1000,
-        "max_speech_duration_s": 30,
-        "speech_pad_ms": 300,
-    })
+    vad_parameters: VadParameters = Field(default_factory=VadParameters)
 
 
 class MonitoringConfig(BaseModel):
