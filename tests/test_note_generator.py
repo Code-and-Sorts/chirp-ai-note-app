@@ -145,7 +145,7 @@ class TestNoteGenerator:
             with patch("notes.note_generator.DailyAggregator"):
                 with patch("notes.note_generator.JSONCompressor"):
                     with patch("notes.note_generator.PopupManager"):
-                        with patch("requests.post") as mock_post:
+                        with patch("notes.note_generator.requests.post") as mock_post:
                             mock_post.return_value = _make_streaming_response(
                                 "Test response"
                             )
