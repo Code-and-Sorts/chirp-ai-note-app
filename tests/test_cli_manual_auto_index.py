@@ -46,8 +46,8 @@ def test_notes_auto_index_enabled_success(tmp_path, monkeypatch):
         def run(self):
             return EditorResult(content="# Test Note\nBody\n", saved=True)
 
-    monkeypatch.setattr("chirp.cli.ManualNoteManager", DummyManager)
-    monkeypatch.setattr("chirp.cli.ManualNoteEditor", DummyEditor)
+    monkeypatch.setattr("notes.manual_note_manager.ManualNoteManager", DummyManager)
+    monkeypatch.setattr("notes.note_editor.ManualNoteEditor", DummyEditor)
     _patch_tty(monkeypatch)
 
     with patch("notes_chat.index.IndexManager") as mock_manager_class:
@@ -94,8 +94,8 @@ def test_notes_auto_index_disabled(tmp_path, monkeypatch):
         def run(self):
             return EditorResult(content="# Test Note\nBody\n", saved=True)
 
-    monkeypatch.setattr("chirp.cli.ManualNoteManager", DummyManager)
-    monkeypatch.setattr("chirp.cli.ManualNoteEditor", DummyEditor)
+    monkeypatch.setattr("notes.manual_note_manager.ManualNoteManager", DummyManager)
+    monkeypatch.setattr("notes.note_editor.ManualNoteEditor", DummyEditor)
     _patch_tty(monkeypatch)
 
     with patch("notes_chat.index.IndexManager") as mock_manager_class:
@@ -132,8 +132,8 @@ def test_notes_auto_index_add_failure(tmp_path, monkeypatch):
         def run(self):
             return EditorResult(content="# Test Note\nBody\n", saved=True)
 
-    monkeypatch.setattr("chirp.cli.ManualNoteManager", DummyManager)
-    monkeypatch.setattr("chirp.cli.ManualNoteEditor", DummyEditor)
+    monkeypatch.setattr("notes.manual_note_manager.ManualNoteManager", DummyManager)
+    monkeypatch.setattr("notes.note_editor.ManualNoteEditor", DummyEditor)
     _patch_tty(monkeypatch)
 
     with patch("notes_chat.index.IndexManager") as mock_manager_class:

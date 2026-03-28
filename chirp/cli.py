@@ -10,12 +10,6 @@ from rich.table import Table
 
 from chirp.exceptions import *
 from config.settings import get_settings
-from notes.manual_note_manager import ManualNoteManager
-from notes.note_editor import ManualNoteEditor
-from notes.note_generator import NoteGenerator
-from recorder.audio_recorder import AudioRecorder
-from recorder.device_manager import DeviceManager
-from transcriber.batch_processor import BatchProcessor
 from utils.file_utils import (
     get_audio_files,
     get_notes_files,
@@ -130,6 +124,9 @@ def record(
     ),
 ):
     """Start recording a meeting (press Ctrl+C to stop if no duration specified)"""
+    from recorder.audio_recorder import AudioRecorder
+    from recorder.device_manager import DeviceManager
+
     settings = get_settings()
     device_manager = DeviceManager()
 
@@ -212,6 +209,8 @@ def notes(
     ),
 ):
     """Create or edit manual notes in the terminal editor."""
+    from notes.manual_note_manager import ManualNoteManager
+    from notes.note_editor import ManualNoteEditor
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         console.print(
@@ -313,6 +312,8 @@ def transcribe(
     ),
 ):
     """Transcribe audio files to text"""
+    from transcriber.batch_processor import BatchProcessor
+
     settings = get_settings()
 
     if input_dir is None:
@@ -367,6 +368,8 @@ def generate(
     ),
 ):
     """Generate meeting notes from transcriptions"""
+    from notes.note_generator import NoteGenerator
+
     settings = get_settings()
 
     transcription_files = get_transcription_files(settings.directories.transcriptions)
@@ -522,6 +525,8 @@ Interval: {settings.monitoring.warning_interval} minutes""",
 @app.command(rich_help_panel=INFO_PANEL)
 def devices():
     """List available audio devices"""
+    from recorder.device_manager import DeviceManager
+
     device_manager = DeviceManager()
     devices_info = device_manager.list_devices()
 
@@ -551,6 +556,8 @@ def devices():
 @app.command(rich_help_panel=SETUP_PANEL)
 def test():
     """Test Chirp dependencies and configuration"""
+    from recorder.device_manager import DeviceManager
+
     settings = get_settings()
 
     external_tests = []
