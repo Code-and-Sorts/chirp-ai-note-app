@@ -124,6 +124,7 @@ files = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "u
 
 [dependency-groups]
 dev = [
+    "freezegun>=1.5.5",
     "pytest>=8.4.2",
     "ruff>=0.12.12",
 ]
