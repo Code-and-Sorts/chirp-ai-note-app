@@ -17,6 +17,8 @@ def _make_streaming_response(text: str):
     mock_response.status_code = 200
     mock_response.raise_for_status = Mock()
     mock_response.iter_lines = Mock(return_value=iter(lines))
+    mock_response.__enter__ = Mock(return_value=mock_response)
+    mock_response.__exit__ = Mock(return_value=False)
     return mock_response
 
 

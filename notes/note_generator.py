@@ -415,39 +415,42 @@ Return ONLY the XML document, no additional text before or after."""
             "options": {"temperature": 0.3, "top_p": 0.9, "num_predict": num_predict},
         }
 
-        response = requests.post(url, json=payload, timeout=300, stream=True)
-        response.raise_for_status()
-
         import json
 
         full_response = []
-        token_count = 0
+        chunk_count = 0
 
-        for line in response.iter_lines():
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        with requests.post(url, json=payload, timeout=300, stream=True) as response:
+            response.raise_for_status()
 
-            token = chunk.get("response", "")
-            if token:
-                full_response.append(token)
-                token_count += 1
-
-                if token_count % 20 == 0:
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
                     self.console.print(
-                        f"[dim]  ↳ Generating... ({token_count} tokens)[/dim]",
-                        end="\r",
+                        "[yellow]  ↳ Warning: skipped malformed stream chunk[/yellow]"
                     )
+                    continue
 
-            if chunk.get("done", False):
-                break
+                token = chunk.get("response", "")
+                if token:
+                    full_response.append(token)
+                    chunk_count += 1
 
-        if token_count > 0:
+                    if chunk_count % 20 == 0:
+                        self.console.print(
+                            f"[dim]  ↳ Generating... ({chunk_count} chunks)[/dim]",
+                            end="\r",
+                        )
+
+                if chunk.get("done", False):
+                    break
+
+        if chunk_count > 0:
             self.console.print(
-                f"[dim]  ↳ Generated {token_count} tokens[/dim]       "
+                f"[dim]  ↳ Generated {chunk_count} chunks[/dim]       "
             )
 
         response_text = "".join(full_response).strip()
