@@ -156,7 +156,7 @@ class TestNoteGenerator:
                             assert result == "Test response"
                             mock_post.assert_called_once()
                             call_kwargs = mock_post.call_args
-                            assert call_kwargs[1]["timeout"] == 120
+                            assert call_kwargs[1]["timeout"] == 300
                             payload = call_kwargs[1]["json"]
                             assert payload["options"]["num_predict"] == 4096
 
