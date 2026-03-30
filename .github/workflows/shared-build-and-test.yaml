@@ -62,7 +62,7 @@ jobs:
 
     - name: 📦 Cache Homebrew packages (macOS)
       if: runner.os == 'macOS'
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: |
           /opt/homebrew/Cellar/portaudio
@@ -87,7 +87,7 @@ jobs:
 
     - name: 📦 Cache apt packages (Linux)
       if: runner.os == 'Linux'
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: /var/cache/apt
         key: ${{ runner.os }}-apt-${{ hashFiles('**/pyproject.toml') }}
@@ -110,7 +110,7 @@ jobs:
       run: uv lock --check
 
     - name: ♻️ Cache .venv
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: .venv
         key: ${{ runner.os }}-python-${{ inputs.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-${{ hashFiles('uv.lock') }}
