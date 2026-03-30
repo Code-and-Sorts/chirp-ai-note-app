@@ -406,20 +406,55 @@ Return ONLY the XML document, no additional text before or after."""
 
     def _call_ollama(self, prompt: str) -> str:
         url = f"{self.settings.models.ollama_url}/api/generate"
+        num_predict = self.settings.models.num_predict
 
         payload = {
             "model": self.settings.models.llm,
             "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.3, "top_p": 0.9, "num_predict": 500},
+            "stream": True,
+            "options": {"temperature": 0.3, "top_p": 0.9, "num_predict": num_predict},
         }
 
-        response = requests.post(url, json=payload, timeout=60)
-        response.raise_for_status()
+        import json
 
-        result = response.json()
-        response_text = result.get("response", "")
-        return str(response_text).strip() if response_text else ""
+        full_response = []
+        chunk_count = 0
+
+        with requests.post(url, json=payload, timeout=300, stream=True) as response:
+            response.raise_for_status()
+
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    self.console.print(
+                        "[yellow]  ↳ Warning: skipped malformed stream chunk[/yellow]"
+                    )
+                    continue
+
+                token = chunk.get("response", "")
+                if token:
+                    full_response.append(token)
+                    chunk_count += 1
+
+                    if chunk_count % 20 == 0:
+                        self.console.print(
+                            f"[dim]  ↳ Generating... ({chunk_count} chunks)[/dim]",
+                            end="\r",
+                        )
+
+                if chunk.get("done", False):
+                    break
+
+        if chunk_count > 0:
+            self.console.print(
+                f"[dim]  ↳ Generated {chunk_count} chunks[/dim]       "
+            )
+
+        response_text = "".join(full_response).strip()
+        return response_text
 
     def _parse_xml_response(self, response: str) -> Optional[dict[str, Any]]:
         try:

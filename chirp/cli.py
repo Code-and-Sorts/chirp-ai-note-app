@@ -383,10 +383,10 @@ def generate(
 
     note_generator = NoteGenerator(settings)
 
-    with console.status("[bold blue]🧠 Generating notes with AI..."):
-        result = note_generator.generate_daily_notes(
-            transcription_files, force=force, filename_override=filename
-        )
+    console.print("[bold blue]🧠 Generating notes with AI...[/bold blue]")
+    result = note_generator.generate_daily_notes(
+        transcription_files, force=force, filename_override=filename
+    )
 
     if result["success"]:
         console.print(f"[green]✅ Notes generated: {result['filename']}[/green]")

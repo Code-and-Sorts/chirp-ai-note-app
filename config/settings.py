@@ -37,6 +37,7 @@ class ModelsConfig(BaseModel):
     whisper: str = "base"
     llm: str = "llama3.1:8b"
     ollama_url: str = "http://localhost:11434"
+    num_predict: int = 500
 
 
 class AudioConfig(BaseModel):
