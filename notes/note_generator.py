@@ -449,9 +449,7 @@ Return ONLY the XML document, no additional text before or after."""
                     break
 
         if chunk_count > 0:
-            self.console.print(
-                f"[dim]  ↳ Generated {chunk_count} chunks[/dim]       "
-            )
+            self.console.print(f"[dim]  ↳ Generated {chunk_count} chunks[/dim]       ")
 
         response_text = "".join(full_response).strip()
         return response_text
