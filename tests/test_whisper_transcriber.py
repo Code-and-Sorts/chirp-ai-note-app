@@ -15,7 +15,20 @@ class TestWhisperTranscriber:
         settings = Mock(spec=ChirpSettings)
         models = Mock()
         models.whisper = "small"
+        models.num_predict = 4096
         settings.models = models
+        audio = Mock()
+        audio.vad_enabled = True
+        vad_params = Mock()
+        vad_params.model_dump.return_value = {
+            "threshold": 0.5,
+            "min_speech_duration_ms": 250,
+            "min_silence_duration_ms": 1000,
+            "max_speech_duration_s": 30,
+            "speech_pad_ms": 300,
+        }
+        audio.vad_parameters = vad_params
+        settings.audio = audio
         return settings
 
     @pytest.fixture
@@ -408,3 +421,37 @@ class TestWhisperTranscriber:
             with patch.object(transcriber, "_read_audio_metadata", return_value=None):
                 metadata = transcriber._read_audio_metadata(Path("test.wav"))
                 assert metadata is None
+
+    def test_transcribe_passes_vad_parameters(
+        self, mock_settings, mock_whisper_model, tmp_path
+    ):
+        audio_path = tmp_path / "20250101_120000_test.wav"
+        audio_path.write_bytes(b"fake audio data")
+
+        with patch(
+            "transcriber.whisper_transcriber.WhisperModel",
+            return_value=mock_whisper_model,
+        ):
+            with patch.object(
+                WhisperTranscriber, "_get_optimal_device", return_value="cpu"
+            ):
+                with patch.object(
+                    WhisperTranscriber, "_get_compute_type", return_value="int8"
+                ):
+                    with patch.object(
+                        WhisperTranscriber, "_get_cpu_threads", return_value=4
+                    ):
+                        transcriber = WhisperTranscriber(mock_settings)
+
+        transcriber.transcribe_file(audio_path)
+
+        mock_whisper_model.transcribe.assert_called_once()
+        call_kwargs = mock_whisper_model.transcribe.call_args[1]
+        assert call_kwargs["vad_filter"] is True
+        assert call_kwargs["vad_parameters"] == {
+            "threshold": 0.5,
+            "min_speech_duration_ms": 250,
+            "min_silence_duration_ms": 1000,
+            "max_speech_duration_s": 30,
+            "speech_pad_ms": 300,
+        }

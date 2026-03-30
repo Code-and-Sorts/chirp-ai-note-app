@@ -29,7 +29,7 @@ class TestNoteGenerator:
         models = Mock()
         models.ollama_url = "http://localhost:11434"
         models.llm = "llama3.1:8b"
-        models.num_predict = 500
+        models.num_predict = 4096
         settings.models = models
         return settings
 
@@ -155,6 +155,10 @@ class TestNoteGenerator:
 
                             assert result == "Test response"
                             mock_post.assert_called_once()
+                            call_kwargs = mock_post.call_args
+                            assert call_kwargs[1]["timeout"] == 300
+                            payload = call_kwargs[1]["json"]
+                            assert payload["options"]["num_predict"] == 4096
 
     def test_call_ollama_connection_error(self, mock_settings):
         with patch("notes.note_generator.TemplateEngine"):
