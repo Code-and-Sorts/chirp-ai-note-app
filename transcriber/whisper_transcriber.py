@@ -74,7 +74,9 @@ class WhisperTranscriber:
 
         try:
             vad_enabled = self.settings.audio.vad_enabled
-            vad_params = self.settings.audio.vad_parameters.model_dump() if vad_enabled else None
+            vad_params = (
+                self.settings.audio.vad_parameters.model_dump() if vad_enabled else None
+            )
 
             segments, info = self.model.transcribe(
                 str(audio_file_path),
