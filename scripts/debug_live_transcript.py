@@ -13,7 +13,6 @@ app = typer.Typer(help="Debug live transcription chunks")
 @app.command()
 def transcribe_chunk(
     chunk_path: Path = typer.Argument(..., exists=True, readable=True),
-    sample_rate: int = typer.Option(16000, help="Sample rate of the chunk"),
 ):
     """Transcribe a single debug chunk using the whisper pipeline."""
     settings = get_settings()

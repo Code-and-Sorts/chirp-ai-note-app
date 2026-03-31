@@ -3,11 +3,17 @@ from __future__ import annotations
 import queue
 import select
 import sys
-import termios
 import threading
 import time
-import tty
 from contextlib import contextmanager
+
+try:
+    import termios
+    import tty
+
+    _HAS_TERMIOS = True
+except ImportError:
+    _HAS_TERMIOS = False
 
 from rich import box
 from rich.console import Console
@@ -50,12 +56,18 @@ class LiveDashboard:
         self._vad_chunks_emitted = 0
         self._scroll_offset = 0
         self._auto_scroll = True
-        self._stdin_fd = sys.stdin.fileno()
+        self._stdin_fd: int | None = None
         self._old_settings = None
+        self._keyboard_enabled = _HAS_TERMIOS and sys.stdin.isatty()
+        if self._keyboard_enabled:
+            try:
+                self._stdin_fd = sys.stdin.fileno()
+            except (OSError, AttributeError):
+                self._keyboard_enabled = False
 
     @contextmanager
     def _raw_mode(self):
-        if not sys.stdin.isatty():
+        if not self._keyboard_enabled:
             yield
             return
 
@@ -75,7 +87,7 @@ class LiveDashboard:
                     pass
 
     def _check_keyboard_input(self):
-        if not sys.stdin.isatty():
+        if not self._keyboard_enabled:
             return
 
         if select.select([sys.stdin], [], [], 0)[0]:

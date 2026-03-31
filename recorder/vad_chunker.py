@@ -78,8 +78,7 @@ class VADChunker(threading.Thread):
                 )
 
         if self._triggered and self._voiced_frames:
-            tail_frames = [f for f, _ in self._ring_buffer]
-            self._emit_chunk(tail_frames)
+            self._emit_chunk()
 
     def _is_speech(self, frame: AudioFrame) -> bool:
         if frame.level >= self.energy_threshold:
@@ -95,9 +94,8 @@ class VADChunker(threading.Thread):
             return False
 
     def _update_state(self, frame: AudioFrame, is_speech: bool):
-        self._ring_buffer.append((frame, is_speech))
-
         if not self._triggered:
+            self._ring_buffer.append((frame, is_speech))
             num_voiced = len([1 for _, speech in self._ring_buffer if speech])
             if num_voiced > 0.5 * self._padding_frames:
                 self._triggered = True
@@ -105,6 +103,8 @@ class VADChunker(threading.Thread):
                 self._ring_buffer.clear()
         else:
             self._voiced_frames.append(frame)
+            if not is_speech:
+                self._ring_buffer.append((frame, is_speech))
 
             if self._voiced_frames:
                 chunk_duration = (
@@ -121,8 +121,7 @@ class VADChunker(threading.Thread):
 
             num_unvoiced = len([1 for _, speech in self._ring_buffer if not speech])
             if num_unvoiced > 0.9 * self._padding_frames:
-                tail_frames = [f for f, _ in self._ring_buffer]
-                self._emit_chunk(tail_frames)
+                self._emit_chunk()
                 self._triggered = False
                 self._ring_buffer.clear()
                 self._voiced_frames.clear()

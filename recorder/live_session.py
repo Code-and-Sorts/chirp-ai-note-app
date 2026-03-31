@@ -107,7 +107,6 @@ class LiveTranscriptionSession:
             chunk_queue=self.chunk_queue,
             event_queue=self.event_queue,
             stop_event=self.stop_event,
-            recording_start=self.start_time,
             meeting_name=self.title,
             sample_rate=self.audio_stream.sample_rate,
             debug_dir=self._debug_dir if self.debug else None,

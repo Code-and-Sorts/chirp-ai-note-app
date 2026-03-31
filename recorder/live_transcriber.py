@@ -6,8 +6,6 @@ import threading
 import wave
 from pathlib import Path
 
-import numpy as np
-
 from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
 from recorder.live_types import DashboardEvent, SpeechChunk, TranscriptSegment
@@ -21,7 +19,6 @@ class LiveTranscriber(threading.Thread):
         chunk_queue: queue.Queue[SpeechChunk],
         event_queue: queue.Queue[DashboardEvent],
         stop_event: threading.Event,
-        recording_start: float,
         meeting_name: str | None = None,
         sample_rate: int = 16000,
         debug_dir: Path | None = None,
@@ -34,7 +31,6 @@ class LiveTranscriber(threading.Thread):
         self.chunk_queue = chunk_queue
         self.event_queue = event_queue
         self.stop_event = stop_event
-        self.recording_start = recording_start
         self.meeting_name = meeting_name or DEFAULT_MEETING_NAME
         self.sample_rate = sample_rate
         self.debug_dir = debug_dir
@@ -105,16 +101,6 @@ class LiveTranscriber(threading.Thread):
         except queue.Full:
             pass
 
-    @staticmethod
-    def _convert_chunk_to_array(chunk_bytes: bytes) -> np.ndarray:
-        if not chunk_bytes:
-            return np.array([], dtype=np.float32)
-        pcm = np.frombuffer(chunk_bytes, dtype=np.int16).astype(np.float32)
-        if pcm.size == 0:
-            return np.array([], dtype=np.float32)
-        normalized = pcm / 32768.0
-        return np.ascontiguousarray(normalized, dtype=np.float32)
-
     def _maybe_transcribe(self, force: bool):
         if not self._pcm_buffer:
             return
@@ -179,8 +165,8 @@ class LiveTranscriber(threading.Thread):
 
             transcript_segment = TranscriptSegment(
                 text=text,
-                start=self.recording_start + absolute_start,
-                end=self.recording_start + absolute_end,
+                start=absolute_start,
+                end=absolute_end,
                 words=len(text.split()),
             )
             self._segments.append(transcript_segment)
