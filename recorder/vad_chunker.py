@@ -103,7 +103,9 @@ class VADChunker(threading.Thread):
                 self._ring_buffer.clear()
         else:
             self._voiced_frames.append(frame)
-            if not is_speech:
+            if is_speech:
+                self._ring_buffer.clear()
+            else:
                 self._ring_buffer.append((frame, is_speech))
 
             if self._voiced_frames:

@@ -134,7 +134,7 @@ class LiveAudioStream:
             if self._start_time is None:
                 self._start_time = time.monotonic()
 
-            timestamp = self._start_time + self._frame_index * self._frame_duration
+            timestamp = self._frame_index * self._frame_duration
             self._frame_index += 1
             self._frames.append(in_data)
 

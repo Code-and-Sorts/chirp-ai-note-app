@@ -457,10 +457,18 @@ def transcribe(
 
     segment_callback = None
     if stream:
+        from rich.console import Group
         from rich.live import Live
         from rich.text import Text
 
         streaming_text = Text()
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+        )
+        task = progress.add_task(
+            "Transcribing audio files...", total=len(audio_files)
+        )
 
         def on_segment(segment):
             text = segment.get("text", "").strip()
@@ -469,22 +477,13 @@ def transcribe(
 
         segment_callback = on_segment
 
-        with Live(streaming_text, console=console, refresh_per_second=4):
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-            ) as progress:
-                task = progress.add_task(
-                    "Transcribing audio files...", total=len(audio_files)
-                )
-
-                results = processor.process_files(
-                    audio_files,
-                    force=force,
-                    progress_callback=lambda: progress.update(task, advance=1),
-                    on_segment=segment_callback,
-                )
+        with Live(Group(streaming_text, progress), console=console, refresh_per_second=4):
+            results = processor.process_files(
+                audio_files,
+                force=force,
+                progress_callback=lambda: progress.update(task, advance=1),
+                on_segment=segment_callback,
+            )
     else:
         with Progress(
             SpinnerColumn(),
