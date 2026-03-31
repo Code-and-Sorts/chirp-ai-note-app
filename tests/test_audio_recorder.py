@@ -1,4 +1,4 @@
-import struct
+import array
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -56,7 +56,7 @@ class TestAudioRecorder:
             recorder = AudioRecorder(mock_settings, mock_device_manager)
             recorder.is_recording = True
 
-            silent_data = struct.pack("<1024h", *([0] * 1024))
+            silent_data = array.array("h", [0] * 1024).tobytes()
             recorder._audio_callback(silent_data, 1024, {}, 0)
             assert recorder.current_level == 0.0
 
@@ -67,7 +67,7 @@ class TestAudioRecorder:
             recorder = AudioRecorder(mock_settings, mock_device_manager)
             recorder.is_recording = True
 
-            loud_data = struct.pack("<1024h", *([32767] * 1024))
+            loud_data = array.array("h", [32767] * 1024).tobytes()
             recorder._audio_callback(loud_data, 1024, {}, 0)
             assert recorder.current_level > 0.99
 

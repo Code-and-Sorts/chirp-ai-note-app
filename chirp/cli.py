@@ -123,7 +123,10 @@ def _render_audio_meter(level: float) -> Text:
     for i in range(num_bars):
         threshold = i / num_bars
         if level > threshold:
-            intensity = min(int((level - threshold) * num_bars * (len(LEVEL_BLOCKS) - 1)), len(LEVEL_BLOCKS) - 1)
+            intensity = min(
+                int((level - threshold) * num_bars * (len(LEVEL_BLOCKS) - 1)),
+                len(LEVEL_BLOCKS) - 1,
+            )
             bar.append(LEVEL_BLOCKS[max(intensity, 1)], style="green")
         else:
             bar.append(LEVEL_BLOCKS[0], style="dim")

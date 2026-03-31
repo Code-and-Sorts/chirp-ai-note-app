@@ -1,5 +1,5 @@
+import array
 import math
-import struct
 import threading
 import wave
 from datetime import datetime
@@ -101,7 +101,10 @@ class AudioRecorder:
             while self.is_recording:
                 threading.Event().wait(0.1)
                 if level_callback is not None:
-                    level_callback(self.current_level)
+                    try:
+                        level_callback(self.current_level)
+                    except Exception:
+                        level_callback = None
         except KeyboardInterrupt:
             pass
         finally:
@@ -117,9 +120,11 @@ class AudioRecorder:
     def _audio_callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
             self.frames.append(in_data)
-            sample_count = len(in_data) // 2
-            samples = struct.unpack(f"<{sample_count}h", in_data)
-            rms = math.sqrt(sum(s * s for s in samples) / sample_count)
+            if len(in_data) < 2:
+                self.current_level = 0.0
+                return (None, pyaudio.paContinue)
+            samples = array.array("h", in_data)
+            rms = math.sqrt(sum(s * s for s in samples) / len(samples))
             self.current_level = min(rms / 32768.0, 1.0)
         return (None, pyaudio.paContinue)
 
