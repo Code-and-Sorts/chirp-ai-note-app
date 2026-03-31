@@ -81,8 +81,8 @@ class VADChunker(threading.Thread):
             self._emit_chunk()
 
     def _is_speech(self, frame: AudioFrame) -> bool:
-        if frame.level >= self.energy_threshold:
-            return True
+        if frame.level < self.energy_threshold:
+            return False
 
         expected_bytes = int(self.sample_rate * (self.frame_ms / 1000.0)) * 2
         if len(frame.data) != expected_bytes:

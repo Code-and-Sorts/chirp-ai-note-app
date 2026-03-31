@@ -143,7 +143,10 @@ class WhisperTranscriber:
                     transcript_text_parts.append(segment_text)
 
                 if on_segment and segment_text:
-                    on_segment(segment_data)
+                    try:
+                        on_segment(segment_data)
+                    except Exception:
+                        pass
 
             full_text = " ".join(transcript_text_parts).strip()
             end_time = datetime.now()

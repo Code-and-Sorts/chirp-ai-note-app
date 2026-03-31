@@ -17,8 +17,9 @@ def main():
     settings = get_settings()
     device_manager = DeviceManager()
 
-    if not device_manager.check_blackhole_available():
-        print("❌ BlackHole not detected. Install it first.")
+    device_index = device_manager.get_recommended_device()
+    if device_index is None:
+        print("❌ No suitable audio input device found.")
         return 1
 
     print("Starting VAD test...")

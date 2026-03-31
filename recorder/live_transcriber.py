@@ -143,7 +143,6 @@ class LiveTranscriber(threading.Thread):
         segments = result.get("segments", [])
         new_segments: list[TranscriptSegment] = []
 
-        max_end = self._last_chunk_end
         for seg in segments:
             text = seg.get("text", "").strip()
             if not text:
@@ -162,6 +161,8 @@ class LiveTranscriber(threading.Thread):
 
             if absolute_start < self._last_emitted_end:
                 absolute_start = self._last_emitted_end
+            if absolute_end <= absolute_start:
+                continue
 
             transcript_segment = TranscriptSegment(
                 text=text,
@@ -174,7 +175,6 @@ class LiveTranscriber(threading.Thread):
             self._last_emit_time = max(self._last_emit_time, transcript_segment.end)
             self._total_words += transcript_segment.words
             self._last_emitted_end = max(self._last_emitted_end, absolute_end)
-            max_end = max(max_end, absolute_end)
 
         if new_segments:
             payload = {
