@@ -746,6 +746,13 @@ def devices():
         console.print("[green]✅ BlackHole detected and ready[/green]")
     elif device_manager.check_aggregate_available():
         console.print("[green]✅ Aggregate device detected and ready[/green]")
+    elif device_manager.get_default_input_device() is not None:
+        console.print(
+            "[green]✅ Default input device detected (microphone recording ready)[/green]"
+        )
+        console.print(
+            "[dim]For system audio capture, install BlackHole: https://existential.audio/blackhole/[/dim]"
+        )
     else:
         console.print("[red]❌ No suitable input device found[/red]")
         console.print("Install BlackHole from: https://existential.audio/blackhole/")
