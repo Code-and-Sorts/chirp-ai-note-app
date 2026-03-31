@@ -10,6 +10,12 @@ from recorder.live_transcriber import LiveTranscriber
 from recorder.live_types import DashboardEvent, SpeechChunk, TranscriptSegment
 
 
+def _make_chunk(start: float, end: float, sample_rate: int = 16000) -> SpeechChunk:
+    num_samples = int((end - start) * sample_rate)
+    data = (np.ones(num_samples, dtype=np.int16) * 1000).tobytes()
+    return SpeechChunk(data=data, start=start, end=end)
+
+
 def test_live_transcriber_emits_events():
     settings = Mock()
     chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
@@ -144,3 +150,151 @@ def test_write_debug_chunk_writes_files(tmp_path: Path):
     summary_files = sorted(tmp_path.glob("chunk_0000*_summary.txt"))
     assert text_files, "expected chunk txt"
     assert summary_files, "expected summary"
+
+
+def test_overlap_detection_filters_segments():
+    settings = Mock()
+    chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
+    event_queue: queue.Queue[DashboardEvent] = queue.Queue()
+    stop_event = threading.Event()
+
+    def fake_transcribe(path, fast_mode=False, language=None):
+        return {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "hello world"},
+                {"start": 0.2, "end": 1.0, "text": "hello world again"},
+            ],
+            "metadata": {"language": "en"},
+        }
+
+    with patch("recorder.live_transcriber.WhisperTranscriber") as mock_cls:
+        mock_cls.return_value.transcribe_file.side_effect = fake_transcribe
+
+        transcriber = LiveTranscriber(
+            settings=settings,
+            chunk_queue=chunk_queue,
+            event_queue=event_queue,
+            stop_event=stop_event,
+            recording_start=0.0,
+            sample_rate=16000,
+            transcription_interval=0.0,
+            overlap_threshold=0.3,
+            poll_timeout=0.02,
+        )
+
+        transcriber.start()
+        chunk_queue.put(_make_chunk(0.0, 2.0))
+        time.sleep(0.2)
+        stop_event.set()
+        transcriber.join(timeout=1)
+
+    texts = [s.text for s in transcriber.segments]
+    assert "hello world" in texts
+    assert "hello world again" not in texts
+
+
+def test_buffer_pruning_after_segments():
+    settings = Mock()
+    chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
+    event_queue: queue.Queue[DashboardEvent] = queue.Queue()
+    stop_event = threading.Event()
+
+    def fake_transcribe(path, fast_mode=False, language=None):
+        return {
+            "segments": [{"start": 0.0, "end": 0.5, "text": "pruned"}],
+            "metadata": {},
+        }
+
+    with patch("recorder.live_transcriber.WhisperTranscriber") as mock_cls:
+        mock_cls.return_value.transcribe_file.side_effect = fake_transcribe
+
+        transcriber = LiveTranscriber(
+            settings=settings,
+            chunk_queue=chunk_queue,
+            event_queue=event_queue,
+            stop_event=stop_event,
+            recording_start=0.0,
+            sample_rate=16000,
+            transcription_interval=0.0,
+            poll_timeout=0.02,
+        )
+
+        chunk = _make_chunk(0.0, 1.0)
+        original_buffer_size = len(chunk.data)
+
+        transcriber.start()
+        chunk_queue.put(chunk)
+        time.sleep(0.2)
+        stop_event.set()
+        transcriber.join(timeout=1)
+
+    assert len(transcriber._pcm_buffer) < original_buffer_size
+    assert transcriber._buffer_offset_seconds > 0.0
+
+
+def test_empty_chunk_handling():
+    settings = Mock()
+    chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
+    event_queue: queue.Queue[DashboardEvent] = queue.Queue()
+    stop_event = threading.Event()
+
+    with patch("recorder.live_transcriber.WhisperTranscriber") as mock_cls:
+        mock_cls.return_value.transcribe_file.return_value = {
+            "segments": [],
+            "metadata": {},
+        }
+
+        transcriber = LiveTranscriber(
+            settings=settings,
+            chunk_queue=chunk_queue,
+            event_queue=event_queue,
+            stop_event=stop_event,
+            recording_start=0.0,
+            sample_rate=16000,
+            transcription_interval=0.0,
+            poll_timeout=0.02,
+        )
+
+        transcriber.start()
+        chunk_queue.put(SpeechChunk(data=b"", start=0.0, end=0.0))
+        time.sleep(0.1)
+        stop_event.set()
+        transcriber.join(timeout=1)
+
+    transcript_events = [e for e in list(event_queue.queue) if e.type == "transcript"]
+    assert len(transcript_events) == 0
+
+
+def test_force_transcription_on_stop():
+    settings = Mock()
+    chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
+    event_queue: queue.Queue[DashboardEvent] = queue.Queue()
+    stop_event = threading.Event()
+
+    def fake_transcribe(path, fast_mode=False, language=None):
+        return {
+            "segments": [{"start": 0.0, "end": 0.5, "text": "forced"}],
+            "metadata": {},
+        }
+
+    with patch("recorder.live_transcriber.WhisperTranscriber") as mock_cls:
+        mock_cls.return_value.transcribe_file.side_effect = fake_transcribe
+
+        transcriber = LiveTranscriber(
+            settings=settings,
+            chunk_queue=chunk_queue,
+            event_queue=event_queue,
+            stop_event=stop_event,
+            recording_start=0.0,
+            sample_rate=16000,
+            transcription_interval=999.0,
+            poll_timeout=0.02,
+        )
+
+        transcriber.start()
+        chunk_queue.put(_make_chunk(0.0, 1.0))
+        time.sleep(0.15)
+        stop_event.set()
+        transcriber.join(timeout=2)
+
+    assert any(s.text == "forced" for s in transcriber.segments)

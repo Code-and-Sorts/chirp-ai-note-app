@@ -224,11 +224,3 @@ class LiveAudioStream:
             self._stream.close()
         if self._audio:
             self._audio.terminate()
-
-    @staticmethod
-    def _calculate_level(pcm: np.ndarray) -> float:
-        if pcm.size == 0:
-            return 0.0
-        float_pcm = pcm.astype(np.float32) / 32768.0
-        rms = np.sqrt(np.mean(np.square(float_pcm)))
-        return float(rms)

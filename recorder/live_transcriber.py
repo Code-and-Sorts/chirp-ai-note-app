@@ -26,6 +26,8 @@ class LiveTranscriber(threading.Thread):
         sample_rate: int = 16000,
         debug_dir: Path | None = None,
         transcription_interval: float = 3.0,
+        overlap_threshold: float = 0.3,
+        poll_timeout: float = 0.1,
     ):
         super().__init__(daemon=True)
         self.settings = settings
@@ -35,17 +37,17 @@ class LiveTranscriber(threading.Thread):
         self.recording_start = recording_start
         self.meeting_name = meeting_name or DEFAULT_MEETING_NAME
         self.sample_rate = sample_rate
-        self.output_sample_rate = 16000
         self.debug_dir = debug_dir
         self._debug_index = 0
         self._processed_chunks = 0
         self.transcription_interval = transcription_interval
+        self.overlap_threshold = overlap_threshold
+        self.poll_timeout = poll_timeout
 
         self._pcm_buffer = bytearray()
         self._buffer_offset_seconds = 0.0
         self._last_chunk_end = 0.0
         self._last_transcribe_at = 0.0
-        self._seen_segments: set[tuple[float, float, str]] = set()
         self._last_emitted_end = 0.0
 
         self.transcriber = WhisperTranscriber(settings)
@@ -69,7 +71,7 @@ class LiveTranscriber(threading.Thread):
     def run(self):
         while True:
             try:
-                chunk = self.chunk_queue.get(timeout=0.1)
+                chunk = self.chunk_queue.get(timeout=self.poll_timeout)
             except queue.Empty:
                 if self.stop_event.is_set():
                     break
@@ -112,19 +114,6 @@ class LiveTranscriber(threading.Thread):
             return np.array([], dtype=np.float32)
         normalized = pcm / 32768.0
         return np.ascontiguousarray(normalized, dtype=np.float32)
-
-    @staticmethod
-    def _resample_audio(
-        audio: np.ndarray, original_rate: int, target_rate: int
-    ) -> np.ndarray:
-        if original_rate == target_rate or audio.size == 0:
-            return audio
-        duration = audio.shape[0] / float(original_rate)
-        target_length = max(1, int(round(duration * target_rate)))
-        x_old = np.linspace(0, duration, num=audio.shape[0], endpoint=False)
-        x_new = np.linspace(0, duration, num=target_length, endpoint=False)
-        resampled = np.interp(x_new, x_old, audio)
-        return np.ascontiguousarray(resampled.astype(np.float32))
 
     def _maybe_transcribe(self, force: bool):
         if not self._pcm_buffer:
@@ -179,11 +168,10 @@ class LiveTranscriber(threading.Thread):
             absolute_start = self._buffer_offset_seconds + start
             absolute_end = self._buffer_offset_seconds + end
 
-            overlap_threshold = 0.3
             segment_duration = absolute_end - absolute_start
             overlap_amount = max(0, self._last_emitted_end - absolute_start)
 
-            if overlap_amount > overlap_threshold * segment_duration:
+            if overlap_amount > self.overlap_threshold * segment_duration:
                 continue
 
             if absolute_start < self._last_emitted_end:

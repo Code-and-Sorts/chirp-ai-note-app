@@ -127,3 +127,8 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
 files = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]

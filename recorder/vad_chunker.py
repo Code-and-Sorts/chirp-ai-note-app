@@ -24,6 +24,8 @@ class VADChunker(threading.Thread):
         energy_threshold: float = 0.01,
         event_queue: queue.Queue | None = None,
         max_chunk_seconds: float = 10.0,
+        status_interval: int = 50,
+        poll_timeout: float = 0.1,
     ):
         super().__init__(daemon=True)
         self.frame_queue = frame_queue
@@ -37,6 +39,8 @@ class VADChunker(threading.Thread):
         self.energy_threshold = energy_threshold
         self.event_queue = event_queue
         self.max_chunk_seconds = max_chunk_seconds
+        self.status_interval = status_interval
+        self.poll_timeout = poll_timeout
 
         self._padding_frames = max(1, int(self.padding_ms / self.frame_ms))
         self._ring_buffer: collections.deque[tuple[AudioFrame, bool]] = (
@@ -51,7 +55,7 @@ class VADChunker(threading.Thread):
     def run(self):
         while not self.stop_event.is_set():
             try:
-                frame = self.frame_queue.get(timeout=0.1)
+                frame = self.frame_queue.get(timeout=self.poll_timeout)
             except queue.Empty:
                 continue
 
@@ -62,7 +66,7 @@ class VADChunker(threading.Thread):
 
             self._update_state(frame, is_speech)
 
-            if self._frame_count % 50 == 0:
+            if self._frame_count % self.status_interval == 0:
                 self._publish_event(
                     "vad_status",
                     {
