@@ -1,3 +1,4 @@
+import struct
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -46,6 +47,29 @@ class TestAudioRecorder:
             assert recorder.device_manager == mock_device_manager
             assert recorder.is_recording is False
             assert recorder.title is None
+            assert recorder.current_level == 0.0
+
+    def test_audio_callback_computes_level_for_silence(
+        self, mock_settings, mock_device_manager
+    ):
+        with patch("recorder.audio_recorder.pyaudio.PyAudio"):
+            recorder = AudioRecorder(mock_settings, mock_device_manager)
+            recorder.is_recording = True
+
+            silent_data = struct.pack("<1024h", *([0] * 1024))
+            recorder._audio_callback(silent_data, 1024, {}, 0)
+            assert recorder.current_level == 0.0
+
+    def test_audio_callback_computes_level_for_loud_audio(
+        self, mock_settings, mock_device_manager
+    ):
+        with patch("recorder.audio_recorder.pyaudio.PyAudio"):
+            recorder = AudioRecorder(mock_settings, mock_device_manager)
+            recorder.is_recording = True
+
+            loud_data = struct.pack("<1024h", *([32767] * 1024))
+            recorder._audio_callback(loud_data, 1024, {}, 0)
+            assert recorder.current_level > 0.99
 
     def test_save_recording_with_title_creates_metadata_file(
         self, mock_settings, mock_device_manager

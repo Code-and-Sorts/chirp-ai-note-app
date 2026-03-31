@@ -1,9 +1,11 @@
+import math
+import struct
 import threading
 import wave
 from datetime import datetime
 from pathlib import Path
 from threading import Timer
-from typing import Optional
+from typing import Callable, Optional
 
 import pyaudio
 
@@ -26,13 +28,17 @@ class AudioRecorder:
         self.monitor: Optional[MeetingMonitor] = None
         self.start_time: Optional[datetime] = None
         self.title: Optional[str] = None
+        self.current_level: float = 0.0
 
     def __del__(self):
         if self.audio:
             self.audio.terminate()
 
     def start_recording(
-        self, duration_minutes: Optional[int] = None, title: Optional[str] = None
+        self,
+        duration_minutes: Optional[int] = None,
+        title: Optional[str] = None,
+        level_callback: Optional[Callable[[float], None]] = None,
     ) -> str:
         if self.is_recording:
             raise RuntimeError("Recording already in progress")
@@ -94,6 +100,8 @@ class AudioRecorder:
         try:
             while self.is_recording:
                 threading.Event().wait(0.1)
+                if level_callback is not None:
+                    level_callback(self.current_level)
         except KeyboardInterrupt:
             pass
         finally:
@@ -109,6 +117,10 @@ class AudioRecorder:
     def _audio_callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
             self.frames.append(in_data)
+            sample_count = len(in_data) // 2
+            samples = struct.unpack(f"<{sample_count}h", in_data)
+            rms = math.sqrt(sum(s * s for s in samples) / sample_count)
+            self.current_level = min(rms / 32768.0, 1.0)
         return (None, pyaudio.paContinue)
 
     def _stop_recording_timer(self):

@@ -4,9 +4,11 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
+from rich.text import Text
 
 from chirp.exceptions import *
 from config.settings import get_settings
@@ -111,6 +113,24 @@ def _test_chroma_db(settings):
         return False
 
 
+LEVEL_BLOCKS = " ▁▂▃▅▆█"
+
+
+def _render_audio_meter(level: float) -> Text:
+    bar = Text()
+    bar.append("🎙️ Recording  ")
+    num_bars = 6
+    for i in range(num_bars):
+        threshold = i / num_bars
+        if level > threshold:
+            intensity = min(int((level - threshold) * num_bars * (len(LEVEL_BLOCKS) - 1)), len(LEVEL_BLOCKS) - 1)
+            bar.append(LEVEL_BLOCKS[max(intensity, 1)], style="green")
+        else:
+            bar.append(LEVEL_BLOCKS[0], style="dim")
+    bar.append("  (Ctrl+C to stop)", style="dim")
+    return bar
+
+
 @app.command(rich_help_panel=RECORDING_PANEL)
 def record(
     duration: Optional[int] = typer.Option(
@@ -145,11 +165,18 @@ def record(
         console.print(f"[cyan]⏱️ Planned duration: {duration} minutes[/cyan]")
 
     try:
-        with console.status("[bold green]🎙️ Recording in progress..."):
-            filename = recorder.start_recording(duration_minutes=duration, title=title)
+        from utils.time_utils import format_duration, get_recording_duration
+
+        with Live(_render_audio_meter(0.0), console=console, refresh_per_second=10) as live:
+
+            def _update_meter(level: float):
+                live.update(_render_audio_meter(level))
+
+            filename = recorder.start_recording(
+                duration_minutes=duration, title=title, level_callback=_update_meter
+            )
 
         if recorder.start_time:
-            from utils.time_utils import format_duration, get_recording_duration
 
             actual_duration = get_recording_duration(recorder.start_time)
             duration_str = format_duration(actual_duration)
