@@ -71,6 +71,29 @@ class TestAudioRecorder:
             recorder._audio_callback(loud_data, 1024, {}, 0)
             assert recorder.current_level > 0.99
 
+    def test_audio_callback_handles_empty_data(
+        self, mock_settings, mock_device_manager
+    ):
+        with patch("recorder.audio_recorder.pyaudio.PyAudio"):
+            recorder = AudioRecorder(mock_settings, mock_device_manager)
+            recorder.is_recording = True
+
+            result = recorder._audio_callback(b"", 0, {}, 0)
+            assert recorder.current_level == 0.0
+            assert result == (None, 0)
+
+    def test_audio_callback_handles_odd_byte_length(
+        self, mock_settings, mock_device_manager
+    ):
+        with patch("recorder.audio_recorder.pyaudio.PyAudio"):
+            recorder = AudioRecorder(mock_settings, mock_device_manager)
+            recorder.is_recording = True
+
+            odd_data = array.array("h", [16000] * 100).tobytes() + b"\x00"
+            result = recorder._audio_callback(odd_data, 100, {}, 0)
+            assert recorder.current_level > 0.0
+            assert result == (None, 0)
+
     def test_save_recording_with_title_creates_metadata_file(
         self, mock_settings, mock_device_manager
     ):

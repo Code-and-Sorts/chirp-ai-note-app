@@ -113,7 +113,8 @@ def _test_chroma_db(settings):
         return False
 
 
-LEVEL_BLOCKS = " ▁▂▃▅▆█"
+LEVEL_BLOCKS = "▁▂▃▄▅▆█"
+EMPTY_BLOCK = "░"
 
 
 def _render_audio_meter(level: float) -> Text:
@@ -127,9 +128,9 @@ def _render_audio_meter(level: float) -> Text:
                 int((level - threshold) * num_bars * (len(LEVEL_BLOCKS) - 1)),
                 len(LEVEL_BLOCKS) - 1,
             )
-            bar.append(LEVEL_BLOCKS[max(intensity, 1)], style="green")
+            bar.append(LEVEL_BLOCKS[intensity], style="green")
         else:
-            bar.append(LEVEL_BLOCKS[0], style="dim")
+            bar.append(EMPTY_BLOCK, style="dim")
     bar.append("  (Ctrl+C to stop)", style="dim")
     return bar
 
@@ -167,9 +168,9 @@ def record(
     if duration:
         console.print(f"[cyan]⏱️ Planned duration: {duration} minutes[/cyan]")
 
-    try:
-        from utils.time_utils import format_duration, get_recording_duration
+    from utils.time_utils import format_duration, get_recording_duration
 
+    try:
         with Live(_render_audio_meter(0.0), console=console, refresh_per_second=10) as live:
 
             def _update_meter(level: float):

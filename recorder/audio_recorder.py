@@ -1,4 +1,5 @@
 import array
+import logging
 import math
 import threading
 import wave
@@ -14,6 +15,8 @@ from recorder.device_manager import DeviceManager
 from recorder.meeting_monitor import MeetingMonitor
 from utils.file_utils import generate_audio_filename
 from utils.time_utils import get_recording_duration
+
+logger = logging.getLogger(__name__)
 
 
 class AudioRecorder:
@@ -104,6 +107,7 @@ class AudioRecorder:
                     try:
                         level_callback(self.current_level)
                     except Exception:
+                        logger.debug("Level callback failed, disabling", exc_info=True)
                         level_callback = None
         except KeyboardInterrupt:
             pass
@@ -119,13 +123,31 @@ class AudioRecorder:
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
-            self.frames.append(in_data)
-            if len(in_data) < 2:
+            if in_data:
+                self.frames.append(in_data)
+            else:
                 self.current_level = 0.0
                 return (None, pyaudio.paContinue)
-            samples = array.array("h", in_data)
-            rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-            self.current_level = min(rms / 32768.0, 1.0)
+
+            try:
+                if len(in_data) < 2:
+                    self.current_level = 0.0
+                    return (None, pyaudio.paContinue)
+
+                level_data = in_data
+                if len(level_data) % 2 != 0:
+                    level_data = level_data[:-1]
+
+                if len(level_data) < 2:
+                    self.current_level = 0.0
+                    return (None, pyaudio.paContinue)
+
+                samples = array.array("h")
+                samples.frombytes(level_data)
+                rms = math.sqrt(sum(s * s for s in samples) / len(samples))
+                self.current_level = min(rms / 32768.0, 1.0)
+            except Exception:
+                self.current_level = 0.0
         return (None, pyaudio.paContinue)
 
     def _stop_recording_timer(self):
