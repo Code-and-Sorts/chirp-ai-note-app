@@ -113,24 +113,23 @@ def _test_chroma_db(settings):
         return False
 
 
-LEVEL_BLOCKS = "▁▂▃▄▅▆█"
-EMPTY_BLOCK = "░"
+METER_WIDTH = 20
 
 
 def _render_audio_meter(level: float) -> Text:
+    filled = int(level * METER_WIDTH)
     bar = Text()
     bar.append("🎙️ Recording  ")
-    num_bars = 6
-    for i in range(num_bars):
-        threshold = i / num_bars
-        if level > threshold:
-            intensity = min(
-                int((level - threshold) * num_bars * (len(LEVEL_BLOCKS) - 1)),
-                len(LEVEL_BLOCKS) - 1,
-            )
-            bar.append(LEVEL_BLOCKS[intensity], style="green")
+    for i in range(METER_WIDTH):
+        if i < filled:
+            if i < METER_WIDTH * 0.6:
+                bar.append("━", style="green")
+            elif i < METER_WIDTH * 0.85:
+                bar.append("━", style="yellow")
+            else:
+                bar.append("━", style="red")
         else:
-            bar.append(EMPTY_BLOCK, style="dim")
+            bar.append("━", style="dim")
     bar.append("  (Ctrl+C to stop)", style="dim")
     return bar
 
