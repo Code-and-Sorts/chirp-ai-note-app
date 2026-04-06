@@ -136,7 +136,7 @@ def _render_audio_meter(level: float) -> Table:
     label = Text()
     label.append(" Recording  ", style="bold green")
 
-    suffix = Text("  (Ctrl+C to stop)", style="dim")
+    suffix = Text("  (ESC or Ctrl+C to stop)", style="dim")
 
     row = Table.grid(padding=0)
     row.add_row(recording_spinner, label, bar, suffix)
@@ -181,8 +181,34 @@ def record(
 
     from utils.time_utils import format_duration, get_recording_duration
 
+    def _start_esc_listener(target_recorder):
+        import sys
+        import termios
+        import tty
+
+        def _listen():
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                while target_recorder.is_recording:
+                    ch = sys.stdin.read(1)
+                    if ch == "\x1b" or ch == "\x03":
+                        target_recorder.stop_recording()
+                        break
+            except Exception:
+                pass
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+        import threading
+
+        thread = threading.Thread(target=_listen, daemon=True)
+        thread.start()
+
     try:
         with Live(_render_audio_meter(0.0), console=console, refresh_per_second=10) as live:
+            _start_esc_listener(recorder)
 
             def _update_meter(level: float):
                 live.update(_render_audio_meter(level))
