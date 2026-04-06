@@ -12,7 +12,7 @@ from rich.table import Table
 from rich.text import Text
 
 from chirp.exceptions import *
-from config.settings import get_settings
+from config.settings import ChirpSettings, get_settings
 from utils.file_utils import (
     get_audio_files,
     get_notes_files,
@@ -611,7 +611,7 @@ Interval: {settings.monitoring.warning_interval} minutes""",
             raise typer.Exit(1)
 
     if changes_made:
-        settings.save_to_file(Path("config/config.yaml"))
+        settings.save_to_file(ChirpSettings.get_config_path())
         settings.ensure_directories_exist()
         console.print("[green]✅ Configuration updated[/green]")
 
