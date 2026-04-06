@@ -181,41 +181,35 @@ def record(
 
     from utils.time_utils import format_duration, get_recording_duration
 
-    def _start_esc_listener(target_recorder):
+    try:
+        import select
         import sys
         import termios
         import tty
 
-        def _listen():
-            fd = sys.stdin.fileno()
-            old_settings = termios.tcgetattr(fd)
-            try:
-                tty.setraw(fd)
-                while target_recorder.is_recording:
-                    ch = sys.stdin.read(1)
-                    if ch == "\x1b" or ch == "\x03":
-                        target_recorder.stop_recording()
-                        break
-            except Exception:
-                pass
-            finally:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
 
-        import threading
+        def _check_key_and_update(level: float):
+            if select.select([sys.stdin], [], [], 0)[0]:
+                ch = sys.stdin.read(1)
+                if ch == "\x1b" or ch == "\x03":
+                    recorder.stop_recording()
+                    return
+            live.update(_render_audio_meter(level))
 
-        thread = threading.Thread(target=_listen, daemon=True)
-        thread.start()
-
-    try:
-        with Live(_render_audio_meter(0.0), console=console, refresh_per_second=10) as live:
-            _start_esc_listener(recorder)
-
-            def _update_meter(level: float):
-                live.update(_render_audio_meter(level))
-
-            filename = recorder.start_recording(
-                duration_minutes=duration, title=title, level_callback=_update_meter
-            )
+        try:
+            with Live(
+                _render_audio_meter(0.0), console=console, refresh_per_second=10
+            ) as live:
+                filename = recorder.start_recording(
+                    duration_minutes=duration,
+                    title=title,
+                    level_callback=_check_key_and_update,
+                )
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
         if recorder.start_time:
 
