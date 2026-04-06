@@ -174,6 +174,18 @@ def record(
 
     recorder = AudioRecorder(settings, device_manager)
 
+    device_index = device_manager.get_recommended_device(
+        configured_device=configured_device
+    )
+    if device_index is not None:
+        device_info = device_manager.get_device_info(device_index)
+        if device_info:
+            console.print(
+                f"[dim]Using device: {device_info.get('name')} "
+                f"(ID: {device_index}, "
+                f"Input channels: {device_info.get('maxInputChannels')})[/dim]"
+            )
+
     if title:
         console.print(f"[cyan]📝 Title: {title}[/cyan]")
     if duration:
