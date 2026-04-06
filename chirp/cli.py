@@ -581,19 +581,29 @@ def devices():
     """List available audio devices"""
     from recorder.device_manager import DeviceManager
 
+    settings = get_settings()
     device_manager = DeviceManager()
     devices_info = device_manager.list_devices()
 
+    selected_index = device_manager.get_recommended_device(
+        configured_device=settings.audio.input_device
+    )
+
     table = Table(title="Available Audio Devices")
+    table.add_column("", style="bold")
     table.add_column("ID", style="cyan")
-    table.add_column("Name", style="green")
+    table.add_column("Name")
     table.add_column("Channels", style="yellow")
     table.add_column("Default Rate", style="blue")
 
     for device in devices_info:
+        is_selected = device["index"] == selected_index
+        marker = "▶" if is_selected else ""
+        name_style = "bold green" if is_selected else "green"
         table.add_row(
+            marker,
             str(device["index"]),
-            device["name"],
+            Text(device["name"], style=name_style),
             f"In: {device['max_input_channels']}, Out: {device['max_output_channels']}",
             f"{device['default_sample_rate']:.0f} Hz",
         )
