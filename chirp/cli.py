@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
@@ -115,11 +116,12 @@ def _test_chroma_db(settings):
 
 METER_WIDTH = 20
 
+recording_spinner = Spinner("dots", style="bold green")
 
-def _render_audio_meter(level: float) -> Text:
+
+def _render_audio_meter(level: float) -> Table:
     filled = int(level * METER_WIDTH)
     bar = Text()
-    bar.append("🎙️ Recording  ")
     for i in range(METER_WIDTH):
         if i < filled:
             if i < METER_WIDTH * 0.6:
@@ -130,8 +132,15 @@ def _render_audio_meter(level: float) -> Text:
                 bar.append("━", style="red")
         else:
             bar.append("━", style="dim")
-    bar.append("  (Ctrl+C to stop)", style="dim")
-    return bar
+
+    label = Text()
+    label.append(" Recording  ", style="bold green")
+
+    suffix = Text("  (Ctrl+C to stop)", style="dim")
+
+    row = Table.grid(padding=0)
+    row.add_row(recording_spinner, label, bar, suffix)
+    return row
 
 
 @app.command(rich_help_panel=RECORDING_PANEL)
