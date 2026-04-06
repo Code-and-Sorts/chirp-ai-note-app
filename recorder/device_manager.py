@@ -107,7 +107,31 @@ class DeviceManager:
         except Exception:
             return False
 
-    def get_recommended_device(self) -> Optional[int]:
+    def find_device_by_name(self, name: str) -> Optional[int]:
+        devices = self.list_devices()
+        search_name = name.lower()
+
+        for device in devices:
+            if device["name"].lower() == search_name and device["max_input_channels"] > 0:
+                return int(device["index"])
+
+        for device in devices:
+            if (
+                search_name in device["name"].lower()
+                and device["max_input_channels"] > 0
+            ):
+                return int(device["index"])
+
+        return None
+
+    def get_recommended_device(
+        self, configured_device: Optional[str] = None
+    ) -> Optional[int]:
+        if configured_device:
+            device = self.find_device_by_name(configured_device)
+            if device is not None:
+                return device
+
         blackhole_device = self.find_blackhole_device()
         if blackhole_device is not None:
             return blackhole_device

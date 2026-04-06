@@ -154,12 +154,15 @@ def record(
     settings = get_settings()
     device_manager = DeviceManager()
 
-    if not device_manager.check_blackhole_available():
+    configured_device = settings.audio.input_device
+    if not configured_device and not device_manager.check_blackhole_available():
         console.print(
-            "[red]❌ BlackHole not detected. Please install BlackHole audio driver.[/red]"
+            "[yellow]BlackHole not detected. Using default input device.[/yellow]"
         )
-        console.print("Download from: https://existential.audio/blackhole/")
-        raise typer.Exit(1)
+        console.print(
+            "[dim]Tip: Use 'chirp config --input-device \"Aggregate Device\"' "
+            "to set a specific device[/dim]"
+        )
 
     recorder = AudioRecorder(settings, device_manager)
 
@@ -504,6 +507,11 @@ def config(
     notes_dir: Optional[Path] = typer.Option(
         None, "--notes-dir", help="Set notes directory"
     ),
+    input_device: Optional[str] = typer.Option(
+        None,
+        "--input-device",
+        help="Set input audio device name (e.g. 'Aggregate Device'). Use 'chirp devices' to see available devices.",
+    ),
 ):
     """Manage Chirp configuration"""
     settings = get_settings()
@@ -524,6 +532,7 @@ Ollama URL: {settings.models.ollama_url}
 [cyan]Audio:[/cyan]
 Sample Rate: {settings.audio.sample_rate}
 Channels: {settings.audio.channels}
+Input Device: {settings.audio.input_device or "auto (BlackHole > default)"}
 
 [cyan]Monitoring:[/cyan]
 Warning: {settings.monitoring.warning_minutes} minutes
@@ -546,6 +555,20 @@ Interval: {settings.monitoring.warning_interval} minutes""",
     if notes_dir:
         settings.directories.notes = notes_dir
         changes_made = True
+
+    if input_device is not None:
+        from recorder.device_manager import DeviceManager
+
+        device_manager = DeviceManager()
+        if device_manager.find_device_by_name(input_device):
+            settings.audio.input_device = input_device
+            changes_made = True
+            console.print(f"[green]Input device set to: {input_device}[/green]")
+        else:
+            console.print(
+                f"[red]Device '{input_device}' not found. Use 'chirp devices' to see available devices.[/red]"
+            )
+            raise typer.Exit(1)
 
     if changes_made:
         settings.save_to_file(Path("config/config.yaml"))

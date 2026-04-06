@@ -236,6 +236,64 @@ class TestDeviceManager:
 
                 assert result is False
 
+    def test_find_device_by_name_exact_match(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            with patch.object(device_manager, "list_devices") as mock_list:
+                mock_list.return_value = [
+                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
+                    {"index": 1, "name": "Aggregate Device", "max_input_channels": 2, "max_output_channels": 0},
+                ]
+
+                result = device_manager.find_device_by_name("Aggregate Device")
+                assert result == 1
+
+    def test_find_device_by_name_partial_match(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            with patch.object(device_manager, "list_devices") as mock_list:
+                mock_list.return_value = [
+                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
+                    {"index": 1, "name": "My Aggregate Device", "max_input_channels": 2, "max_output_channels": 0},
+                ]
+
+                result = device_manager.find_device_by_name("Aggregate")
+                assert result == 1
+
+    def test_find_device_by_name_not_found(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            with patch.object(device_manager, "list_devices") as mock_list:
+                mock_list.return_value = [
+                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
+                ]
+
+                result = device_manager.find_device_by_name("Aggregate Device")
+                assert result is None
+
+    def test_get_recommended_device_prefers_configured(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            with patch.object(
+                device_manager, "find_device_by_name"
+            ) as mock_find_name:
+                with patch.object(
+                    device_manager, "find_blackhole_device"
+                ) as mock_blackhole:
+                    mock_find_name.return_value = 7
+                    mock_blackhole.return_value = 5
+
+                    result = device_manager.get_recommended_device(
+                        configured_device="Aggregate Device"
+                    )
+
+                    assert result == 7
+                    mock_blackhole.assert_not_called()
+
     def test_get_recommended_device_prefers_blackhole(self):
         with patch("recorder.device_manager.pyaudio.PyAudio"):
             device_manager = DeviceManager()

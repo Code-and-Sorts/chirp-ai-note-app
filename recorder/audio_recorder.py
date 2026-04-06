@@ -46,7 +46,9 @@ class AudioRecorder:
         if self.is_recording:
             raise RuntimeError("Recording already in progress")
 
-        device_index = self.device_manager.get_recommended_device()
+        device_index = self.device_manager.get_recommended_device(
+            configured_device=self.settings.audio.input_device
+        )
         if device_index is None:
             raise RuntimeError("No suitable audio device found")
 
