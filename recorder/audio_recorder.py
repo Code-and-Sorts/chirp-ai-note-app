@@ -61,13 +61,14 @@ class AudioRecorder:
         filename = generate_audio_filename(title, self.settings.audio.format)
         file_path = self.settings.directories.raw_audio / filename
 
-        max_channels = min(
-            self.settings.audio.channels, device_info["maxInputChannels"]
-        )
+        record_channels = int(device_info["maxInputChannels"])
+        output_channels = min(self.settings.audio.channels, record_channels)
         sample_rate = min(
             self.settings.audio.sample_rate, int(device_info["defaultSampleRate"])
         )
 
+        self._record_channels = record_channels
+        self._output_channels = output_channels
         self.frames = []
         self.is_recording = True
         self.start_time = datetime.now()
@@ -75,7 +76,7 @@ class AudioRecorder:
 
         self.stream = self.audio.open(
             format=pyaudio.paInt16,
-            channels=max_channels,
+            channels=record_channels,
             rate=sample_rate,
             input=True,
             input_device_index=device_index,
@@ -116,7 +117,13 @@ class AudioRecorder:
         finally:
             self._cleanup_recording()
 
-        self._save_recording(file_path, max_channels, sample_rate, self.title)
+        self._save_recording(
+            file_path,
+            self._record_channels,
+            self._output_channels,
+            sample_rate,
+            self.title,
+        )
 
         return filename
 
@@ -172,18 +179,26 @@ class AudioRecorder:
     def _save_recording(
         self,
         file_path: Path,
-        channels: int,
+        record_channels: int,
+        output_channels: int,
         sample_rate: int,
         title: Optional[str] = None,
     ):
         if not self.frames:
             raise RuntimeError("No audio data recorded")
 
+        raw_data = b"".join(self.frames)
+
+        if record_channels > output_channels:
+            raw_data = self._mixdown_channels(
+                raw_data, record_channels, output_channels
+            )
+
         with wave.open(str(file_path), "wb") as wave_file:
-            wave_file.setnchannels(channels)
+            wave_file.setnchannels(output_channels)
             wave_file.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
             wave_file.setframerate(sample_rate)
-            wave_file.writeframes(b"".join(self.frames))
+            wave_file.writeframes(raw_data)
 
         if title:
             import json
@@ -192,11 +207,34 @@ class AudioRecorder:
             metadata = {
                 "title": title,
                 "recorded_at": self.start_time.isoformat() if self.start_time else None,
-                "channels": channels,
+                "channels": output_channels,
                 "sample_rate": sample_rate,
             }
             with open(metadata_file, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
+
+    @staticmethod
+    def _mixdown_channels(
+        raw_data: bytes, input_channels: int, output_channels: int
+    ) -> bytes:
+        samples = array.array("h")
+        samples.frombytes(raw_data)
+
+        total_frames = len(samples) // input_channels
+        output = array.array("h")
+
+        for frame in range(total_frames):
+            offset = frame * input_channels
+            for out_ch in range(output_channels):
+                mixed = 0
+                sources = 0
+                for in_ch in range(out_ch, input_channels, output_channels):
+                    mixed += samples[offset + in_ch]
+                    sources += 1
+                mixed = max(-32768, min(32767, mixed // sources))
+                output.append(mixed)
+
+        return output.tobytes()
 
     def _on_warning(self, elapsed_minutes: int):
         from utils.popup_manager import PopupManager

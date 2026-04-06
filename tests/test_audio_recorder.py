@@ -112,7 +112,7 @@ class TestAudioRecorder:
                         mock_wave_file = Mock()
                         mock_wave.return_value.__enter__.return_value = mock_wave_file
 
-                        recorder._save_recording(test_file_path, 2, 16000, test_title)
+                        recorder._save_recording(test_file_path, 2, 2, 16000, test_title)
 
                         expected_metadata_path = Path(
                             "/mock/audio/test_recording.wav.meta"
@@ -146,7 +146,7 @@ class TestAudioRecorder:
                         mock_wave_file = Mock()
                         mock_wave.return_value.__enter__.return_value = mock_wave_file
 
-                        recorder._save_recording(test_file_path, 2, 16000, None)
+                        recorder._save_recording(test_file_path, 2, 2, 16000, None)
 
                         mock_file_open.assert_not_called()
                         mock_json_dump.assert_not_called()
@@ -161,6 +161,22 @@ class TestAudioRecorder:
             recorder.title = test_title
             assert recorder.title == test_title
 
+    def test_mixdown_channels_4_to_2(self, mock_settings, mock_device_manager):
+        with patch("recorder.audio_recorder.pyaudio.PyAudio"):
+            recorder = AudioRecorder(mock_settings, mock_device_manager)
+
+            # 2 frames of 4-channel audio: [ch0, ch1, ch2, ch3] per frame
+            samples = array.array("h", [100, 200, 300, 400, 500, 600, 700, 800])
+            result = recorder._mixdown_channels(samples.tobytes(), 4, 2)
+            output = array.array("h")
+            output.frombytes(result)
+
+            # out_ch0 = avg(in_ch0, in_ch2), out_ch1 = avg(in_ch1, in_ch3)
+            assert output[0] == (100 + 300) // 2  # frame 0, ch 0
+            assert output[1] == (200 + 400) // 2  # frame 0, ch 1
+            assert output[2] == (500 + 700) // 2  # frame 1, ch 0
+            assert output[3] == (600 + 800) // 2  # frame 1, ch 1
+
     def test_save_recording_no_frames_raises_error(
         self, mock_settings, mock_device_manager
     ):
@@ -171,4 +187,4 @@ class TestAudioRecorder:
             test_file_path = Path("/mock/audio/test_recording.wav")
 
             with pytest.raises(RuntimeError, match="No audio data recorded"):
-                recorder._save_recording(test_file_path, 2, 16000, "Test Title")
+                recorder._save_recording(test_file_path, 2, 2, 16000, "Test Title")
