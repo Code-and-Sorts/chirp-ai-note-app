@@ -164,11 +164,10 @@ def record(
 
     if not device_manager.check_blackhole_available():
         console.print(
-            "[yellow]BlackHole not detected. Using default input device.[/yellow]"
+            "[red]❌ BlackHole not detected. Please install BlackHole audio driver.[/red]"
         )
-        console.print(
-            "[dim]Tip: Run 'chirp setup' for audio configuration guide[/dim]"
-        )
+        console.print("Run 'chirp setup' for installation and configuration guide.")
+        raise typer.Exit(1)
 
     recorder = AudioRecorder(settings, device_manager)
 
