@@ -703,24 +703,34 @@ def setup():
     console.print("  4. Check [bold]BlackHole 2ch[/bold]")
     console.print("  5. Rename it to [bold]Chirp Output[/bold] (double-click the name)")
 
-    # Step 3: Set system output
+    # Step 3: Aggregate Device
     console.print()
-    console.print("[bold]Step 3: Set your system output[/bold]")
+    console.print("[bold]Step 3: Create an Aggregate Device (\"Chirp Input\")[/bold]")
     console.print()
     console.print(
-        "  Go to [bold]System Settings → Sound → Output[/bold] and select\n"
-        "  [bold]Chirp Output[/bold] (the Multi-Output Device you just created)."
+        "  This combines your microphone AND BlackHole into a single input,\n"
+        "  so Chirp captures both your voice and system audio (e.g. remote\n"
+        "  participants on a call)."
     )
     console.print()
+    console.print("  1. In [bold]Audio MIDI Setup[/bold], click [bold]+[/bold] → Create Aggregate Device")
+    console.print("  2. Check [bold]BlackHole 2ch[/bold]")
+    console.print("  3. Check your [bold]microphone[/bold] (e.g. Built-in, USB mic, etc.)")
+    console.print("  4. Rename it to [bold]Chirp Input[/bold] (double-click the name)")
+
+    # Step 4: Set system audio
+    console.print()
+    console.print("[bold]Step 4: Set your system audio[/bold]")
+    console.print()
     console.print(
-        "  [yellow]This is the only system-level change needed.[/yellow]\n"
-        "  Chirp uses your system default input device for recording.\n"
-        "  You do NOT need to change the system input device."
+        "  Go to [bold]System Settings → Sound[/bold]:\n"
+        "  • [bold]Output[/bold] → select [bold]Chirp Output[/bold]\n"
+        "  • [bold]Input[/bold]  → select [bold]Chirp Input[/bold]"
     )
 
-    # Step 4: Done
+    # Step 5: Done
     console.print()
-    console.print("[bold]Step 4: Record![/bold]")
+    console.print("[bold]Step 5: Record![/bold]")
     console.print()
     console.print("  [bold]chirp record[/bold]")
     console.print()
@@ -734,15 +744,14 @@ def setup():
     console.print(
         Panel(
             "[bold]How it works:[/bold]\n\n"
+            "[cyan]Your voice[/cyan]    → Chirp Input (aggregate) → [bold]Chirp recording[/bold]\n"
             "[cyan]System audio[/cyan] → Chirp Output → Speakers (you hear it)\n"
-            "                              → BlackHole (loopback)\n"
-            "                                   ↓\n"
-            "                              [bold]Chirp recording[/bold]\n\n"
-            "[bold]Key point:[/bold] The [yellow]output (Chirp Output)[/yellow] "
-            "must be set at the system\n"
-            "level in [bold]System Settings → Sound → Output[/bold]. "
-            "This is the only\n"
-            "system setting you need to change.",
+            "                              → BlackHole → Chirp Input → [bold]Chirp recording[/bold]\n\n"
+            "[bold]System settings:[/bold]\n"
+            "  • [yellow]Output[/yellow] → [bold]Chirp Output[/bold] "
+            "(Multi-Output Device)\n"
+            "  • [yellow]Input[/yellow]  → [bold]Chirp Input[/bold] "
+            "(Aggregate Device)",
             title="Summary",
         )
     )
