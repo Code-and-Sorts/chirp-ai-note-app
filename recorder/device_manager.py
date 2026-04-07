@@ -136,10 +136,6 @@ class DeviceManager:
         return None
 
     def get_recommended_device(self) -> Optional[int]:
-        blackhole_device = self.find_blackhole_device()
-        if blackhole_device is not None:
-            return blackhole_device
-
         return self.get_default_input_device()
 
     def get_device_sample_rates(self, device_index: int) -> list[int]:

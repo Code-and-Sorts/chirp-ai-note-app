@@ -298,37 +298,15 @@ class TestDeviceManager:
                 result = device_manager.find_device_by_name("Aggregate Device")
                 assert result is None
 
-    def test_get_recommended_device_prefers_blackhole(self):
+    def test_get_recommended_device_returns_system_default(self):
         with patch("recorder.device_manager.pyaudio.PyAudio"):
             device_manager = DeviceManager()
 
             with patch.object(
-                device_manager, "find_blackhole_device"
-            ) as mock_blackhole:
-                with patch.object(
-                    device_manager, "get_default_input_device"
-                ) as mock_default:
-                    mock_blackhole.return_value = 5
-                    mock_default.return_value = 3
+                device_manager, "get_default_input_device"
+            ) as mock_default:
+                mock_default.return_value = 3
 
-                    result = device_manager.get_recommended_device()
+                result = device_manager.get_recommended_device()
 
-                    assert result == 5
-                    mock_default.assert_not_called()
-
-    def test_get_recommended_device_falls_back_to_default(self):
-        with patch("recorder.device_manager.pyaudio.PyAudio"):
-            device_manager = DeviceManager()
-
-            with patch.object(
-                device_manager, "find_blackhole_device"
-            ) as mock_blackhole:
-                with patch.object(
-                    device_manager, "get_default_input_device"
-                ) as mock_default:
-                    mock_blackhole.return_value = None
-                    mock_default.return_value = 3
-
-                    result = device_manager.get_recommended_device()
-
-                    assert result == 3
+                assert result == 3

@@ -600,7 +600,6 @@ def devices():
     device_manager = DeviceManager()
     devices_info = device_manager.list_devices()
 
-    selected_index = device_manager.get_recommended_device()
     default_input_index = device_manager.get_default_input_device()
     default_output_index = device_manager.get_default_output_device()
 
@@ -615,23 +614,14 @@ def devices():
     input_table.add_column("Default Rate", style="blue")
 
     for device in input_devices:
-        is_selected = device["index"] == selected_index
-        is_system_default = device["index"] == default_input_index
-        marker = "▶" if is_selected else ""
-        name = device["name"]
-        if is_system_default:
-            name_style = "bold green" if is_selected else ""
-            suffix = " (system default)" if not is_selected else " (system default, chirp)"
-        elif is_selected:
-            name_style = "bold green"
-            suffix = " (chirp)"
-        else:
-            name_style = ""
-            suffix = ""
+        is_default = device["index"] == default_input_index
+        marker = "▶" if is_default else ""
+        name_style = "bold green" if is_default else ""
+        suffix = " (system default)" if is_default else ""
         input_table.add_row(
             marker,
             str(device["index"]),
-            Text(name + suffix, style=name_style),
+            Text(device["name"] + suffix, style=name_style),
             str(device["max_input_channels"]),
             f"{device['default_sample_rate']:.0f} Hz",
         )
