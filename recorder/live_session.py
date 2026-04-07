@@ -56,8 +56,6 @@ class LiveTranscriptionSession:
         self.vad_chunker: VADChunker | None = None
         self.transcriber: LiveTranscriber | None = None
         self.start_time = time.monotonic()
-        self._frame_count = 0
-        self._forwarded_chunk_count = 0
 
     def run(self) -> LiveSessionResult:
         self.start_time = time.monotonic()
@@ -140,14 +138,18 @@ class LiveTranscriptionSession:
         self.audio_stream.save_recording(audio_path, title=self.title)
 
         total_words = 0
+        transcript_path = None
         if self.transcriber:
             total_words = self.transcriber.total_words
+            if self.transcriber.segments:
+                transcript_path = audio_path.with_suffix(".live.txt")
+                self.transcriber.export_transcript(transcript_path)
 
         duration_seconds = time.monotonic() - self.start_time
 
         return LiveSessionResult(
             audio_path=audio_path,
-            transcript_path=None,
+            transcript_path=transcript_path,
             duration_seconds=duration_seconds,
             total_words=total_words,
         )
@@ -192,6 +194,8 @@ class LiveTranscriptionSession:
         threading.Thread(target=forward_levels, daemon=True).start()
 
     def _start_direct_forwarder(self):
+        chunk_counter = [0]
+
         def _emit_chunk(
             buffer: list[bytes], start: float | None, frame_duration: float
         ):
@@ -204,19 +208,10 @@ class LiveTranscriptionSession:
             if self.debug:
                 chunk_path = (
                     self._debug_dir
-                    / f"direct_chunk_{self._forwarded_chunk_count:04d}.wav"
+                    / f"direct_chunk_{chunk_counter[0]:04d}.wav"
                 )
                 self._write_debug_chunk(data, chunk_path)
-                self._forwarded_chunk_count += 1
-                self._publish_event(
-                    DashboardEvent(
-                        type="debug",
-                        payload={
-                            "frames": self._frame_count,
-                            "chunks": self._forwarded_chunk_count,
-                        },
-                    )
-                )
+                chunk_counter[0] += 1
 
             try:
                 self.chunk_queue.put_nowait(chunk)
@@ -242,7 +237,6 @@ class LiveTranscriptionSession:
                 if chunk_start is None:
                     chunk_start = frame.timestamp
                 audio_buffer.append(frame.data)
-                self._frame_count += 1
 
                 if len(audio_buffer) >= frames_per_chunk:
                     _emit_chunk(audio_buffer, chunk_start, frame_duration)
@@ -263,7 +257,8 @@ class LiveTranscriptionSession:
     @property
     def _debug_dir(self) -> Path:
         debug_dir = self.settings.directories.transcriptions / "debug-live"
-        debug_dir.mkdir(parents=True, exist_ok=True)
+        if self.debug:
+            debug_dir.mkdir(parents=True, exist_ok=True)
         return debug_dir
 
     def _write_debug_chunk(self, data: bytes, path: Path):

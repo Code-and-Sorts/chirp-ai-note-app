@@ -39,6 +39,7 @@ class LiveDashboard:
         self.stop_event = stop_event
         self.start_time = start_time
 
+        self._max_transcripts = 10000
         self._transcripts: list[TranscriptSegment] = []
         self._language: str | None = None
         self._total_words = 0
@@ -173,6 +174,8 @@ class LiveDashboard:
             segments = event.payload.get("segments", [])
             with self._lock:
                 self._transcripts.extend(segments)
+                if len(self._transcripts) > self._max_transcripts:
+                    self._transcripts = self._transcripts[-self._max_transcripts :]
                 self._language = event.payload.get("language", self._language)
                 self._total_words = event.payload.get("total_words", self._total_words)
         elif event.type == "level":

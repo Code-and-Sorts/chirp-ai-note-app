@@ -222,5 +222,7 @@ class LiveAudioStream:
         if self._stream:
             self._stream.stop_stream()
             self._stream.close()
+            self._stream = None
         if self._audio:
             self._audio.terminate()
+            self._audio = None

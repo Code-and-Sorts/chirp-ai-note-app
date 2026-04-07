@@ -1,3 +1,4 @@
+import logging
 import platform
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -146,7 +147,9 @@ class WhisperTranscriber:
                     try:
                         on_segment(segment_data)
                     except Exception:
-                        pass
+                        logging.getLogger(__name__).warning(
+                            "on_segment callback failed", exc_info=True
+                        )
 
             full_text = " ".join(transcript_text_parts).strip()
             end_time = datetime.now()

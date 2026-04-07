@@ -22,9 +22,19 @@ class DeviceManager:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize PyAudio: {str(e)}")
 
-    def __del__(self):
+    def close(self):
         if self.audio:
             self.audio.terminate()
+            self.audio = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def __del__(self):
+        self.close()
 
     def list_devices(self) -> list[dict]:
         if not self.audio:

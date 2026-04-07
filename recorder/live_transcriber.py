@@ -51,18 +51,22 @@ class LiveTranscriber(threading.Thread):
         self._segments: list[TranscriptSegment] = []
         self._language: str | None = None
         self._total_words = 0
+        self._lock = threading.Lock()
 
     @property
     def segments(self) -> list[TranscriptSegment]:
-        return list(self._segments)
+        with self._lock:
+            return list(self._segments)
 
     @property
     def language(self) -> str | None:
-        return self._language
+        with self._lock:
+            return self._language
 
     @property
     def total_words(self) -> int:
-        return self._total_words
+        with self._lock:
+            return self._total_words
 
     def run(self):
         while True:
@@ -117,7 +121,6 @@ class LiveTranscriber(threading.Thread):
         with tempfile.NamedTemporaryFile(
             suffix=".wav",
             delete=False,
-            dir="/tmp" if Path("/tmp").exists() else None,
         ) as tmp:
             temp_path = Path(tmp.name)
             with wave.open(tmp, "wb") as fh:
@@ -137,8 +140,6 @@ class LiveTranscriber(threading.Thread):
                 temp_path.unlink(missing_ok=True)
 
         metadata = result.get("metadata", {})
-        if metadata and metadata.get("language") and not self._language:
-            self._language = metadata.get("language")
 
         segments = result.get("segments", [])
         new_segments: list[TranscriptSegment] = []
@@ -170,11 +171,18 @@ class LiveTranscriber(threading.Thread):
                 end=absolute_end,
                 words=len(text.split()),
             )
-            self._segments.append(transcript_segment)
             new_segments.append(transcript_segment)
-            self._last_emit_time = max(self._last_emit_time, transcript_segment.end)
-            self._total_words += transcript_segment.words
             self._last_emitted_end = max(self._last_emitted_end, absolute_end)
+
+        with self._lock:
+            if metadata and metadata.get("language") and not self._language:
+                self._language = metadata.get("language")
+            self._segments.extend(new_segments)
+            self._total_words += sum(s.words for s in new_segments)
+            self._last_emit_time = max(
+                self._last_emit_time,
+                max((s.end for s in new_segments), default=self._last_emit_time),
+            )
 
         if new_segments:
             payload = {
