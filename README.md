@@ -68,10 +68,10 @@ chirp record
 chirp transcribe
 
 # Generate notes from transcriptions
-chirp notes
+chirp generate
 
-# Do it all in one step
-chirp process
+# Transcribe and generate in one step
+chirp transcribe-and-generate
 ```
 
 ### Search & chat
@@ -81,13 +81,13 @@ chirp process
 chirp index
 
 # Ask a question
-chirp notes ask -q "what was decided about the timeline?"
+chirp ask -q "what was decided about the timeline?"
 
 # Interactive chat mode
-chirp notes ask
+chirp ask
 
 # Filter by date
-chirp notes ask -q "hiring updates" --when "last week"
+chirp ask -q "hiring updates" --when "last week"
 ```
 
 ### Configuration
@@ -103,7 +103,7 @@ chirp config --notes-dir ./my-notes
 ```bash
 chirp devices   # list audio devices
 chirp test      # check all dependencies
-chirp status    # view processing stats
+chirp stats     # view processing stats
 ```
 
 ## Troubleshooting
