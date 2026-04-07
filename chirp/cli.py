@@ -2,7 +2,6 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import click
 import typer
 from rich.console import Console
 from rich.live import Live
@@ -19,16 +18,6 @@ from utils.file_utils import (
     get_notes_files,
     get_transcription_files,
 )
-
-_original_help_init = click.HelpOption.__init__
-
-
-def _custom_help_init(self, *args, **kwargs):
-    _original_help_init(self, *args, **kwargs)
-    self.help = "Show help for any command"
-
-
-click.HelpOption.__init__ = _custom_help_init
 
 app = typer.Typer(
     name="chirp",
