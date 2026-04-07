@@ -21,7 +21,7 @@ from utils.file_utils import (
 )
 
 
-class ChirpGroup(click.Group):
+class ChirpGroup(typer.core.TyperGroup):
     def format_help(self, ctx, formatter):
         for param in self.params:
             if isinstance(param, click.HelpOption):
