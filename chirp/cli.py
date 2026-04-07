@@ -20,19 +20,19 @@ from utils.file_utils import (
     get_transcription_files,
 )
 
+_original_help_init = click.HelpOption.__init__
 
-class ChirpGroup(typer.core.TyperGroup):
-    def format_help(self, ctx, formatter):
-        for param in self.params:
-            if isinstance(param, click.HelpOption):
-                param.help = "Show help for any command"
-        super().format_help(ctx, formatter)
 
+def _custom_help_init(self, *args, **kwargs):
+    _original_help_init(self, *args, **kwargs)
+    self.help = "Show help for any command"
+
+
+click.HelpOption.__init__ = _custom_help_init
 
 app = typer.Typer(
-    cls=ChirpGroup,
     name="chirp",
-    help="🐣 Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
+    help="Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
     rich_markup_mode="rich",
     add_completion=False,
     context_settings={
