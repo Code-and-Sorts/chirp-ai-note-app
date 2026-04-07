@@ -2,6 +2,7 @@ import array
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pyaudio
 import pytest
 
 from recorder.audio_recorder import AudioRecorder
@@ -80,7 +81,7 @@ class TestAudioRecorder:
 
             result = recorder._audio_callback(b"", 0, {}, 0)
             assert recorder.current_level == 0.0
-            assert result == (None, 0)
+            assert result == (None, pyaudio.paContinue)
 
     def test_audio_callback_handles_odd_byte_length(
         self, mock_settings, mock_device_manager
@@ -92,7 +93,7 @@ class TestAudioRecorder:
             odd_data = array.array("h", [16000] * 100).tobytes() + b"\x00"
             result = recorder._audio_callback(odd_data, 100, {}, 0)
             assert recorder.current_level > 0.0
-            assert result == (None, 0)
+            assert result == (None, pyaudio.paContinue)
 
     def test_save_recording_with_title_creates_metadata_file(
         self, mock_settings, mock_device_manager
