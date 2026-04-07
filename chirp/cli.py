@@ -23,6 +23,7 @@ app = typer.Typer(
     name="chirp",
     help="🐣 Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
     rich_markup_mode="rich",
+    add_completion=False,
 )
 console = Console()
 
