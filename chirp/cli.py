@@ -162,21 +162,17 @@ def record(
     settings = get_settings()
     device_manager = DeviceManager()
 
-    configured_device = settings.audio.input_device
-    if not configured_device and not device_manager.check_blackhole_available():
+    if not device_manager.check_blackhole_available():
         console.print(
             "[yellow]BlackHole not detected. Using default input device.[/yellow]"
         )
         console.print(
-            "[dim]Tip: Use 'chirp config --input-device \"Aggregate Device\"' "
-            "to set a specific device[/dim]"
+            "[dim]Tip: Run 'chirp setup' for audio configuration guide[/dim]"
         )
 
     recorder = AudioRecorder(settings, device_manager)
 
-    device_index = device_manager.get_recommended_device(
-        configured_device=configured_device
-    )
+    device_index = device_manager.get_recommended_device()
     if device_index is not None:
         device_info = device_manager.get_device_info(device_index)
         if device_info:
@@ -547,11 +543,6 @@ def config(
     notes_dir: Optional[Path] = typer.Option(
         None, "--notes-dir", help="Set notes directory"
     ),
-    input_device: Optional[str] = typer.Option(
-        None,
-        "--input-device",
-        help="Set input audio device name (e.g. 'Aggregate Device'). Use 'chirp devices' to see available devices.",
-    ),
 ):
     """Manage Chirp configuration"""
     settings = get_settings()
@@ -572,7 +563,6 @@ Ollama URL: {settings.models.ollama_url}
 [cyan]Audio:[/cyan]
 Sample Rate: {settings.audio.sample_rate}
 Channels: {settings.audio.channels}
-Input Device: {settings.audio.input_device or "auto (BlackHole > default)"}
 
 [cyan]Monitoring:[/cyan]
 Warning: {settings.monitoring.warning_minutes} minutes
@@ -596,20 +586,6 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         settings.directories.notes = notes_dir
         changes_made = True
 
-    if input_device is not None:
-        from recorder.device_manager import DeviceManager
-
-        device_manager = DeviceManager()
-        if device_manager.find_device_by_name(input_device):
-            settings.audio.input_device = input_device
-            changes_made = True
-            console.print(f"[green]Input device set to: {input_device}[/green]")
-        else:
-            console.print(
-                f"[red]Device '{input_device}' not found. Use 'chirp devices' to see available devices.[/red]"
-            )
-            raise typer.Exit(1)
-
     if changes_made:
         settings.save_to_file(ChirpSettings.get_config_path())
         settings.ensure_directories_exist()
@@ -621,13 +597,10 @@ def devices():
     """List available audio devices"""
     from recorder.device_manager import DeviceManager
 
-    settings = get_settings()
     device_manager = DeviceManager()
     devices_info = device_manager.list_devices()
 
-    selected_index = device_manager.get_recommended_device(
-        configured_device=settings.audio.input_device
-    )
+    selected_index = device_manager.get_recommended_device()
 
     input_devices = [d for d in devices_info if d["max_input_channels"] > 0]
     output_devices = [d for d in devices_info if d["max_output_channels"] > 0]
@@ -652,10 +625,6 @@ def devices():
         )
 
     console.print(input_table)
-    if settings.audio.input_device:
-        console.print(
-            f"[dim]Configured input: {settings.audio.input_device}[/dim]"
-        )
     console.print()
 
     output_table = Table(title="Output Devices (speakers & routing)")
@@ -688,14 +657,13 @@ def setup():
     """Step-by-step guide to configure audio for meeting recording"""
     from recorder.device_manager import DeviceManager
 
-    settings = get_settings()
     device_manager = DeviceManager()
 
     console.print(
         Panel(
             "[bold]Audio Setup Guide[/bold]\n\n"
-            "Chirp can record both your microphone and system audio "
-            "(e.g. a Teams or Zoom call) by combining two macOS virtual devices.",
+            "Chirp records system audio (e.g. Teams or Zoom calls) using\n"
+            "BlackHole and a Multi-Output Device on macOS.",
             title="🐣 Chirp Setup",
         )
     )
@@ -715,81 +683,59 @@ def setup():
 
     # Step 2: Multi-Output Device
     console.print()
-    console.print("[bold]Step 2: Create a Multi-Output Device[/bold]")
+    console.print("[bold]Step 2: Create a Multi-Output Device (\"Chirp Output\")[/bold]")
     console.print()
-    console.print("  This routes system audio to both your speakers AND BlackHole.")
+    console.print(
+        "  This routes system audio to both your speakers AND BlackHole,\n"
+        "  so you can still hear audio while Chirp records it."
+    )
     console.print()
     console.print("  1. Open [bold]Audio MIDI Setup[/bold] (/Applications/Utilities/)")
     console.print("  2. Click [bold]+[/bold] at bottom left → Create Multi-Output Device")
     console.print("  3. Check your [bold]speakers/headphones[/bold] (so you can still hear)")
     console.print("  4. Check [bold]BlackHole 2ch[/bold]")
+    console.print("  5. Rename it to [bold]Chirp Output[/bold] (double-click the name)")
+
+    # Step 3: Set system output
+    console.print()
+    console.print("[bold]Step 3: Set your system output[/bold]")
     console.print()
     console.print(
-        "  [yellow]Important:[/yellow] Set the Multi-Output Device as your "
-        "[bold]system sound output[/bold]"
+        "  Go to [bold]System Settings → Sound → Output[/bold] and select\n"
+        "  [bold]Chirp Output[/bold] (the Multi-Output Device you just created)."
     )
-    console.print("  in [bold]System Settings → Sound → Output[/bold].")
     console.print()
     console.print(
-        "  [dim]This is the only setting you need to change at the system level.\n"
-        "  Chirp handles input device selection internally — you do NOT need\n"
-        "  to change the system input device.[/dim]"
+        "  [yellow]This is the only system-level change needed.[/yellow]\n"
+        "  Chirp automatically detects BlackHole as its input — you do NOT\n"
+        "  need to change the system input device."
     )
 
-    # Step 3: Aggregate Device
+    # Step 4: Done
     console.print()
-    console.print("[bold]Step 3: Create an Aggregate Device[/bold]")
+    console.print("[bold]Step 4: Record![/bold]")
+    console.print()
+    console.print("  [bold]chirp record[/bold]")
     console.print()
     console.print(
-        "  This combines your microphone + BlackHole into a single input\n"
-        "  so Chirp captures both sides of a conversation."
+        "  Chirp will automatically use BlackHole to capture system audio.\n"
+        "  Use 'chirp devices' to verify BlackHole is detected (marked with ▶)."
     )
-    console.print()
-    console.print("  1. In [bold]Audio MIDI Setup[/bold], click [bold]+[/bold] → Create Aggregate Device")
-    console.print("  2. Check your [bold]microphone[/bold] (e.g. Artemis, USB mic, webcam mic)")
-    console.print("  3. Check [bold]BlackHole 2ch[/bold]")
-    console.print("  4. Optionally rename it (e.g. \"Chirp\")")
-
-    # Step 4: Configure Chirp
-    console.print()
-    console.print("[bold]Step 4: Set the input device in Chirp[/bold]")
-    console.print()
-
-    if settings.audio.input_device:
-        found = device_manager.find_device_by_name(settings.audio.input_device)
-        if found is not None:
-            console.print(
-                f"  [green]✅ Input device configured: {settings.audio.input_device}[/green]"
-            )
-        else:
-            console.print(
-                f"  [red]Configured device '{settings.audio.input_device}' not found.[/red]"
-            )
-            console.print("  Run: chirp config --input-device \"<your aggregate device name>\"")
-    else:
-        console.print("  Run the following command with your aggregate device name:")
-        console.print()
-        console.print("  [bold]chirp config --input-device \"Chirp\"[/bold]")
-        console.print()
-        console.print("  [dim]Use 'chirp devices' to see available device names.[/dim]")
 
     # Summary
     console.print()
     console.print(
         Panel(
             "[bold]How it works:[/bold]\n\n"
-            "[cyan]System audio[/cyan] → Multi-Output Device → Speakers (you hear it)\n"
-            "                                       → BlackHole (loopback)\n"
-            "                                            ↓\n"
-            "[cyan]Your mic[/cyan] ──────→ Aggregate Device ──→ [bold]Chirp recording[/bold]\n"
-            "[cyan]BlackHole input[/cyan] ─↗\n\n"
-            "[bold]Key point:[/bold] The [yellow]output device (Multi-Output)[/yellow] "
-            "must be set in\n"
-            "[bold]System Settings → Sound → Output[/bold]. "
-            "Chirp cannot change this for you.\n"
-            "The [green]input device (Aggregate)[/green] is set via "
-            "[bold]chirp config --input-device[/bold]\n"
-            "and does NOT need to be changed at the system level.",
+            "[cyan]System audio[/cyan] → Chirp Output → Speakers (you hear it)\n"
+            "                              → BlackHole (loopback)\n"
+            "                                   ↓\n"
+            "                              [bold]Chirp recording[/bold]\n\n"
+            "[bold]Key point:[/bold] The [yellow]output (Chirp Output)[/yellow] "
+            "must be set at the system\n"
+            "level in [bold]System Settings → Sound → Output[/bold]. "
+            "This is the only\n"
+            "system setting you need to change. Chirp handles input automatically.",
             title="Summary",
         )
     )

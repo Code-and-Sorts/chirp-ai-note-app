@@ -53,7 +53,6 @@ class AudioConfig(BaseModel):
     channels: int = 2
     chunk_size: int = 1024
     format: str = "wav"
-    input_device: Optional[str] = None
     vad_enabled: bool = True
     vad_parameters: VadParameters = Field(default_factory=VadParameters)
 

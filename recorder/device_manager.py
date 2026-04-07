@@ -124,14 +124,7 @@ class DeviceManager:
 
         return None
 
-    def get_recommended_device(
-        self, configured_device: Optional[str] = None
-    ) -> Optional[int]:
-        if configured_device:
-            device = self.find_device_by_name(configured_device)
-            if device is not None:
-                return device
-
+    def get_recommended_device(self) -> Optional[int]:
         blackhole_device = self.find_blackhole_device()
         if blackhole_device is not None:
             return blackhole_device
