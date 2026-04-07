@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import click
 import typer
 from rich.console import Console
 from rich.live import Live
@@ -19,12 +20,25 @@ from utils.file_utils import (
     get_transcription_files,
 )
 
+
+class ChirpGroup(click.Group):
+    def format_help(self, ctx, formatter):
+        for param in self.params:
+            if isinstance(param, click.HelpOption):
+                param.help = "Show help for any command"
+        super().format_help(ctx, formatter)
+
+
 app = typer.Typer(
+    cls=ChirpGroup,
     name="chirp",
     help="🐣 Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
     rich_markup_mode="rich",
     add_completion=False,
-    context_settings={"help_option_names": ["-h", "--help"]},
+    context_settings={
+        "help_option_names": ["-h", "--help"],
+        "max_content_width": 120,
+    },
 )
 console = Console()
 
