@@ -78,7 +78,7 @@ chirp process
 
 ```bash
 # Build the search index
-chirp notes index
+chirp index
 
 # Ask a question
 chirp notes ask -q "what was decided about the timeline?"
@@ -116,7 +116,7 @@ chirp status    # view processing stats
 
 **Note generation fails** — Make sure Ollama is running (`ollama serve`) and the model is pulled (`ollama pull llama3.1:8b`).
 
-**Chat/search not working** — Build the index first: `chirp notes index`. Check that you have notes in your output directory.
+**Chat/search not working** — Build the index first: `chirp index`. Check that you have notes in your output directory.
 
 ## Roadmap
 
