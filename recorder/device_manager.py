@@ -1,12 +1,6 @@
-import logging
-import platform
-import shutil
-import subprocess
 from typing import Optional
 
 import pyaudio
-
-logger = logging.getLogger(__name__)
 
 
 class DeviceManager:
@@ -184,45 +178,4 @@ class DeviceManager:
             device_count = self.audio.get_device_count()
             return bool(device_count > 0)
         except Exception:
-            return False
-
-    @staticmethod
-    def _has_switch_audio_source() -> bool:
-        return (
-            platform.system() == "Darwin"
-            and shutil.which("SwitchAudioSource") is not None
-        )
-
-    @staticmethod
-    def get_current_output_device() -> Optional[str]:
-        if platform.system() != "Darwin" or not shutil.which("SwitchAudioSource"):
-            return None
-        try:
-            result = subprocess.run(
-                ["SwitchAudioSource", "-c", "-t", "output"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return result.stdout.strip()
-        except Exception:
-            logger.debug("Failed to get current output device", exc_info=True)
-            return None
-
-    @staticmethod
-    def set_output_device(device_name: str) -> bool:
-        if platform.system() != "Darwin" or not shutil.which("SwitchAudioSource"):
-            return False
-        try:
-            subprocess.run(
-                ["SwitchAudioSource", "-s", device_name, "-t", "output"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return True
-        except Exception:
-            logger.debug(
-                "Failed to set output device to %s", device_name, exc_info=True
-            )
             return False

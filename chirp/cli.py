@@ -193,19 +193,6 @@ def record(
 
     from utils.time_utils import format_duration, get_recording_duration
 
-    previous_output = None
-    output_device = settings.audio.output_device
-    if output_device:
-        previous_output = device_manager.get_current_output_device()
-        if device_manager.set_output_device(output_device):
-            console.print(f"[dim]Switched output to: {output_device}[/dim]")
-        elif previous_output:
-            console.print(
-                "[yellow]Could not switch output device. "
-                "Install SwitchAudioSource: brew install switchaudio-osx[/yellow]"
-            )
-            previous_output = None
-
     try:
         import select
         import sys
@@ -268,10 +255,6 @@ def record(
         console.print(f"[red]❌ Unexpected error: {str(e)}[/red]")
         console.print("[dim]Please report this issue if it persists[/dim]")
         raise typer.Exit(1)
-    finally:
-        if previous_output:
-            if device_manager.set_output_device(previous_output):
-                console.print(f"[dim]Restored output to: {previous_output}[/dim]")
 
 
 @app.command(rich_help_panel=CHAT_PANEL)
@@ -569,11 +552,6 @@ def config(
         "--input-device",
         help="Set input audio device name (e.g. 'Aggregate Device'). Use 'chirp devices' to see available devices.",
     ),
-    output_device: Optional[str] = typer.Option(
-        None,
-        "--output-device",
-        help="Set output audio device for recording (e.g. 'Multi-Output Device'). Auto-switches on record start, restores on stop.",
-    ),
 ):
     """Manage Chirp configuration"""
     settings = get_settings()
@@ -595,7 +573,6 @@ Ollama URL: {settings.models.ollama_url}
 Sample Rate: {settings.audio.sample_rate}
 Channels: {settings.audio.channels}
 Input Device: {settings.audio.input_device or "auto (BlackHole > default)"}
-Output Device: {settings.audio.output_device or "system default"}
 
 [cyan]Monitoring:[/cyan]
 Warning: {settings.monitoring.warning_minutes} minutes
@@ -630,31 +607,6 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         else:
             console.print(
                 f"[red]Device '{input_device}' not found. Use 'chirp devices' to see available devices.[/red]"
-            )
-            raise typer.Exit(1)
-
-    if output_device is not None:
-        from recorder.device_manager import DeviceManager
-
-        device_manager = DeviceManager()
-        found = False
-        for dev in device_manager.list_devices():
-            if output_device.lower() in dev["name"].lower() and dev["max_output_channels"] > 0:
-                found = True
-                break
-
-        if found:
-            settings.audio.output_device = output_device
-            changes_made = True
-            console.print(f"[green]Output device set to: {output_device}[/green]")
-            if not DeviceManager._has_switch_audio_source():
-                console.print(
-                    "[yellow]Note: Install SwitchAudioSource for automatic output switching:[/yellow]"
-                )
-                console.print("[dim]  brew install switchaudio-osx[/dim]")
-        else:
-            console.print(
-                f"[red]Output device '{output_device}' not found. Use 'chirp devices' to see available devices.[/red]"
             )
             raise typer.Exit(1)
 
