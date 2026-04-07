@@ -157,6 +157,30 @@ class TestDeviceManager:
 
             assert result is None
 
+    def test_get_default_output_device_returns_index(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+            device_manager.audio = Mock()
+            device_manager.audio.get_default_output_device_info.return_value = {
+                "index": 7
+            }
+
+            result = device_manager.get_default_output_device()
+
+            assert result == 7
+
+    def test_get_default_output_device_returns_none_on_failure(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+            device_manager.audio = Mock()
+            device_manager.audio.get_default_output_device_info.side_effect = Exception(
+                "No default device"
+            )
+
+            result = device_manager.get_default_output_device()
+
+            assert result is None
+
     def test_get_device_info_returns_device_info(self):
         with patch("recorder.device_manager.pyaudio.PyAudio"):
             device_manager = DeviceManager()

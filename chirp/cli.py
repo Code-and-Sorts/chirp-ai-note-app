@@ -601,6 +601,8 @@ def devices():
     devices_info = device_manager.list_devices()
 
     selected_index = device_manager.get_recommended_device()
+    default_input_index = device_manager.get_default_input_device()
+    default_output_index = device_manager.get_default_output_device()
 
     input_devices = [d for d in devices_info if d["max_input_channels"] > 0]
     output_devices = [d for d in devices_info if d["max_output_channels"] > 0]
@@ -614,12 +616,22 @@ def devices():
 
     for device in input_devices:
         is_selected = device["index"] == selected_index
+        is_system_default = device["index"] == default_input_index
         marker = "▶" if is_selected else ""
-        name_style = "bold green" if is_selected else ""
+        name = device["name"]
+        if is_system_default:
+            name_style = "bold green" if is_selected else ""
+            suffix = " (system default)" if not is_selected else " (system default, chirp)"
+        elif is_selected:
+            name_style = "bold green"
+            suffix = " (chirp)"
+        else:
+            name_style = ""
+            suffix = ""
         input_table.add_row(
             marker,
             str(device["index"]),
-            Text(device["name"], style=name_style),
+            Text(name + suffix, style=name_style),
             str(device["max_input_channels"]),
             f"{device['default_sample_rate']:.0f} Hz",
         )
@@ -628,15 +640,21 @@ def devices():
     console.print()
 
     output_table = Table(title="Output Devices (speakers & routing)")
+    output_table.add_column("", style="bold")
     output_table.add_column("ID", style="cyan")
     output_table.add_column("Name")
     output_table.add_column("Output Ch", style="yellow")
     output_table.add_column("Default Rate", style="blue")
 
     for device in output_devices:
+        is_system_default = device["index"] == default_output_index
+        marker = "◀" if is_system_default else ""
+        name_style = "bold blue" if is_system_default else ""
+        suffix = " (system default)" if is_system_default else ""
         output_table.add_row(
+            marker,
             str(device["index"]),
-            device["name"],
+            Text(device["name"] + suffix, style=name_style),
             str(device["max_output_channels"]),
             f"{device['default_sample_rate']:.0f} Hz",
         )

@@ -73,6 +73,17 @@ class DeviceManager:
         except Exception:
             return None
 
+    def get_default_output_device(self) -> Optional[int]:
+        if not self.audio:
+            return None
+
+        try:
+            default_device = self.audio.get_default_output_device_info()
+            device_index = default_device.get("index")
+            return int(device_index) if device_index is not None else None
+        except Exception:
+            return None
+
     def get_device_info(self, device_index: int) -> Optional[dict]:
         if not self.audio:
             return None
