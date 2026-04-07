@@ -24,6 +24,7 @@ app = typer.Typer(
     help="🐣 Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
     rich_markup_mode="rich",
     add_completion=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 console = Console()
 
