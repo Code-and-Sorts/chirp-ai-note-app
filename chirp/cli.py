@@ -172,16 +172,6 @@ def record(
 
     recorder = AudioRecorder(settings, device_manager)
 
-    device_index = device_manager.get_recommended_device()
-    if device_index is not None:
-        device_info = device_manager.get_device_info(device_index)
-        if device_info:
-            console.print(
-                f"[dim]Using device: {device_info.get('name')} "
-                f"(ID: {device_index}, "
-                f"Input channels: {device_info.get('maxInputChannels')})[/dim]"
-            )
-
     if title:
         console.print(f"[cyan]📝 Title: {title}[/cyan]")
     if duration:
@@ -190,21 +180,27 @@ def record(
     from utils.time_utils import format_duration, get_recording_duration
 
     try:
-        import select
         import sys
-        import termios
-        import tty
 
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        tty.setcbreak(fd)
+        use_cbreak = sys.stdin.isatty() and hasattr(sys.stdin, "fileno")
+
+        old_settings = None
+        if use_cbreak:
+            import select
+            import termios
+            import tty
+
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
 
         def _check_key_and_update(level: float):
-            if select.select([sys.stdin], [], [], 0)[0]:
-                ch = sys.stdin.read(1)
-                if ch == "\x1b" or ch == "\x03":
-                    recorder.stop_recording()
-                    return
+            if use_cbreak:
+                if select.select([sys.stdin], [], [], 0)[0]:
+                    ch = sys.stdin.read(1)
+                    if ch == "\x1b" or ch == "\x03":
+                        recorder.stop_recording()
+                        return
             live.update(_render_audio_meter(level))
 
         try:
@@ -217,7 +213,10 @@ def record(
                     level_callback=_check_key_and_update,
                 )
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            if old_settings is not None:
+                import termios
+
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
         if recorder.start_time:
 
@@ -715,8 +714,8 @@ def setup():
     console.print()
     console.print(
         "  [yellow]This is the only system-level change needed.[/yellow]\n"
-        "  Chirp automatically detects BlackHole as its input — you do NOT\n"
-        "  need to change the system input device."
+        "  Chirp uses your system default input device for recording.\n"
+        "  You do NOT need to change the system input device."
     )
 
     # Step 4: Done
@@ -726,8 +725,8 @@ def setup():
     console.print("  [bold]chirp record[/bold]")
     console.print()
     console.print(
-        "  Chirp will automatically use BlackHole to capture system audio.\n"
-        "  Use 'chirp devices' to verify BlackHole is detected (marked with ▶)."
+        "  Chirp records from your system default input device.\n"
+        "  Use 'chirp devices' to verify your setup (marked with ▶ and ◀)."
     )
 
     # Summary
@@ -743,7 +742,7 @@ def setup():
             "must be set at the system\n"
             "level in [bold]System Settings → Sound → Output[/bold]. "
             "This is the only\n"
-            "system setting you need to change. Chirp handles input automatically.",
+            "system setting you need to change.",
             title="Summary",
         )
     )

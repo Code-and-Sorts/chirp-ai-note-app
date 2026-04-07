@@ -32,6 +32,8 @@ class AudioRecorder:
         self.start_time: Optional[datetime] = None
         self.title: Optional[str] = None
         self.current_level: float = 0.0
+        self._record_channels: int = 1
+        self._output_channels: int = 1
 
     def __del__(self):
         if self.audio:
@@ -130,27 +132,23 @@ class AudioRecorder:
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
-            if in_data:
-                self.frames.append(in_data)
-            else:
+            if not in_data:
                 self.current_level = 0.0
                 return (None, pyaudio.paContinue)
 
             try:
-                if len(in_data) < 2:
+                sanitized = in_data
+                if len(sanitized) % 2 != 0:
+                    sanitized = sanitized[:-1]
+
+                if len(sanitized) < 2:
                     self.current_level = 0.0
                     return (None, pyaudio.paContinue)
 
-                level_data = in_data
-                if len(level_data) % 2 != 0:
-                    level_data = level_data[:-1]
-
-                if len(level_data) < 2:
-                    self.current_level = 0.0
-                    return (None, pyaudio.paContinue)
+                self.frames.append(sanitized)
 
                 samples = array.array("h")
-                samples.frombytes(level_data)
+                samples.frombytes(sanitized)
                 rms = math.sqrt(sum(s * s for s in samples) / len(samples))
                 self.current_level = min(rms / 32768.0, 1.0)
             except Exception:
@@ -229,7 +227,7 @@ class AudioRecorder:
                 for in_ch in range(out_ch, input_channels, output_channels):
                     mixed += samples[offset + in_ch]
                     sources += 1
-                mixed = max(-32768, min(32767, mixed // sources))
+                mixed = max(-32768, min(32767, int(mixed / sources)))
                 output.append(mixed)
 
         return output.tobytes()
