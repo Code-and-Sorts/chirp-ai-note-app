@@ -4,12 +4,15 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.spinner import Spinner
 from rich.table import Table
+from rich.text import Text
 
 from chirp.exceptions import *
-from config.settings import get_settings
+from config.settings import ChirpSettings, get_settings
 from utils.file_utils import (
     get_audio_files,
     get_notes_files,
@@ -18,8 +21,13 @@ from utils.file_utils import (
 
 app = typer.Typer(
     name="chirp",
-    help="🐣 Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
+    help="Chirp - Meeting Recorder CLI that transcribes and generates AI notes",
     rich_markup_mode="rich",
+    add_completion=False,
+    context_settings={
+        "help_option_names": ["-h", "--help"],
+        "max_content_width": 120,
+    },
 )
 console = Console()
 
@@ -111,6 +119,35 @@ def _test_chroma_db(settings):
         return False
 
 
+METER_WIDTH = 20
+
+recording_spinner = Spinner("dots", style="bold green")
+
+
+def _render_audio_meter(level: float) -> Table:
+    filled = int(level * METER_WIDTH)
+    bar = Text()
+    for i in range(METER_WIDTH):
+        if i < filled:
+            if i < METER_WIDTH * 0.6:
+                bar.append("━", style="green")
+            elif i < METER_WIDTH * 0.85:
+                bar.append("━", style="yellow")
+            else:
+                bar.append("━", style="red")
+        else:
+            bar.append("━", style="dim")
+
+    label = Text()
+    label.append(" Recording  ", style="bold green")
+
+    suffix = Text("  (ESC or Ctrl+C to stop)", style="dim")
+
+    row = Table.grid(padding=0)
+    row.add_row(recording_spinner, label, bar, suffix)
+    return row
+
+
 @app.command(rich_help_panel=RECORDING_PANEL)
 def record(
     duration: Optional[int] = typer.Option(
@@ -134,7 +171,7 @@ def record(
         console.print(
             "[red]❌ BlackHole not detected. Please install BlackHole audio driver.[/red]"
         )
-        console.print("Download from: https://existential.audio/blackhole/")
+        console.print("Run 'chirp setup' for installation and configuration guide.")
         raise typer.Exit(1)
 
     recorder = AudioRecorder(settings, device_manager)
@@ -144,12 +181,48 @@ def record(
     if duration:
         console.print(f"[cyan]⏱️ Planned duration: {duration} minutes[/cyan]")
 
+    from utils.time_utils import format_duration, get_recording_duration
+
     try:
-        with console.status("[bold green]🎙️ Recording in progress..."):
-            filename = recorder.start_recording(duration_minutes=duration, title=title)
+        import sys
+
+        use_cbreak = sys.stdin.isatty() and hasattr(sys.stdin, "fileno")
+
+        old_settings = None
+        if use_cbreak:
+            import select
+            import termios
+            import tty
+
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+
+        def _check_key_and_update(level: float):
+            if use_cbreak:
+                if select.select([sys.stdin], [], [], 0)[0]:
+                    ch = sys.stdin.read(1)
+                    if ch == "\x1b" or ch == "\x03":
+                        recorder.stop_recording()
+                        return
+            live.update(_render_audio_meter(level))
+
+        try:
+            with Live(
+                _render_audio_meter(0.0), console=console, refresh_per_second=10
+            ) as live:
+                filename = recorder.start_recording(
+                    duration_minutes=duration,
+                    title=title,
+                    level_callback=_check_key_and_update,
+                )
+        finally:
+            if old_settings is not None:
+                import termios
+
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
         if recorder.start_time:
-            from utils.time_utils import format_duration, get_recording_duration
 
             actual_duration = get_recording_duration(recorder.start_time)
             duration_str = format_duration(actual_duration)
@@ -517,7 +590,7 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         changes_made = True
 
     if changes_made:
-        settings.save_to_file(Path("config/config.yaml"))
+        settings.save_to_file(ChirpSettings.get_config_path())
         settings.ensure_directories_exist()
         console.print("[green]✅ Configuration updated[/green]")
 
@@ -530,27 +603,162 @@ def devices():
     device_manager = DeviceManager()
     devices_info = device_manager.list_devices()
 
-    table = Table(title="Available Audio Devices")
-    table.add_column("ID", style="cyan")
-    table.add_column("Name", style="green")
-    table.add_column("Channels", style="yellow")
-    table.add_column("Default Rate", style="blue")
+    default_input_index = device_manager.get_default_input_device()
+    default_output_index = device_manager.get_default_output_device()
 
-    for device in devices_info:
-        table.add_row(
+    input_devices = [d for d in devices_info if d["max_input_channels"] > 0]
+    output_devices = [d for d in devices_info if d["max_output_channels"] > 0]
+
+    input_table = Table(title="Input Devices (microphones & capture)")
+    input_table.add_column("", style="bold")
+    input_table.add_column("ID", style="cyan")
+    input_table.add_column("Name")
+    input_table.add_column("Input Ch", style="yellow")
+    input_table.add_column("Default Rate", style="blue")
+
+    for device in input_devices:
+        is_default = device["index"] == default_input_index
+        marker = "▶" if is_default else ""
+        name_style = "bold green" if is_default else ""
+        suffix = " (system default)" if is_default else ""
+        input_table.add_row(
+            marker,
             str(device["index"]),
-            device["name"],
-            f"In: {device['max_input_channels']}, Out: {device['max_output_channels']}",
+            Text(device["name"] + suffix, style=name_style),
+            str(device["max_input_channels"]),
             f"{device['default_sample_rate']:.0f} Hz",
         )
 
-    console.print(table)
+    console.print(input_table)
+    console.print()
 
+    output_table = Table(title="Output Devices (speakers & routing)")
+    output_table.add_column("", style="bold")
+    output_table.add_column("ID", style="cyan")
+    output_table.add_column("Name")
+    output_table.add_column("Output Ch", style="yellow")
+    output_table.add_column("Default Rate", style="blue")
+
+    for device in output_devices:
+        is_system_default = device["index"] == default_output_index
+        marker = "◀" if is_system_default else ""
+        name_style = "bold blue" if is_system_default else ""
+        suffix = " (system default)" if is_system_default else ""
+        output_table.add_row(
+            marker,
+            str(device["index"]),
+            Text(device["name"] + suffix, style=name_style),
+            str(device["max_output_channels"]),
+            f"{device['default_sample_rate']:.0f} Hz",
+        )
+
+    console.print(output_table)
+
+    console.print()
     if device_manager.check_blackhole_available():
         console.print("[green]✅ BlackHole detected and ready[/green]")
     else:
         console.print("[red]❌ BlackHole not found[/red]")
         console.print("Install from: https://existential.audio/blackhole/")
+    console.print("[dim]Run 'chirp setup' for audio configuration guide[/dim]")
+
+
+@app.command(rich_help_panel=SETUP_PANEL)
+def setup():
+    """Step-by-step guide to configure audio for meeting recording"""
+    from recorder.device_manager import DeviceManager
+
+    device_manager = DeviceManager()
+
+    console.print(
+        Panel(
+            "[bold]Audio Setup Guide[/bold]\n\n"
+            "Chirp records system audio (e.g. Teams or Zoom calls) using\n"
+            "BlackHole and a Multi-Output Device on macOS.",
+            title="🐣 Chirp Setup",
+        )
+    )
+
+    # Step 1: BlackHole
+    console.print()
+    has_blackhole = device_manager.check_blackhole_available()
+    if has_blackhole:
+        console.print("[green]Step 1: BlackHole ✅ Installed[/green]")
+    else:
+        console.print("[red]Step 1: Install BlackHole[/red]")
+        console.print("  Download from: https://existential.audio/blackhole/")
+        console.print("  BlackHole is a virtual audio driver that captures system audio.")
+        console.print()
+        console.print("[yellow]Install BlackHole and re-run 'chirp setup' to continue.[/yellow]")
+        return
+
+    # Step 2: Multi-Output Device
+    console.print()
+    console.print("[bold]Step 2: Create a Multi-Output Device (\"Chirp Output\")[/bold]")
+    console.print()
+    console.print(
+        "  This routes system audio to both your speakers AND BlackHole,\n"
+        "  so you can still hear audio while Chirp records it."
+    )
+    console.print()
+    console.print("  1. Open [bold]Audio MIDI Setup[/bold] (/Applications/Utilities/)")
+    console.print("  2. Click [bold]+[/bold] at bottom left → Create Multi-Output Device")
+    console.print("  3. Check your [bold]speakers/headphones[/bold] (so you can still hear)")
+    console.print("  4. Check [bold]BlackHole 2ch[/bold]")
+    console.print("  5. Rename it to [bold]Chirp Output[/bold] (double-click the name)")
+
+    # Step 3: Aggregate Device
+    console.print()
+    console.print("[bold]Step 3: Create an Aggregate Device (\"Chirp Input\")[/bold]")
+    console.print()
+    console.print(
+        "  This combines your microphone AND BlackHole into a single input,\n"
+        "  so Chirp captures both your voice and system audio (e.g. remote\n"
+        "  participants on a call)."
+    )
+    console.print()
+    console.print("  1. In [bold]Audio MIDI Setup[/bold], click [bold]+[/bold] → Create Aggregate Device")
+    console.print("  2. Check [bold]BlackHole 2ch[/bold]")
+    console.print("  3. Check your [bold]microphone[/bold] (e.g. Built-in, USB mic, etc.)")
+    console.print("  4. Rename it to [bold]Chirp Input[/bold] (double-click the name)")
+
+    # Step 4: Set system audio
+    console.print()
+    console.print("[bold]Step 4: Set your system audio[/bold]")
+    console.print()
+    console.print(
+        "  Go to [bold]System Settings → Sound[/bold]:\n"
+        "  • [bold]Output[/bold] → select [bold]Chirp Output[/bold]\n"
+        "  • [bold]Input[/bold]  → select [bold]Chirp Input[/bold]"
+    )
+
+    # Step 5: Done
+    console.print()
+    console.print("[bold]Step 5: Record![/bold]")
+    console.print()
+    console.print("  [bold]chirp record[/bold]")
+    console.print()
+    console.print(
+        "  Chirp records from your system default input device.\n"
+        "  Use 'chirp devices' to verify your setup (marked with ▶ and ◀)."
+    )
+
+    # Summary
+    console.print()
+    console.print(
+        Panel(
+            "[bold]How it works:[/bold]\n\n"
+            "[cyan]Your voice[/cyan]    → Chirp Input (aggregate) → [bold]Chirp recording[/bold]\n"
+            "[cyan]System audio[/cyan] → Chirp Output → Speakers (you hear it)\n"
+            "                              → BlackHole → Chirp Input → [bold]Chirp recording[/bold]\n\n"
+            "[bold]System settings:[/bold]\n"
+            "  • [yellow]Output[/yellow] → [bold]Chirp Output[/bold] "
+            "(Multi-Output Device)\n"
+            "  • [yellow]Input[/yellow]  → [bold]Chirp Input[/bold] "
+            "(Aggregate Device)",
+            title="Summary",
+        )
+    )
 
 
 @app.command(rich_help_panel=SETUP_PANEL)

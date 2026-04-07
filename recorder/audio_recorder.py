@@ -1,9 +1,12 @@
+import array
+import logging
+import math
 import threading
 import wave
 from datetime import datetime
 from pathlib import Path
 from threading import Timer
-from typing import Optional
+from typing import Callable, Optional
 
 import pyaudio
 
@@ -12,6 +15,8 @@ from recorder.device_manager import DeviceManager
 from recorder.meeting_monitor import MeetingMonitor
 from utils.file_utils import generate_audio_filename
 from utils.time_utils import get_recording_duration
+
+logger = logging.getLogger(__name__)
 
 
 class AudioRecorder:
@@ -26,13 +31,19 @@ class AudioRecorder:
         self.monitor: Optional[MeetingMonitor] = None
         self.start_time: Optional[datetime] = None
         self.title: Optional[str] = None
+        self.current_level: float = 0.0
+        self._record_channels: int = 1
+        self._output_channels: int = 1
 
     def __del__(self):
         if self.audio:
             self.audio.terminate()
 
     def start_recording(
-        self, duration_minutes: Optional[int] = None, title: Optional[str] = None
+        self,
+        duration_minutes: Optional[int] = None,
+        title: Optional[str] = None,
+        level_callback: Optional[Callable[[float], None]] = None,
     ) -> str:
         if self.is_recording:
             raise RuntimeError("Recording already in progress")
@@ -50,13 +61,14 @@ class AudioRecorder:
         filename = generate_audio_filename(title, self.settings.audio.format)
         file_path = self.settings.directories.raw_audio / filename
 
-        max_channels = min(
-            self.settings.audio.channels, device_info["maxInputChannels"]
-        )
+        record_channels = int(device_info["maxInputChannels"])
+        output_channels = min(self.settings.audio.channels, record_channels)
         sample_rate = min(
             self.settings.audio.sample_rate, int(device_info["defaultSampleRate"])
         )
 
+        self._record_channels = record_channels
+        self._output_channels = output_channels
         self.frames = []
         self.is_recording = True
         self.start_time = datetime.now()
@@ -64,7 +76,7 @@ class AudioRecorder:
 
         self.stream = self.audio.open(
             format=pyaudio.paInt16,
-            channels=max_channels,
+            channels=record_channels,
             rate=sample_rate,
             input=True,
             input_device_index=device_index,
@@ -94,12 +106,24 @@ class AudioRecorder:
         try:
             while self.is_recording:
                 threading.Event().wait(0.1)
+                if level_callback is not None:
+                    try:
+                        level_callback(self.current_level)
+                    except Exception:
+                        logger.debug("Level callback failed, disabling", exc_info=True)
+                        level_callback = None
         except KeyboardInterrupt:
             pass
         finally:
             self._cleanup_recording()
 
-        self._save_recording(file_path, max_channels, sample_rate, self.title)
+        self._save_recording(
+            file_path,
+            self._record_channels,
+            self._output_channels,
+            sample_rate,
+            self.title,
+        )
 
         return filename
 
@@ -108,7 +132,27 @@ class AudioRecorder:
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
-            self.frames.append(in_data)
+            if not in_data:
+                self.current_level = 0.0
+                return (None, pyaudio.paContinue)
+
+            try:
+                sanitized = in_data
+                if len(sanitized) % 2 != 0:
+                    sanitized = sanitized[:-1]
+
+                if len(sanitized) < 2:
+                    self.current_level = 0.0
+                    return (None, pyaudio.paContinue)
+
+                self.frames.append(sanitized)
+
+                samples = array.array("h")
+                samples.frombytes(sanitized)
+                rms = math.sqrt(sum(s * s for s in samples) / len(samples))
+                self.current_level = min(rms / 32768.0, 1.0)
+            except Exception:
+                self.current_level = 0.0
         return (None, pyaudio.paContinue)
 
     def _stop_recording_timer(self):
@@ -131,18 +175,26 @@ class AudioRecorder:
     def _save_recording(
         self,
         file_path: Path,
-        channels: int,
+        record_channels: int,
+        output_channels: int,
         sample_rate: int,
         title: Optional[str] = None,
     ):
         if not self.frames:
             raise RuntimeError("No audio data recorded")
 
+        raw_data = b"".join(self.frames)
+
+        if record_channels > output_channels:
+            raw_data = self._mixdown_channels(
+                raw_data, record_channels, output_channels
+            )
+
         with wave.open(str(file_path), "wb") as wave_file:
-            wave_file.setnchannels(channels)
+            wave_file.setnchannels(output_channels)
             wave_file.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
             wave_file.setframerate(sample_rate)
-            wave_file.writeframes(b"".join(self.frames))
+            wave_file.writeframes(raw_data)
 
         if title:
             import json
@@ -151,11 +203,34 @@ class AudioRecorder:
             metadata = {
                 "title": title,
                 "recorded_at": self.start_time.isoformat() if self.start_time else None,
-                "channels": channels,
+                "channels": output_channels,
                 "sample_rate": sample_rate,
             }
             with open(metadata_file, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
+
+    @staticmethod
+    def _mixdown_channels(
+        raw_data: bytes, input_channels: int, output_channels: int
+    ) -> bytes:
+        samples = array.array("h")
+        samples.frombytes(raw_data)
+
+        total_frames = len(samples) // input_channels
+        output = array.array("h")
+
+        for frame in range(total_frames):
+            offset = frame * input_channels
+            for out_ch in range(output_channels):
+                mixed = 0
+                sources = 0
+                for in_ch in range(out_ch, input_channels, output_channels):
+                    mixed += samples[offset + in_ch]
+                    sources += 1
+                mixed = max(-32768, min(32767, int(mixed / sources)))
+                output.append(mixed)
+
+        return output.tobytes()
 
     def _on_warning(self, elapsed_minutes: int):
         from utils.popup_manager import PopupManager

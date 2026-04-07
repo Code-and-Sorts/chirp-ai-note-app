@@ -73,6 +73,17 @@ class DeviceManager:
         except Exception:
             return None
 
+    def get_default_output_device(self) -> Optional[int]:
+        if not self.audio:
+            return None
+
+        try:
+            default_device = self.audio.get_default_output_device_info()
+            device_index = default_device.get("index")
+            return int(device_index) if device_index is not None else None
+        except Exception:
+            return None
+
     def get_device_info(self, device_index: int) -> Optional[dict]:
         if not self.audio:
             return None
@@ -107,11 +118,24 @@ class DeviceManager:
         except Exception:
             return False
 
-    def get_recommended_device(self) -> Optional[int]:
-        blackhole_device = self.find_blackhole_device()
-        if blackhole_device is not None:
-            return blackhole_device
+    def find_device_by_name(self, name: str) -> Optional[int]:
+        devices = self.list_devices()
+        search_name = name.lower()
 
+        for device in devices:
+            if device["name"].lower() == search_name and device["max_input_channels"] > 0:
+                return int(device["index"])
+
+        for device in devices:
+            if (
+                search_name in device["name"].lower()
+                and device["max_input_channels"] > 0
+            ):
+                return int(device["index"])
+
+        return None
+
+    def get_recommended_device(self) -> Optional[int]:
         return self.get_default_input_device()
 
     def get_device_sample_rates(self, device_index: int) -> list[int]:

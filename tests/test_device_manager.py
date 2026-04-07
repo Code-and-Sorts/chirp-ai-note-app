@@ -157,6 +157,30 @@ class TestDeviceManager:
 
             assert result is None
 
+    def test_get_default_output_device_returns_index(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+            device_manager.audio = Mock()
+            device_manager.audio.get_default_output_device_info.return_value = {
+                "index": 7
+            }
+
+            result = device_manager.get_default_output_device()
+
+            assert result == 7
+
+    def test_get_default_output_device_returns_none_on_failure(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+            device_manager.audio = Mock()
+            device_manager.audio.get_default_output_device_info.side_effect = Exception(
+                "No default device"
+            )
+
+            result = device_manager.get_default_output_device()
+
+            assert result is None
+
     def test_get_device_info_returns_device_info(self):
         with patch("recorder.device_manager.pyaudio.PyAudio"):
             device_manager = DeviceManager()
@@ -236,37 +260,53 @@ class TestDeviceManager:
 
                 assert result is False
 
-    def test_get_recommended_device_prefers_blackhole(self):
+    def test_find_device_by_name_exact_match(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            with patch.object(device_manager, "list_devices") as mock_list:
+                mock_list.return_value = [
+                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
+                    {"index": 1, "name": "Aggregate Device", "max_input_channels": 2, "max_output_channels": 0},
+                ]
+
+                result = device_manager.find_device_by_name("Aggregate Device")
+                assert result == 1
+
+    def test_find_device_by_name_partial_match(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            with patch.object(device_manager, "list_devices") as mock_list:
+                mock_list.return_value = [
+                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
+                    {"index": 1, "name": "My Aggregate Device", "max_input_channels": 2, "max_output_channels": 0},
+                ]
+
+                result = device_manager.find_device_by_name("Aggregate")
+                assert result == 1
+
+    def test_find_device_by_name_not_found(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            with patch.object(device_manager, "list_devices") as mock_list:
+                mock_list.return_value = [
+                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
+                ]
+
+                result = device_manager.find_device_by_name("Aggregate Device")
+                assert result is None
+
+    def test_get_recommended_device_returns_system_default(self):
         with patch("recorder.device_manager.pyaudio.PyAudio"):
             device_manager = DeviceManager()
 
             with patch.object(
-                device_manager, "find_blackhole_device"
-            ) as mock_blackhole:
-                with patch.object(
-                    device_manager, "get_default_input_device"
-                ) as mock_default:
-                    mock_blackhole.return_value = 5
-                    mock_default.return_value = 3
+                device_manager, "get_default_input_device"
+            ) as mock_default:
+                mock_default.return_value = 3
 
-                    result = device_manager.get_recommended_device()
+                result = device_manager.get_recommended_device()
 
-                    assert result == 5
-                    mock_default.assert_not_called()
-
-    def test_get_recommended_device_falls_back_to_default(self):
-        with patch("recorder.device_manager.pyaudio.PyAudio"):
-            device_manager = DeviceManager()
-
-            with patch.object(
-                device_manager, "find_blackhole_device"
-            ) as mock_blackhole:
-                with patch.object(
-                    device_manager, "get_default_input_device"
-                ) as mock_default:
-                    mock_blackhole.return_value = None
-                    mock_default.return_value = 3
-
-                    result = device_manager.get_recommended_device()
-
-                    assert result == 3
+                assert result == 3
