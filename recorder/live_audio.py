@@ -193,7 +193,7 @@ class LiveAudioStream:
 
         with wave.open(str(file_path), "wb") as wave_file:
             wave_file.setnchannels(self.channels)
-            wave_file.setsampwidth(self._audio.get_sample_size(pyaudio.paInt16))
+            wave_file.setsampwidth(2)
             wave_file.setframerate(self._sample_rate)
             wave_file.writeframes(b"".join(self._frames))
 
@@ -201,7 +201,7 @@ class LiveAudioStream:
             debug_chunk_path = self.debug_dir / f"{file_path.stem}_mono.wav"
             with wave.open(str(debug_chunk_path), "wb") as debug_wave:
                 debug_wave.setnchannels(1)
-                debug_wave.setsampwidth(self._audio.get_sample_size(pyaudio.paInt16))
+                debug_wave.setsampwidth(2)
                 debug_wave.setframerate(self._sample_rate)
                 debug_wave.writeframes(b"".join(self._debug_frames))
 

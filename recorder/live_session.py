@@ -132,7 +132,7 @@ class LiveTranscriptionSession:
         except KeyboardInterrupt:
             self.stop_event.set()
         finally:
-            self.stop()
+            self._stop_pipeline()
             dashboard_thread.join(timeout=1)
 
         if not self.audio_stream:
@@ -141,6 +141,7 @@ class LiveTranscriptionSession:
         filename = generate_audio_filename(self.title, self.settings.audio.format)
         audio_path = self.settings.directories.raw_audio / filename
         self.audio_stream.save_recording(audio_path, title=self.title)
+        self.audio_stream.close()
 
         total_words = 0
         transcript_path = None
@@ -159,15 +160,19 @@ class LiveTranscriptionSession:
             total_words=total_words,
         )
 
-    def stop(self):
+    def _stop_pipeline(self):
         self.stop_event.set()
         if self.audio_stream:
             self.audio_stream.stop()
-            self.audio_stream.close()
         if self.vad_chunker:
             self.vad_chunker.join(timeout=1)
         if self.transcriber:
             self.transcriber.join(timeout=1)
+
+    def stop(self):
+        self._stop_pipeline()
+        if self.audio_stream:
+            self.audio_stream.close()
 
     def _wait_for_completion(self):
         if self.duration_minutes is None:
