@@ -17,10 +17,10 @@ class DummyVAD:
         self._decisions = decisions
         self._index = 0
 
-    def is_speech(self, _data, _sample_rate):
+    def __call__(self, _data, _sample_rate):
         decision = self._decisions[min(self._index, len(self._decisions) - 1)]
         self._index += 1
-        return decision
+        return 0.9 if decision else 0.1
 
 
 def _make_frame(timestamp: float, level: float = 0.1) -> AudioFrame:

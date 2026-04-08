@@ -24,8 +24,7 @@ dependencies = [
     "platformdirs>=4.0.0",
     "prompt-toolkit>=3.0.52",
     "numpy>=1.24.0",
-    "webrtcvad>=2.0.10",
-    "setuptools>=68.0.0,<81",
+    "silero-vad>=5.1",
 ]
 
 [project.scripts]

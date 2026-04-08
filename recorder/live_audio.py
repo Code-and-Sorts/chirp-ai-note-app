@@ -23,7 +23,7 @@ class LiveAudioStream:
         frame_queue: queue.Queue[AudioFrame],
         stop_event: threading.Event,
         level_queue: queue.Queue[float],
-        frame_ms: int = 20,
+        frame_ms: int = 32,
         channels: int = 2,
         debug_dir: Path | None = None,
     ):

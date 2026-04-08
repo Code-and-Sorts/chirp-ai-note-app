@@ -56,7 +56,6 @@ def main():
         stop_event=stop_event,
         sample_rate=audio_stream.sample_rate,
         energy_threshold=0.005,
-        aggressiveness=1,
         event_queue=event_queue,
     )
     vad_chunker.start()

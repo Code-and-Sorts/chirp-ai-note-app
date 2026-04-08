@@ -7,6 +7,9 @@ from typing import Callable
 
 from recorder.live_types import AudioFrame, SpeechChunk
 
+SILERO_FRAME_SAMPLES_16K = 512
+SILERO_FRAME_MS = 32
+
 
 class VADChunker(threading.Thread):
     def __init__(
@@ -15,9 +18,9 @@ class VADChunker(threading.Thread):
         chunk_queue: queue.Queue[SpeechChunk],
         stop_event: threading.Event,
         sample_rate: int,
-        frame_ms: int = 20,
+        frame_ms: int = SILERO_FRAME_MS,
         padding_ms: int = 300,
-        aggressiveness: int = 2,
+        speech_threshold: float = 0.5,
         vad_factory: Callable | None = None,
         energy_threshold: float = 0.01,
         event_queue: queue.Queue | None = None,
@@ -32,26 +35,11 @@ class VADChunker(threading.Thread):
         self.sample_rate = sample_rate
         self.frame_ms = frame_ms
         self.padding_ms = padding_ms
-        self.aggressiveness = max(0, min(3, aggressiveness))
+        self.speech_threshold = speech_threshold
         if vad_factory:
             self.vad = vad_factory()
         else:
-            try:
-                import warnings
-
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        message="pkg_resources is deprecated",
-                        category=UserWarning,
-                    )
-                    import webrtcvad
-            except ImportError:
-                raise ImportError(
-                    "webrtcvad requires 'setuptools<81' for pkg_resources. "
-                    "Run: pip install 'setuptools>=68,<81'"
-                )
-            self.vad = webrtcvad.Vad(self.aggressiveness)
+            self.vad = _load_silero_model()
         self.energy_threshold = energy_threshold
         self.event_queue = event_queue
         self.max_chunk_seconds = max_chunk_seconds
@@ -100,12 +88,9 @@ class VADChunker(threading.Thread):
         if frame.level < self.energy_threshold:
             return False
 
-        expected_bytes = int(self.sample_rate * (self.frame_ms / 1000.0)) * 2
-        if len(frame.data) != expected_bytes:
-            return False
-
         try:
-            return bool(self.vad.is_speech(frame.data, self.sample_rate))
+            result = self.vad(frame.data, self.sample_rate)
+            return float(result) >= self.speech_threshold
         except Exception:
             return False
 
@@ -178,3 +163,23 @@ class VADChunker(threading.Thread):
             self.event_queue.put_nowait(event)
         except queue.Full:
             pass
+
+
+class _SileroVADWrapper:
+    def __init__(self):
+        import torch
+        from silero_vad import load_silero_vad
+
+        self._model = load_silero_vad()
+        self._torch = torch
+
+    def __call__(self, pcm_bytes: bytes, sample_rate: int) -> float:
+        import numpy as np
+
+        pcm = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        tensor = self._torch.from_numpy(pcm)
+        return float(self._model(tensor, sample_rate))
+
+
+def _load_silero_model():
+    return _SileroVADWrapper()

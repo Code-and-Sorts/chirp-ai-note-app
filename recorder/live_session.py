@@ -99,7 +99,6 @@ class LiveTranscriptionSession:
                 stop_event=self.stop_event,
                 sample_rate=self.audio_stream.sample_rate,
                 energy_threshold=0.005,
-                aggressiveness=1,
                 event_queue=self.event_queue,
                 max_chunk_seconds=15.0,
             )
