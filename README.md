@@ -31,9 +31,6 @@ Chirp captures system audio via BlackHole, transcribes with faster-whisper, and 
 
 ```bash
 pip install chirp-notes-ai
-
-# With live transcription support (includes silero-vad + torch)
-pip install 'chirp-notes-ai[live]'
 ```
 
 ## Setup

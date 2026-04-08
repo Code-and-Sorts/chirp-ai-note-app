@@ -291,6 +291,9 @@ def _run_live_transcription(
 
     try:
         result: LiveSessionResult = session.run()
+    except ImportError as e:
+        console.print(f"[red]❌ {e}[/red]")
+        raise typer.Exit(1)
     except RecordingError as e:
         console.print(f"[red]❌ Live recording error: {str(e)}[/red]")
         raise typer.Exit(1)
