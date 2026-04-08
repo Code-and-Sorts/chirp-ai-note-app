@@ -182,4 +182,10 @@ class _SileroVADWrapper:
 
 
 def _load_silero_model():
-    return _SileroVADWrapper()
+    try:
+        return _SileroVADWrapper()
+    except ImportError:
+        raise ImportError(
+            "Live transcription requires silero-vad. "
+            "Install it with: pip install 'chirp-notes-ai[live]'"
+        )

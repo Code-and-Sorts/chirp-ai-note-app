@@ -24,7 +24,6 @@ dependencies = [
     "platformdirs>=4.0.0",
     "prompt-toolkit>=3.0.52",
     "numpy>=1.24.0",
-    "silero-vad>=5.1",
 ]
 
 [project.scripts]
@@ -34,6 +33,9 @@ chirp = "chirp.cli:app"
 packages = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [project.optional-dependencies]
+live = [
+    "silero-vad>=5.1",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",

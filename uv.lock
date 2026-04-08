@@ -303,7 +303,6 @@ dependencies = [
     { name = "rank-bm25" },
     { name = "requests" },
     { name = "rich" },
-    { name = "silero-vad" },
     { name = "typer" },
 ]
 
@@ -319,6 +318,9 @@ dev = [
     { name = "types-python-dateutil" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
+]
+live = [
+    { name = "silero-vad" },
 ]
 
 [package.dev-dependencies]
@@ -357,13 +359,13 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31.0" },
     { name = "rich", specifier = ">=14.1.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "silero-vad", specifier = ">=5.1" },
+    { name = "silero-vad", marker = "extra == 'live'", specifier = ">=5.1" },
     { name = "typer", specifier = ">=0.9.0" },
     { name = "types-python-dateutil", marker = "extra == 'dev'", specifier = ">=2.8.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["live", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
