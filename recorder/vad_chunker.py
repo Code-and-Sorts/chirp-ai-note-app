@@ -37,7 +37,15 @@ class VADChunker(threading.Thread):
             self.vad = vad_factory()
         else:
             try:
-                import webrtcvad
+                import warnings
+
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="pkg_resources is deprecated",
+                        category=UserWarning,
+                    )
+                    import webrtcvad
             except ImportError:
                 raise ImportError(
                     "webrtcvad requires 'setuptools<81' for pkg_resources. "
