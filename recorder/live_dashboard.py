@@ -87,30 +87,6 @@ class LiveDashboard:
                 except (termios.error, OSError):
                     pass
 
-    def _check_keyboard_input(self):
-        if not self._keyboard_enabled:
-            return
-
-        if select.select([sys.stdin], [], [], 0)[0]:
-            char = sys.stdin.read(1)
-            if char == "\x1b":
-                if select.select([sys.stdin], [], [], 0.1)[0]:
-                    next_chars = sys.stdin.read(2)
-                    if next_chars == "[A":
-                        self._handle_scroll_up()
-                    elif next_chars == "[B":
-                        self._handle_scroll_down()
-                    elif next_chars == "[5":
-                        if select.select([sys.stdin], [], [], 0.05)[0]:
-                            sys.stdin.read(1)
-                        self._handle_page_up()
-                    elif next_chars == "[6":
-                        if select.select([sys.stdin], [], [], 0.05)[0]:
-                            sys.stdin.read(1)
-                        self._handle_page_down()
-            elif char in [" ", "\n"]:
-                self._handle_scroll_to_bottom()
-
     def _handle_scroll_up(self):
         with self._lock:
             max_lines = self._estimate_visible_lines()
@@ -146,6 +122,12 @@ class LiveDashboard:
     def run(self):
         layout = self._render_layout()
         with self._raw_mode():
+            keyboard_thread = threading.Thread(
+                target=self._keyboard_loop, daemon=True
+            )
+            if self._keyboard_enabled:
+                keyboard_thread.start()
+
             with Live(
                 layout,
                 console=self.console,
@@ -154,8 +136,6 @@ class LiveDashboard:
             ) as live:
                 last_render = time.monotonic()
                 while not self.stop_event.is_set():
-                    self._check_keyboard_input()
-
                     try:
                         event = self.event_queue.get(timeout=0.1)
                     except queue.Empty:
@@ -168,6 +148,32 @@ class LiveDashboard:
                     self._handle_event(event)
                     live.update(self._render_layout(), refresh=True)
                     last_render = time.monotonic()
+
+    def _keyboard_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                if not select.select([sys.stdin], [], [], 0.05)[0]:
+                    continue
+                char = sys.stdin.read(1)
+                if char == "\x1b":
+                    if select.select([sys.stdin], [], [], 0.1)[0]:
+                        next_chars = sys.stdin.read(2)
+                        if next_chars == "[A":
+                            self._handle_scroll_up()
+                        elif next_chars == "[B":
+                            self._handle_scroll_down()
+                        elif next_chars == "[5":
+                            if select.select([sys.stdin], [], [], 0.05)[0]:
+                                sys.stdin.read(1)
+                            self._handle_page_up()
+                        elif next_chars == "[6":
+                            if select.select([sys.stdin], [], [], 0.05)[0]:
+                                sys.stdin.read(1)
+                            self._handle_page_down()
+                elif char in [" ", "\n"]:
+                    self._handle_scroll_to_bottom()
+            except (OSError, ValueError):
+                break
 
     def _handle_event(self, event: DashboardEvent):
         if event.type == "transcript":
