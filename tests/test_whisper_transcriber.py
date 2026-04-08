@@ -110,11 +110,13 @@ class TestWhisperTranscriber:
                 ):
                     transcriber = WhisperTranscriber(mock_settings)
 
+                    mock_torch = Mock()
+                    mock_torch.cuda.is_available.return_value = False
                     with patch("platform.system", return_value="Linux"):
                         with patch("platform.processor", return_value="Intel"):
-                            with patch.dict("sys.modules", {}, clear=False):
-                                if "torch" in sys.modules:
-                                    del sys.modules["torch"]
+                            with patch.dict(
+                                "sys.modules", {"torch": mock_torch}
+                            ):
                                 device = transcriber._get_optimal_device()
                                 assert device == "cpu"
 
