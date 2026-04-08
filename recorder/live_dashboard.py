@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import queue
 import select
 import sys
@@ -150,27 +151,28 @@ class LiveDashboard:
                     last_render = time.monotonic()
 
     def _keyboard_loop(self):
+        fd = self._stdin_fd
         while not self.stop_event.is_set():
             try:
-                if not select.select([sys.stdin], [], [], 0.05)[0]:
+                if not select.select([fd], [], [], 0.05)[0]:
                     continue
-                char = sys.stdin.read(1)
-                if char == "\x1b":
-                    if select.select([sys.stdin], [], [], 0.1)[0]:
-                        next_chars = sys.stdin.read(2)
-                        if next_chars == "[A":
+                char = os.read(fd, 1)
+                if char == b"\x1b":
+                    if select.select([fd], [], [], 0.1)[0]:
+                        next_bytes = os.read(fd, 2)
+                        if next_bytes == b"[A":
                             self._handle_scroll_up()
-                        elif next_chars == "[B":
+                        elif next_bytes == b"[B":
                             self._handle_scroll_down()
-                        elif next_chars == "[5":
-                            if select.select([sys.stdin], [], [], 0.05)[0]:
-                                sys.stdin.read(1)
+                        elif next_bytes == b"[5":
+                            if select.select([fd], [], [], 0.05)[0]:
+                                os.read(fd, 1)
                             self._handle_page_up()
-                        elif next_chars == "[6":
-                            if select.select([sys.stdin], [], [], 0.05)[0]:
-                                sys.stdin.read(1)
+                        elif next_bytes == b"[6":
+                            if select.select([fd], [], [], 0.05)[0]:
+                                os.read(fd, 1)
                             self._handle_page_down()
-                elif char in [" ", "\n"]:
+                elif char in [b" ", b"\n"]:
                     self._handle_scroll_to_bottom()
             except (OSError, ValueError):
                 break
