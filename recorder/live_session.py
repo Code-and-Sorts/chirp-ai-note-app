@@ -6,6 +6,10 @@ import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from recorder.vad_chunker import VADChunker
 
 from rich.console import Console
 
@@ -16,7 +20,6 @@ from recorder.live_audio import LiveAudioStream
 from recorder.live_dashboard import LiveDashboard
 from recorder.live_transcriber import LiveTranscriber
 from recorder.live_types import DashboardEvent, SpeechChunk
-from recorder.vad_chunker import VADChunker
 from utils.file_utils import generate_audio_filename
 
 
@@ -88,6 +91,8 @@ class LiveTranscriptionSession:
         if self.debug:
             self._start_direct_forwarder()
         else:
+            from recorder.vad_chunker import VADChunker
+
             self.vad_chunker = VADChunker(
                 frame_queue=self.frame_queue,
                 chunk_queue=self.chunk_queue,

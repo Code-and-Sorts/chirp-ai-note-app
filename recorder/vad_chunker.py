@@ -5,8 +5,6 @@ import queue
 import threading
 from typing import Callable
 
-import webrtcvad
-
 from recorder.live_types import AudioFrame, SpeechChunk
 
 
@@ -20,7 +18,7 @@ class VADChunker(threading.Thread):
         frame_ms: int = 20,
         padding_ms: int = 300,
         aggressiveness: int = 2,
-        vad_factory: Callable[[], webrtcvad.Vad] | None = None,
+        vad_factory: Callable | None = None,
         energy_threshold: float = 0.01,
         event_queue: queue.Queue | None = None,
         max_chunk_seconds: float = 10.0,
@@ -35,7 +33,17 @@ class VADChunker(threading.Thread):
         self.frame_ms = frame_ms
         self.padding_ms = padding_ms
         self.aggressiveness = max(0, min(3, aggressiveness))
-        self.vad = vad_factory() if vad_factory else webrtcvad.Vad(self.aggressiveness)
+        if vad_factory:
+            self.vad = vad_factory()
+        else:
+            try:
+                import webrtcvad
+            except ImportError:
+                raise ImportError(
+                    "webrtcvad requires 'setuptools<81' for pkg_resources. "
+                    "Run: pip install 'setuptools>=68,<81'"
+                )
+            self.vad = webrtcvad.Vad(self.aggressiveness)
         self.energy_threshold = energy_threshold
         self.event_queue = event_queue
         self.max_chunk_seconds = max_chunk_seconds
