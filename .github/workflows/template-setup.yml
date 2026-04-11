@@ -1,0 +1,64 @@
+name: Template Setup
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  create-setup-issue:
+    runs-on: ubuntu-latest
+    if: github.repository != 'Code-and-Sorts/chirp-ai-note-app'
+    permissions:
+      issues: write
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Create setup issue
+      uses: actions/github-script@v8
+      with:
+        script: |
+          const { data: issues } = await github.rest.issues.listForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            labels: 'template-setup',
+            state: 'all',
+          });
+
+          if (issues.length > 0) {
+            console.log('Setup issue already exists, skipping creation.');
+            return;
+          }
+
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: 'Getting started with Chirp',
+            labels: ['template-setup'],
+            body: [
+              '## Welcome to your new Chirp project!',
+              '',
+              'This repo was created from the [Chirp AI Note App](https://github.com/Code-and-Sorts/chirp-ai-note-app) template. Follow the steps below to get started.',
+              '',
+              '### Setup checklist',
+              '',
+              '- [ ] Install system dependencies (PortAudio, BlackHole for macOS)',
+              '- [ ] Install Python dependencies with `uv sync`',
+              '- [ ] Install and start [Ollama](https://ollama.ai) with `ollama pull llama3.1:8b` and `ollama pull nomic-embed-text`',
+              '- [ ] Run `chirp config` to verify your configuration',
+              '- [ ] Run `chirp record` to test audio recording',
+              '- [ ] Update the package name in `pyproject.toml` if publishing to PyPI',
+              '- [ ] Update repository-specific values in CI workflows (PyPI project name, codecov flags, etc.)',
+              '- [ ] Remove this setup issue when done',
+            ].join('\n'),
+          });
+
+    - name: Remove template setup workflow
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git rm .github/workflows/template-setup.yml
+        git commit -m "chore: remove template setup workflow after initial run"
+        git push
