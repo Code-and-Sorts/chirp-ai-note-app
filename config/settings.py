@@ -130,7 +130,7 @@ class ChirpSettings(BaseModel):
     def save_to_file(self, config_path: Path):
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
-        config_dict = self.dict()
+        config_dict = self.model_dump()
         for key, value in config_dict.items():
             if isinstance(value, dict):
                 for subkey, subvalue in value.items():

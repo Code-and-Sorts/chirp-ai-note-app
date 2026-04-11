@@ -14,7 +14,15 @@ from utils.time_utils import derive_recording_id
 
 
 class BatchProcessor:
-    def __init__(self, settings: ChirpSettings):
+    def __init__(self, settings: ChirpSettings, model_override: Optional[str] = None):
+        if model_override:
+            settings = settings.model_copy(
+                update={
+                    "models": settings.models.model_copy(
+                        update={"whisper": model_override}
+                    )
+                }
+            )
         self.settings = settings
         self.transcriber = WhisperTranscriber(settings)
         self.compressor = JSONCompressor()
