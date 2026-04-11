@@ -223,7 +223,6 @@ def record(
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
         if recorder.start_time:
-
             actual_duration = get_recording_duration(recorder.start_time)
             duration_str = format_duration(actual_duration)
             console.print(f"[green]✅ Recording saved: {filename}[/green]")
@@ -254,6 +253,53 @@ def record(
         console.print(f"[red]❌ Unexpected error: {str(e)}[/red]")
         console.print("[dim]Please report this issue if it persists[/dim]")
         raise typer.Exit(1)
+
+
+@app.command(name="list", rich_help_panel=CHAT_PANEL)
+def list_notes():
+    """List all meeting notes"""
+    settings = get_settings()
+    notes_files = get_notes_files(settings.directories.notes)
+
+    if not notes_files:
+        console.print(
+            f"[yellow]No notes found in {settings.directories.notes}[/yellow]"
+        )
+        console.print(
+            "[dim]Run 'chirp generate' to create notes from transcriptions[/dim]"
+        )
+        return
+
+    table = Table(title="📝 Meeting Notes")
+    table.add_column("Date", style="cyan", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("File", style="dim")
+    table.add_column("Size", style="dim", justify="right")
+
+    from datetime import datetime as dt
+
+    for note_file in reversed(notes_files):
+        title = note_file.stem
+        try:
+            with open(note_file, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+        except Exception:
+            pass
+
+        stat = note_file.stat()
+        size_kb = stat.st_size / 1024
+        size_str = f"{size_kb:.1f} KB"
+
+        date_str = dt.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d")
+
+        table.add_row(date_str, title, note_file.name, size_str)
+
+    console.print(table)
+    console.print(f"[dim]Total: {len(notes_files)} note(s)[/dim]")
 
 
 @app.command(rich_help_panel=CHAT_PANEL)
@@ -383,6 +429,12 @@ def transcribe(
     force: bool = typer.Option(
         False, "--force", "-f", help="Re-transcribe already processed files"
     ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Whisper model to use (e.g. tiny, base, small, medium, large-v3)",
+    ),
 ):
     """Transcribe audio files to text"""
     from transcriber.batch_processor import BatchProcessor
@@ -398,7 +450,10 @@ def transcribe(
         console.print(f"[yellow]No audio files found in {input_dir}[/yellow]")
         return
 
-    processor = BatchProcessor(settings)
+    if model:
+        console.print(f"[cyan]Using Whisper model: {model}[/cyan]")
+
+    processor = BatchProcessor(settings, model_override=model)
 
     with Progress(
         SpinnerColumn(),
@@ -546,6 +601,22 @@ def config(
     notes_dir: Optional[Path] = typer.Option(
         None, "--notes-dir", help="Set notes directory"
     ),
+    whisper_model: Optional[str] = typer.Option(
+        None,
+        "--whisper-model",
+        help="Set Whisper model (e.g. tiny, base, small, medium, large-v3)",
+    ),
+    llm_model: Optional[str] = typer.Option(
+        None, "--llm-model", help="Set LLM model (e.g. llama3.1:8b)"
+    ),
+    ollama_url: Optional[str] = typer.Option(
+        None, "--ollama-url", help="Set Ollama server URL"
+    ),
+    embedding_model: Optional[str] = typer.Option(
+        None,
+        "--embedding-model",
+        help="Set embedding model (e.g. nomic-embed-text)",
+    ),
 ):
     """Manage Chirp configuration"""
     settings = get_settings()
@@ -562,6 +633,7 @@ Templates: {settings.directories.templates}
 Whisper: {settings.models.whisper}
 LLM: {settings.models.llm}
 Ollama URL: {settings.models.ollama_url}
+Embedding: {settings.notes_chat.emb_model}
 
 [cyan]Audio:[/cyan]
 Sample Rate: {settings.audio.sample_rate}
@@ -587,6 +659,22 @@ Interval: {settings.monitoring.warning_interval} minutes""",
 
     if notes_dir:
         settings.directories.notes = notes_dir
+        changes_made = True
+
+    if whisper_model:
+        settings.models.whisper = whisper_model
+        changes_made = True
+
+    if llm_model:
+        settings.models.llm = llm_model
+        changes_made = True
+
+    if ollama_url:
+        settings.models.ollama_url = ollama_url
+        changes_made = True
+
+    if embedding_model:
+        settings.notes_chat.emb_model = embedding_model
         changes_made = True
 
     if changes_made:
@@ -687,14 +775,18 @@ def setup():
     else:
         console.print("[red]Step 1: Install BlackHole[/red]")
         console.print("  Download from: https://existential.audio/blackhole/")
-        console.print("  BlackHole is a virtual audio driver that captures system audio.")
+        console.print(
+            "  BlackHole is a virtual audio driver that captures system audio."
+        )
         console.print()
-        console.print("[yellow]Install BlackHole and re-run 'chirp setup' to continue.[/yellow]")
+        console.print(
+            "[yellow]Install BlackHole and re-run 'chirp setup' to continue.[/yellow]"
+        )
         return
 
     # Step 2: Multi-Output Device
     console.print()
-    console.print("[bold]Step 2: Create a Multi-Output Device (\"Chirp Output\")[/bold]")
+    console.print('[bold]Step 2: Create a Multi-Output Device ("Chirp Output")[/bold]')
     console.print()
     console.print(
         "  This routes system audio to both your speakers AND BlackHole,\n"
@@ -702,14 +794,18 @@ def setup():
     )
     console.print()
     console.print("  1. Open [bold]Audio MIDI Setup[/bold] (/Applications/Utilities/)")
-    console.print("  2. Click [bold]+[/bold] at bottom left → Create Multi-Output Device")
-    console.print("  3. Check your [bold]speakers/headphones[/bold] (so you can still hear)")
+    console.print(
+        "  2. Click [bold]+[/bold] at bottom left → Create Multi-Output Device"
+    )
+    console.print(
+        "  3. Check your [bold]speakers/headphones[/bold] (so you can still hear)"
+    )
     console.print("  4. Check [bold]BlackHole 2ch[/bold]")
     console.print("  5. Rename it to [bold]Chirp Output[/bold] (double-click the name)")
 
     # Step 3: Aggregate Device
     console.print()
-    console.print("[bold]Step 3: Create an Aggregate Device (\"Chirp Input\")[/bold]")
+    console.print('[bold]Step 3: Create an Aggregate Device ("Chirp Input")[/bold]')
     console.print()
     console.print(
         "  This combines your microphone AND BlackHole into a single input,\n"
@@ -717,9 +813,13 @@ def setup():
         "  participants on a call)."
     )
     console.print()
-    console.print("  1. In [bold]Audio MIDI Setup[/bold], click [bold]+[/bold] → Create Aggregate Device")
+    console.print(
+        "  1. In [bold]Audio MIDI Setup[/bold], click [bold]+[/bold] → Create Aggregate Device"
+    )
     console.print("  2. Check [bold]BlackHole 2ch[/bold]")
-    console.print("  3. Check your [bold]microphone[/bold] (e.g. Built-in, USB mic, etc.)")
+    console.print(
+        "  3. Check your [bold]microphone[/bold] (e.g. Built-in, USB mic, etc.)"
+    )
     console.print("  4. Rename it to [bold]Chirp Input[/bold] (double-click the name)")
 
     # Step 4: Set system audio
@@ -841,6 +941,20 @@ def test():
                 "\n[yellow]⚠️  Configuration issues. Run setup commands to fix.[/yellow]"
             )
         console.print("[dim]Run 'chirp --help' for setup commands[/dim]")
+
+
+@app.command(rich_help_panel=INFO_PANEL)
+def version():
+    """Show the installed Chirp version"""
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as pkg_version
+
+    try:
+        ver = pkg_version("chirp-notes-ai")
+    except PackageNotFoundError:
+        ver = "dev (not installed as package)"
+
+    console.print(f"[bold]chirp[/bold] {ver}")
 
 
 if __name__ == "__main__":

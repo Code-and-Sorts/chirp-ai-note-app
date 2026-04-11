@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -9,6 +10,8 @@ from config.settings import ChirpSettings
 from notes_chat.bm25 import BM25Index
 from notes_chat.index import IndexManager
 from notes_chat.time_ranges import parse_time_range
+
+logger = logging.getLogger(__name__)
 
 
 def retrieve_context(
@@ -130,7 +133,7 @@ def _search_chroma(
         return chroma_results
 
     except Exception as e:
-        print(f"Chroma search failed: {e}")
+        logger.debug("Chroma search failed: %s", e)
         return []
 
 
@@ -147,7 +150,7 @@ def _search_bm25(
         ]
 
     except Exception as e:
-        print(f"BM25 search failed: {e}")
+        logger.debug("BM25 search failed: %s", e)
         return []
 
 

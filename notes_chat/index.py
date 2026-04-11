@@ -3,7 +3,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import chromadb
 import requests
@@ -33,7 +33,11 @@ class IndexManager:
         self.manifest_file = self.settings.index_dir / "manifest.json"
         self.bm25_file = self.settings.index_dir / "bm25.json"
 
-    def build_index(self, force: bool = False) -> dict[str, Any]:
+    def build_index(
+        self,
+        force: bool = False,
+        progress_callback: Optional[Callable] = None,
+    ) -> dict[str, Any]:
         """Build or update the search index."""
         try:
             self.config.ensure_directories_exist()
@@ -71,10 +75,14 @@ class IndexManager:
             for file_path in removed_files:
                 self._remove_from_index(file_path)
                 processed_count += 1
+                if progress_callback:
+                    progress_callback()
 
             for file_path in added_files + modified_files:
                 if self._add_to_index(Path(file_path)):
                     processed_count += 1
+                if progress_callback:
+                    progress_callback()
 
             new_manifest = current_files
             self._save_manifest(new_manifest)
@@ -95,7 +103,7 @@ class IndexManager:
         """Reset the entire index."""
         try:
             self.chroma_client.delete_collection("notes")
-        except:
+        except Exception:
             pass
 
         self.collection = self.chroma_client.get_or_create_collection(
@@ -132,7 +140,7 @@ class IndexManager:
             with open(self.manifest_file) as f:
                 data = json.load(f)
                 return data if isinstance(data, dict) else {}
-        except:
+        except Exception:
             return {}
 
     def _save_manifest(self, manifest: dict[str, Any]):
@@ -354,7 +362,11 @@ class IndexManager:
             console.print(f"[yellow]⚠️ Failed to rebuild BM25 index: {e}[/yellow]")
 
 
-def build_index(config: ChirpSettings, force: bool = False) -> dict[str, Any]:
+def build_index(
+    config: ChirpSettings,
+    force: bool = False,
+    progress_callback: Optional[Callable] = None,
+) -> dict[str, Any]:
     """Build the notes search index."""
     manager = IndexManager(config)
-    return manager.build_index(force=force)
+    return manager.build_index(force=force, progress_callback=progress_callback)
