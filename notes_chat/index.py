@@ -81,8 +81,8 @@ class IndexManager:
             for file_path in added_files + modified_files:
                 if self._add_to_index(Path(file_path)):
                     processed_count += 1
-                if progress_callback:
-                    progress_callback()
+                    if progress_callback:
+                        progress_callback()
 
             new_manifest = current_files
             self._save_manifest(new_manifest)

@@ -287,14 +287,17 @@ def list_notes():
                     if line.startswith("# "):
                         title = line[2:].strip()
                         break
-        except Exception:
+        except OSError:
             pass
 
-        stat = note_file.stat()
-        size_kb = stat.st_size / 1024
-        size_str = f"{size_kb:.1f} KB"
-
-        date_str = dt.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d")
+        try:
+            stat = note_file.stat()
+            size_kb = stat.st_size / 1024
+            size_str = f"{size_kb:.1f} KB"
+            date_str = dt.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d")
+        except OSError:
+            size_str = "?"
+            date_str = "?"
 
         table.add_row(date_str, title, note_file.name, size_str)
 

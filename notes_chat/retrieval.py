@@ -133,7 +133,7 @@ def _search_chroma(
         return chroma_results
 
     except Exception as e:
-        logger.debug("Chroma search failed: %s", e)
+        logger.debug("Chroma search failed: %s", e, exc_info=True)
         return []
 
 
@@ -150,7 +150,7 @@ def _search_bm25(
         ]
 
     except Exception as e:
-        logger.debug("BM25 search failed: %s", e)
+        logger.debug("BM25 search failed: %s", e, exc_info=True)
         return []
 
 

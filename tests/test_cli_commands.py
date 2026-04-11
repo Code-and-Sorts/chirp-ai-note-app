@@ -93,6 +93,9 @@ class TestVersion:
 
 class TestTranscribeModelOverride:
     def test_model_override_passed_to_batch_processor(self, tmp_path, monkeypatch):
+        import sys
+        from unittest.mock import MagicMock
+
         settings = _make_settings(tmp_path)
 
         audio_dir = tmp_path / "audio"
@@ -111,14 +114,7 @@ class TestTranscribeModelOverride:
                 return [{"success": True}]
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
-        import sys
-        from unittest.mock import MagicMock
-
-        # Stub faster_whisper so batch_processor can be imported
-        if "faster_whisper" not in sys.modules:
-            sys.modules["faster_whisper"] = MagicMock()
-
+        monkeypatch.setitem(sys.modules, "faster_whisper", MagicMock())
         monkeypatch.setattr(
             "transcriber.batch_processor.BatchProcessor",
             FakeBatchProcessor,
@@ -129,11 +125,15 @@ class TestTranscribeModelOverride:
         import chirp.cli
 
         runner = CliRunner()
-        runner.invoke(chirp.cli.app, ["transcribe", "--model", "small"])
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--model", "small"])
 
+        assert result.exit_code == 0
         assert captured_args.get("model_override") == "small"
 
     def test_transcribe_without_model_override(self, tmp_path, monkeypatch):
+        import sys
+        from unittest.mock import MagicMock
+
         settings = _make_settings(tmp_path)
 
         audio_dir = tmp_path / "audio"
@@ -151,13 +151,7 @@ class TestTranscribeModelOverride:
                 return [{"success": True}]
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
-        import sys
-        from unittest.mock import MagicMock
-
-        if "faster_whisper" not in sys.modules:
-            sys.modules["faster_whisper"] = MagicMock()
-
+        monkeypatch.setitem(sys.modules, "faster_whisper", MagicMock())
         monkeypatch.setattr(
             "transcriber.batch_processor.BatchProcessor",
             FakeBatchProcessor,
@@ -168,6 +162,7 @@ class TestTranscribeModelOverride:
         import chirp.cli
 
         runner = CliRunner()
-        runner.invoke(chirp.cli.app, ["transcribe"])
+        result = runner.invoke(chirp.cli.app, ["transcribe"])
 
+        assert result.exit_code == 0
         assert captured_args.get("model_override") is None
