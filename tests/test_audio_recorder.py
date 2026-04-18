@@ -113,7 +113,9 @@ class TestAudioRecorder:
                         mock_wave_file = Mock()
                         mock_wave.return_value.__enter__.return_value = mock_wave_file
 
-                        recorder._save_recording(test_file_path, 2, 2, 16000, test_title)
+                        recorder._save_recording(
+                            test_file_path, 2, 2, 16000, test_title
+                        )
 
                         expected_metadata_path = Path(
                             "/mock/audio/test_recording.wav.meta"

@@ -266,8 +266,18 @@ class TestDeviceManager:
 
             with patch.object(device_manager, "list_devices") as mock_list:
                 mock_list.return_value = [
-                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
-                    {"index": 1, "name": "Aggregate Device", "max_input_channels": 2, "max_output_channels": 0},
+                    {
+                        "index": 0,
+                        "name": "Built-in Microphone",
+                        "max_input_channels": 1,
+                        "max_output_channels": 0,
+                    },
+                    {
+                        "index": 1,
+                        "name": "Aggregate Device",
+                        "max_input_channels": 2,
+                        "max_output_channels": 0,
+                    },
                 ]
 
                 result = device_manager.find_device_by_name("Aggregate Device")
@@ -279,8 +289,18 @@ class TestDeviceManager:
 
             with patch.object(device_manager, "list_devices") as mock_list:
                 mock_list.return_value = [
-                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
-                    {"index": 1, "name": "My Aggregate Device", "max_input_channels": 2, "max_output_channels": 0},
+                    {
+                        "index": 0,
+                        "name": "Built-in Microphone",
+                        "max_input_channels": 1,
+                        "max_output_channels": 0,
+                    },
+                    {
+                        "index": 1,
+                        "name": "My Aggregate Device",
+                        "max_input_channels": 2,
+                        "max_output_channels": 0,
+                    },
                 ]
 
                 result = device_manager.find_device_by_name("Aggregate")
@@ -292,7 +312,12 @@ class TestDeviceManager:
 
             with patch.object(device_manager, "list_devices") as mock_list:
                 mock_list.return_value = [
-                    {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "max_output_channels": 0},
+                    {
+                        "index": 0,
+                        "name": "Built-in Microphone",
+                        "max_input_channels": 1,
+                        "max_output_channels": 0,
+                    },
                 ]
 
                 result = device_manager.find_device_by_name("Aggregate Device")

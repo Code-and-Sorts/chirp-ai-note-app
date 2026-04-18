@@ -2,6 +2,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from notes_chat.config import get_notes_config
 
@@ -23,7 +24,23 @@ def index(
     try:
         from notes_chat.index import build_index
 
-        result = build_index(config, force=force)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Indexing notes...", total=None)
+            files_indexed = 0
+
+            def on_progress():
+                nonlocal files_indexed
+                files_indexed += 1
+                progress.update(
+                    task, description=f"Indexing notes... ({files_indexed} files)"
+                )
+
+            result = build_index(config, force=force, progress_callback=on_progress)
 
         if result.get("success"):
             console.print(

@@ -178,7 +178,10 @@ class DeviceManager:
         search_name = name.lower()
 
         for device in devices:
-            if device["name"].lower() == search_name and device["max_input_channels"] > 0:
+            if (
+                device["name"].lower() == search_name
+                and device["max_input_channels"] > 0
+            ):
                 return int(device["index"])
 
         for device in devices:
