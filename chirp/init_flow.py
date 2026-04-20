@@ -439,7 +439,9 @@ def _pull_model(console: Console, tag: str) -> None:
         except FileNotFoundError:
             progress.update(task, description="[red]✗[/red] ollama not on PATH")
             return
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            proc.wait()
+            return
         for line in proc.stdout:
             pct = _parse_percent(line)
             if pct is not None:

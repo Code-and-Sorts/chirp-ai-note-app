@@ -76,7 +76,11 @@ def ask(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would be sent to LLM without calling it"
     ),
-    markdown: bool = True,
+    markdown: bool = typer.Option(
+        True,
+        "--markdown/--no-markdown",
+        help="Render answers as markdown (code blocks, bullets, bold).",
+    ),
 ):
     """Ask questions about your meeting notes. Run without a question for interactive chat."""
     config = get_notes_config()
