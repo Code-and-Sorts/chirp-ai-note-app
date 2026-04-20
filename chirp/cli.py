@@ -451,7 +451,7 @@ def notes_list():
 
     console.print(table)
     console.print()
-    console.print(" [dim]› chirp note view <n>    · open note #n[/dim]")
+    console.print(" [dim]› chirp note [NAME]      · open a note by name[/dim]")
     console.print(" [dim]› chirp ask              · ask a question[/dim]")
 
 
@@ -719,7 +719,7 @@ def _run_transcribe_pipeline(
     )
     if note_id < 1 or note_id > len(audio_files):
         console.print(
-            f"[red]No recording at index {note_id} — run `chirp notes` to see available notes.[/red]"
+            f"[red]No recording at index {note_id} — run `chirp stats` to see how many recordings are on disk.[/red]"
         )
         raise typer.Exit(1)
 
@@ -793,12 +793,18 @@ def _run_transcribe_pipeline(
                 from notes.note_generator import NoteGenerator
                 from utils.file_utils import get_transcription_files
 
-                transcription_files = get_transcription_files(
-                    settings.directories.transcriptions
-                )
-                note_generator = NoteGenerator(settings)
-                note_generator.generate_daily_notes(transcription_files)
-                set_state(3, "done")
+                transcription_files = [
+                    t
+                    for t in get_transcription_files(
+                        settings.directories.transcriptions
+                    )
+                    if t.stem == audio_path.stem
+                ]
+                if transcription_files:
+                    NoteGenerator(settings).generate_daily_notes(transcription_files)
+                    set_state(3, "done")
+                else:
+                    set_state(3, "skip")
                 live.update(render())
 
             if do_index and settings.notes_chat.auto_index:

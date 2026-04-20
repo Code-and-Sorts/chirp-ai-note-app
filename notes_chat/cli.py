@@ -139,8 +139,13 @@ def ask(
             answer = answer_result["answer"]
             cache_answer(question, retrieved_ids, answer)
 
-        console.print("\n[bold green]💬 Answer:[/bold green]")
-        console.print(answer)
+        console.print("\n[magenta bold]chirp ›[/magenta bold]")
+        if markdown:
+            from rich.markdown import Markdown
+
+            console.print(Markdown(answer))
+        else:
+            console.print(answer)
 
         if sources and context_result.get("sources"):
             console.print("\n[dim]📚 Sources:[/dim]")

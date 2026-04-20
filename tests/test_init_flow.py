@@ -95,14 +95,20 @@ def test_run_init_recheck_short_circuits(tmp_path, monkeypatch):
 def test_pick_models_defaults_on_blank_input(monkeypatch):
     console = _console()
     answers = iter(["", ""])
-    monkeypatch.setattr(
-        init_flow,
-        "_pick",
-        lambda c, title, options: options[0].tag,
-    )
-    # fall back to the real _pick path once to exercise it
+    monkeypatch.setattr(console, "input", lambda *args, **kwargs: next(answers))
+
     chat, embed = init_flow.pick_models(console)
+
     assert chat == "llama3.1:8b"
     assert embed == "nomic-embed-text"
-    # consume iterator so the unused-var lint doesn't complain
-    _ = list(answers)
+
+
+def test_pick_models_honours_numeric_selection(monkeypatch):
+    console = _console()
+    answers = iter(["2", "3"])
+    monkeypatch.setattr(console, "input", lambda *args, **kwargs: next(answers))
+
+    chat, embed = init_flow.pick_models(console)
+
+    assert chat == init_flow.CHAT_MODELS[1].tag
+    assert embed == init_flow.EMBEDDING_MODELS[2].tag

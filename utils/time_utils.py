@@ -99,8 +99,12 @@ def parse_timeframe(text: str) -> Optional[int]:
     """Parse the design's ``30s`` / ``5m`` / ``1h`` timeframe input into minutes.
 
     Returns ``None`` for empty input (user pressed ⏎ to skip). Raises
-    ``ValueError`` for unrecognized formats.
+    ``ValueError`` for unrecognized formats or non-positive durations.
+    Rounds up so a 30s request still gets at least 1 minute and a 2.5m
+    request gets 3, never less than what the user asked for.
     """
+    import math
+
     text = (text or "").strip().lower()
     if not text:
         return None
@@ -116,6 +120,8 @@ def parse_timeframe(text: str) -> Optional[int]:
     except ValueError as exc:
         raise ValueError(f"unrecognized timeframe: {text!r}") from exc
 
+    if not math.isfinite(amount) or amount <= 0:
+        raise ValueError(f"timeframe must be positive: {text!r}")
+
     minutes = amount * suffix_minutes[unit]
-    rounded = max(1, round(minutes))
-    return int(rounded)
+    return max(1, math.ceil(minutes))

@@ -218,11 +218,29 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
         _print_status(console, status)
 
     console.print()
-    missing = [s for s in statuses if s.required and not s.installed]
-    if missing:
+    missing_deps = [
+        s
+        for s in statuses
+        if s.required and not s.installed and not s.name.startswith("model:")
+    ]
+    missing_models = [
+        s
+        for s in statuses
+        if s.required and not s.installed and s.name.startswith("model:")
+    ]
+    if missing_deps or missing_models:
         console.print(" [dim]──────────────────────────────────────────────[/dim]")
-        plural = "s" if len(missing) > 1 else ""
-        console.print(f"  need to install: [bold]{len(missing)} piece{plural}[/bold]")
+        if missing_deps:
+            plural = "s" if len(missing_deps) > 1 else ""
+            console.print(
+                f"  need to install: [bold]{len(missing_deps)} piece{plural}[/bold]"
+            )
+        if missing_models:
+            plural = "s" if len(missing_models) > 1 else ""
+            console.print(
+                f"  missing model{plural}: "
+                f"[bold]{len(missing_models)}[/bold] [dim](pulled in phase 4)[/dim]"
+            )
     else:
         console.print(" [green]everything's already in place.[/green]")
 

@@ -30,3 +30,19 @@ def test_handles_uppercase_and_whitespace():
 def test_rejects_garbage():
     with pytest.raises(ValueError):
         parse_timeframe("soon")
+
+
+def test_fractional_rounds_up():
+    assert parse_timeframe("2.5m") == 3
+    assert parse_timeframe("0.6h") == 36
+    assert parse_timeframe("45s") == 1
+
+
+def test_rejects_zero_and_negative():
+    for bad in ["0m", "0", "0h", "-1m", "-30s"]:
+        with pytest.raises(ValueError):
+            parse_timeframe(bad)
+
+
+def test_default_unit_tolerates_whitespace():
+    assert parse_timeframe("  7  ") == 7
