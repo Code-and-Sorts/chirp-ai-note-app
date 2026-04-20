@@ -13,6 +13,7 @@ Chirp captures system audio via BlackHole, transcribes with faster-whisper, and 
 ## Features
 
 - Record system audio (calls, meetings, lectures)
+- Live transcription with scrollable dashboard during recording
 - Transcribe with faster-whisper (Apple Silicon optimized)
 - Generate structured notes with Ollama + Llama 3.1
 - Search and chat with your meeting history
@@ -63,6 +64,9 @@ chirp record --duration 60 --title "Team Standup"
 
 # Record indefinitely (ESC or Ctrl+C to stop)
 chirp record
+
+# Record with live transcription
+chirp record --live-transcribe --title "Team Standup"
 
 # Transcribe all new recordings
 chirp transcribe
@@ -122,7 +126,6 @@ chirp stats     # view processing stats
 
 - Speaker diarization
 - Calendar integration (auto-record from macOS Calendar)
-- Real-time transcription
 - Export to PDF, DOCX, Notion
 - Windows and Linux support
 

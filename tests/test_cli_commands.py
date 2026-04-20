@@ -110,7 +110,13 @@ class TestTranscribeModelOverride:
                 captured_args["settings"] = s
                 captured_args["model_override"] = model_override
 
-            def process_files(self, files, force=False, progress_callback=None):
+            def process_files(
+                self,
+                files,
+                force=False,
+                progress_callback=None,
+                on_segment=None,
+            ):
                 return [{"success": True}]
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
@@ -147,7 +153,13 @@ class TestTranscribeModelOverride:
             def __init__(self, s, model_override=None):
                 captured_args["model_override"] = model_override
 
-            def process_files(self, files, force=False, progress_callback=None):
+            def process_files(
+                self,
+                files,
+                force=False,
+                progress_callback=None,
+                on_segment=None,
+            ):
                 return [{"success": True}]
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)

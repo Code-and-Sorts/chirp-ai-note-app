@@ -31,3 +31,18 @@ def test_cli_import_does_not_load_heavy_dependencies():
             f"Heavy modules loaded at import time: {loaded_heavy}. "
             "Move these to function-level imports."
         )
+
+
+def test_live_session_import_does_not_load_vad():
+    """Importing live_session should not trigger silero/torch import."""
+    from recorder.live_session import LiveSessionResult, LiveTranscriptionSession
+
+    assert LiveTranscriptionSession is not None
+    assert LiveSessionResult is not None
+
+
+def test_vad_chunker_import_does_not_load_vad():
+    """Importing vad_chunker should not trigger silero import at module level."""
+    from recorder.vad_chunker import VADChunker
+
+    assert VADChunker is not None

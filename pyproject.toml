@@ -23,6 +23,8 @@ dependencies = [
     "python-dateutil>=2.8.0",
     "platformdirs>=4.0.0",
     "prompt-toolkit>=3.0.52",
+    "numpy>=1.24.0",
+    "silero-vad>=5.1",
 ]
 
 [project.scripts]
@@ -121,3 +123,17 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
 files = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "freezegun>=1.2.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "types-PyYAML>=6.0.0",
+    "types-requests>=2.31.0",
+    "types-python-dateutil>=2.8.0",
+    "codespell>=2.2.0",
+    "pre-commit>=3.0.0",
+]

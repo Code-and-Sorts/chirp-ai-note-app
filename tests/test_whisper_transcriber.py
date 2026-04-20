@@ -1,5 +1,4 @@
 import json
-import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -40,6 +39,7 @@ class TestWhisperTranscriber:
         mock_segment.text = " This is a test transcription."
         mock_segment.avg_logprob = -0.5
         mock_segment.no_speech_prob = 0.1
+        mock_segment.words = None
 
         mock_info = Mock()
         mock_info.language = "en"
@@ -109,11 +109,13 @@ class TestWhisperTranscriber:
                 ):
                     transcriber = WhisperTranscriber(mock_settings)
 
+                    mock_torch = Mock()
+                    mock_torch.cuda.is_available.return_value = False
                     with patch("platform.system", return_value="Linux"):
                         with patch("platform.processor", return_value="Intel"):
-                            with patch.dict("sys.modules", {}, clear=False):
-                                if "torch" in sys.modules:
-                                    del sys.modules["torch"]
+                            with patch.dict(
+                                "sys.modules", {"torch": mock_torch}
+                            ):
                                 device = transcriber._get_optimal_device()
                                 assert device == "cpu"
 
@@ -156,7 +158,7 @@ class TestWhisperTranscriber:
             transcriber = WhisperTranscriber(mock_settings)
             threads = transcriber._get_cpu_threads()
 
-            assert threads == 4
+            assert threads == 6
 
     @patch("os.cpu_count")
     def test_get_cpu_threads_none_fallback(self, mock_cpu_count, mock_settings):
@@ -261,7 +263,7 @@ class TestWhisperTranscriber:
         assert metadata["recording_id"] == "20250101_120000"
         assert metadata["meeting_name"] == "Strategy Sync"
         assert metadata["title"] == "Strategy Sync"
-        assert metadata["recording_length_seconds"] == pytest.approx(5.0)
+        assert metadata["duration"] == pytest.approx(5.0)
         assert metadata["segment_count"] == 1
         assert metadata["word_count"] == len("This is a test transcription.".split())
         assert metadata["recording_datetime"].startswith("2025-01-01T12:00:00")

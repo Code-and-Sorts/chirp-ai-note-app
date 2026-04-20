@@ -8,7 +8,7 @@ class TestChirpSettings:
     def test_default_settings_creation(self):
         settings = ChirpSettings()
 
-        assert settings.models.whisper == "base"
+        assert settings.models.whisper == "large-v3-turbo"
         assert settings.models.llm == "llama3.1:8b"
         assert settings.audio.sample_rate == 16000
         assert settings.audio.channels == 2

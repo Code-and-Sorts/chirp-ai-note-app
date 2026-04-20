@@ -117,3 +117,13 @@ Edit this file to customize directories, models, and settings.
 
 - **Documentation**: [GitHub Repository](https://github.com/Code-and-Sorts/chirp-ai-note-app)
 - **Issues**: [Report bugs or request features](https://github.com/Code-and-Sorts/chirp-ai-note-app/issues)
+
+## Debugging live transcription
+
+Run `chirp record --live-transcribe --debug-live` to capture the mono stream and per-chunk audio in `transcriptions/debug-live/`.  You can inspect a chunk with:
+
+```bash
+uv run python scripts/debug_live_transcript.py transcribe-chunk transcriptions/debug-live/chunk_0001.wav
+```
+
+This helps validate the audio the live pipeline sees.

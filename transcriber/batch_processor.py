@@ -34,6 +34,7 @@ class BatchProcessor:
         audio_files: list[Path],
         force: bool = False,
         progress_callback: Optional[Callable] = None,
+        on_segment: Optional[Callable] = None,
         max_workers: int = 1,  # Keep at 1 for Whisper to avoid memory issues
     ) -> list[dict[str, Any]]:
         files_to_process = self._filter_files_to_process(audio_files, force)
@@ -46,7 +47,9 @@ class BatchProcessor:
         results = []
 
         if max_workers == 1:
-            results = self._process_sequentially(files_to_process, progress_callback)
+            results = self._process_sequentially(
+                files_to_process, progress_callback, on_segment
+            )
         else:
             results = self._process_concurrently(
                 files_to_process, progress_callback, max_workers
@@ -60,13 +63,16 @@ class BatchProcessor:
         return results
 
     def _process_sequentially(
-        self, files_to_process: list[Path], progress_callback: Optional[Callable] = None
+        self,
+        files_to_process: list[Path],
+        progress_callback: Optional[Callable] = None,
+        on_segment: Optional[Callable] = None,
     ) -> list[dict[str, Any]]:
         results = []
 
         for audio_file in files_to_process:
             try:
-                result = self._process_single_file(audio_file)
+                result = self._process_single_file(audio_file, on_segment=on_segment)
                 results.append(result)
 
                 if progress_callback:
@@ -119,8 +125,12 @@ class BatchProcessor:
 
         return results
 
-    def _process_single_file(self, audio_file: Path) -> dict[str, Any]:
-        transcription_result = self.transcriber.transcribe_file(audio_file)
+    def _process_single_file(
+        self, audio_file: Path, on_segment: Optional[Callable] = None
+    ) -> dict[str, Any]:
+        transcription_result = self.transcriber.transcribe_file(
+            audio_file, on_segment=on_segment
+        )
 
         metadata = transcription_result.get("metadata", {})
         recording_id = metadata.get("recording_id")

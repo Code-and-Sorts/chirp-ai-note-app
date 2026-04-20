@@ -323,7 +323,7 @@ class TestDeviceManager:
                 result = device_manager.find_device_by_name("Aggregate Device")
                 assert result is None
 
-    def test_get_recommended_device_returns_system_default(self):
+    def test_get_recommended_device_returns_default(self):
         with patch("recorder.device_manager.pyaudio.PyAudio"):
             device_manager = DeviceManager()
 
@@ -335,3 +335,132 @@ class TestDeviceManager:
                 result = device_manager.get_recommended_device()
 
                 assert result == 3
+                mock_default.assert_called_once()
+
+    def test_find_aggregate_device_with_name_match(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            mock_devices = [
+                {
+                    "index": 0,
+                    "name": "Built-in Microphone",
+                    "max_input_channels": 2,
+                    "max_output_channels": 0,
+                    "default_sample_rate": 48000,
+                    "host_api": 0,
+                },
+                {
+                    "index": 1,
+                    "name": "Aggregate Device",
+                    "max_input_channels": 0,
+                    "max_output_channels": 2,
+                    "default_sample_rate": 48000,
+                    "host_api": 0,
+                },
+            ]
+
+            with (
+                patch.object(device_manager, "list_devices", return_value=mock_devices),
+                patch.object(device_manager, "_test_device_input", return_value=True),
+            ):
+                result = device_manager.find_aggregate_device()
+                assert result == 1
+
+    def test_find_aggregate_device_no_match(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            mock_devices = [
+                {
+                    "index": 0,
+                    "name": "Built-in Microphone",
+                    "max_input_channels": 2,
+                    "max_output_channels": 0,
+                    "default_sample_rate": 48000,
+                    "host_api": 0,
+                },
+            ]
+
+            with patch.object(
+                device_manager, "list_devices", return_value=mock_devices
+            ):
+                result = device_manager.find_aggregate_device()
+                assert result is None
+
+    def test_find_aggregate_device_fails_input_test(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            mock_devices = [
+                {
+                    "index": 1,
+                    "name": "Aggregate Device",
+                    "max_input_channels": 0,
+                    "max_output_channels": 2,
+                    "default_sample_rate": 48000,
+                    "host_api": 0,
+                },
+            ]
+
+            with (
+                patch.object(device_manager, "list_devices", return_value=mock_devices),
+                patch.object(device_manager, "_test_device_input", return_value=False),
+            ):
+                result = device_manager.find_aggregate_device()
+                assert result is None
+
+    def test_find_aggregate_device_multi_output(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            mock_devices = [
+                {
+                    "index": 2,
+                    "name": "Multi-Output Device",
+                    "max_input_channels": 0,
+                    "max_output_channels": 2,
+                    "default_sample_rate": 48000,
+                    "host_api": 0,
+                },
+            ]
+
+            with (
+                patch.object(device_manager, "list_devices", return_value=mock_devices),
+                patch.object(device_manager, "_test_device_input", return_value=True),
+            ):
+                result = device_manager.find_aggregate_device()
+                assert result == 2
+
+    def test_check_aggregate_available(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+
+            with patch.object(device_manager, "find_aggregate_device", return_value=1):
+                assert device_manager.check_aggregate_available() is True
+
+            with patch.object(
+                device_manager, "find_aggregate_device", return_value=None
+            ):
+                assert device_manager.check_aggregate_available() is False
+
+    def test_test_device_input_success(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+            device_manager.audio = Mock()
+
+            mock_stream = Mock()
+            device_manager.audio.open.return_value = mock_stream
+
+            result = device_manager._test_device_input(1)
+            assert result is True
+            mock_stream.close.assert_called_once()
+
+    def test_test_device_input_failure(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio"):
+            device_manager = DeviceManager()
+            device_manager.audio = Mock()
+            device_manager.audio.open.side_effect = Exception("Device error")
+
+            result = device_manager._test_device_input(1)
+            assert result is False
