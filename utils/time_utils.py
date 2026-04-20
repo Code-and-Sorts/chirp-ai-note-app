@@ -93,3 +93,29 @@ def get_daily_note_filename(date: Optional[datetime] = None) -> str:
 
 def is_same_day(dt1: datetime, dt2: datetime) -> bool:
     return dt1.date() == dt2.date()
+
+
+def parse_timeframe(text: str) -> Optional[int]:
+    """Parse the design's ``30s`` / ``5m`` / ``1h`` timeframe input into minutes.
+
+    Returns ``None`` for empty input (user pressed ⏎ to skip). Raises
+    ``ValueError`` for unrecognized formats.
+    """
+    text = (text or "").strip().lower()
+    if not text:
+        return None
+
+    suffix_minutes = {"s": 1 / 60, "m": 1, "h": 60}
+    if text[-1] in suffix_minutes:
+        amount_str, unit = text[:-1], text[-1]
+    else:
+        amount_str, unit = text, "m"
+
+    try:
+        amount = float(amount_str)
+    except ValueError as exc:
+        raise ValueError(f"unrecognized timeframe: {text!r}") from exc
+
+    minutes = amount * suffix_minutes[unit]
+    rounded = max(1, round(minutes))
+    return int(rounded)
