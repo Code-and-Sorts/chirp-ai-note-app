@@ -123,9 +123,7 @@ class LiveDashboard:
     def run(self):
         layout = self._render_layout()
         with self._raw_mode():
-            keyboard_thread = threading.Thread(
-                target=self._keyboard_loop, daemon=True
-            )
+            keyboard_thread = threading.Thread(target=self._keyboard_loop, daemon=True)
             if self._keyboard_enabled:
                 keyboard_thread.start()
 

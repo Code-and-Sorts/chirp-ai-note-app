@@ -23,7 +23,6 @@ import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 from rich.console import Console
 from rich.progress import (
@@ -66,15 +65,13 @@ EMBEDDING_MODELS = [
 ]
 
 
-def _which(cmd: str) -> Optional[str]:
+def _which(cmd: str) -> str | None:
     return shutil.which(cmd)
 
 
-def _run(args: List[str], timeout: float = 10.0) -> Tuple[int, str]:
+def _run(args: list[str], timeout: float = 10.0) -> tuple[int, str]:
     try:
-        proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=timeout
-        )
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         return 127, str(exc)
@@ -126,9 +123,7 @@ def _blackhole_installed() -> DependencyStatus:
 def _ollama_installed() -> DependencyStatus:
     path = _which("ollama")
     if not path:
-        return DependencyStatus(
-            "Ollama", False, "not found — runs your local models"
-        )
+        return DependencyStatus("Ollama", False, "not found — runs your local models")
     import requests
 
     try:
@@ -152,7 +147,7 @@ def _ollama_installed() -> DependencyStatus:
         )
 
 
-def _ollama_models() -> List[str]:
+def _ollama_models() -> list[str]:
     import requests
 
     try:
@@ -164,7 +159,7 @@ def _ollama_models() -> List[str]:
         return []
 
 
-def _model_installed(tag: str, available: List[str]) -> bool:
+def _model_installed(tag: str, available: list[str]) -> bool:
     if tag in available:
         return True
     if f"{tag}:latest" in available:
@@ -173,7 +168,7 @@ def _model_installed(tag: str, available: List[str]) -> bool:
     return any(name.startswith(f"{base}:") for name in available)
 
 
-def verify(settings: ChirpSettings, console: Console) -> List[DependencyStatus]:
+def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
     """Run phase 1 — returns the ordered status list and prints the table."""
     console.print()
     console.print(" [bold]Welcome to Chirp.[/bold] Let's set up your nest.")
@@ -248,7 +243,11 @@ def _print_status(console: Console, status: DependencyStatus) -> None:
 def _confirm(console: Console, prompt: str, default: bool = True) -> bool:
     suffix = "[Y/n]" if default else "[y/N]"
     try:
-        answer = console.input(f" [bold]{prompt}[/bold] [dim]{suffix}[/dim] ").strip().lower()
+        answer = (
+            console.input(f" [bold]{prompt}[/bold] [dim]{suffix}[/dim] ")
+            .strip()
+            .lower()
+        )
     except (EOFError, KeyboardInterrupt):
         console.print()
         return False
@@ -257,9 +256,7 @@ def _confirm(console: Console, prompt: str, default: bool = True) -> bool:
     return answer in {"y", "yes"}
 
 
-def install_missing(
-    console: Console, statuses: List[DependencyStatus]
-) -> bool:
+def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
     """Phase 2 — brew install what's missing. Returns True if everything
     that was required is now installed, False if the user aborted."""
     if platform.system() != "Darwin":
@@ -280,7 +277,7 @@ def install_missing(
     console.print(" [dim]installing dependencies via homebrew...[/dim]")
     console.print()
 
-    tasks: List[Tuple[str, List[str]]] = []
+    tasks: list[tuple[str, list[str]]] = []
     for status in statuses:
         if status.installed or not status.required:
             continue
@@ -290,9 +287,7 @@ def install_missing(
             )
         elif status.name == "Ollama":
             tasks.append(("ollama", [brew, "install", "ollama"]))
-            tasks.append(
-                ("ollama service", [brew, "services", "start", "ollama"])
-            )
+            tasks.append(("ollama service", [brew, "services", "start", "ollama"]))
         elif status.name == "ffmpeg":
             tasks.append(("ffmpeg", [brew, "install", "ffmpeg"]))
 
@@ -303,7 +298,9 @@ def install_missing(
             console.print(f" [green]✓[/green] {' '.join(args)}")
         else:
             console.print(f" [red]✗[/red] {' '.join(args)}")
-            console.print(f"   [dim]{out.strip().splitlines()[-1] if out else ''}[/dim]")
+            console.print(
+                f"   [dim]{out.strip().splitlines()[-1] if out else ''}[/dim]"
+            )
             return False
 
     if any(s.name == "BlackHole 2ch" and not s.installed for s in statuses):
@@ -311,29 +308,27 @@ def install_missing(
         console.print(
             " [yellow bold]![/yellow bold] BlackHole needs a one-time audio routing step:"
         )
-        console.print(
-            "   open [bold]Audio MIDI Setup[/bold] and create a"
-        )
-        console.print(
-            "   [bold]Multi-Output Device[/bold] = Speakers + BlackHole 2ch"
-        )
+        console.print("   open [bold]Audio MIDI Setup[/bold] and create a")
+        console.print("   [bold]Multi-Output Device[/bold] = Speakers + BlackHole 2ch")
         if _confirm(console, "open Audio MIDI Setup now?", default=True):
             _run(["open", "-a", "Audio MIDI Setup"])
     return True
 
 
-def pick_models(console: Console) -> Tuple[str, str]:
+def pick_models(console: Console) -> tuple[str, str]:
     """Phase 3 — show the two picker boxes, return (chat_tag, embed_tag)."""
     console.print()
     console.print(" [dim]ollama is running. let's pick your models.[/dim]")
     console.print()
     chat = _pick(console, "Chat / notes generator", CHAT_MODELS)
     console.print()
-    embed = _pick(console, "Embedding model (for ChromaDB · RAG search)", EMBEDDING_MODELS)
+    embed = _pick(
+        console, "Embedding model (for ChromaDB · RAG search)", EMBEDDING_MODELS
+    )
     return chat, embed
 
 
-def _pick(console: Console, title: str, options: List[ModelOption]) -> str:
+def _pick(console: Console, title: str, options: list[ModelOption]) -> str:
     console.print(f" [bold]{title}[/bold]")
     for idx, option in enumerate(options, start=1):
         marker = "[#d97a3a]●[/#d97a3a]" if idx == 1 else "[dim]○[/dim]"
@@ -343,7 +338,9 @@ def _pick(console: Console, title: str, options: List[ModelOption]) -> str:
         )
     console.print(f"   [dim]{len(options) + 1}. custom… (type an ollama tag)[/dim]")
     try:
-        choice = console.input(" [green]›[/green] [dim]pick one (default 1):[/dim] ").strip()
+        choice = console.input(
+            " [green]›[/green] [dim]pick one (default 1):[/dim] "
+        ).strip()
     except (EOFError, KeyboardInterrupt):
         console.print()
         return options[0].tag
@@ -395,7 +392,9 @@ def pull_and_finalize(
     console.print()
     console.print(" [bold]your nest is ready.[/bold] try:")
     console.print("   [dim]$[/dim] chirp record")
-    console.print("   [dim]$[/dim] chirp ask [yellow]\"what did I decide last week?\"[/yellow]")
+    console.print(
+        '   [dim]$[/dim] chirp ask [yellow]"what did I decide last week?"[/yellow]'
+    )
 
 
 def _pull_model(console: Console, tag: str) -> None:
@@ -436,7 +435,7 @@ def _pull_model(console: Console, tag: str) -> None:
             )
 
 
-def _parse_percent(line: str) -> Optional[float]:
+def _parse_percent(line: str) -> float | None:
     line = line.strip()
     if "%" not in line:
         return None
@@ -466,9 +465,9 @@ def run_init(
         return 0
 
     missing = [
-        s for s in statuses
-        if s.required and not s.installed
-        and not s.name.startswith("model:")
+        s
+        for s in statuses
+        if s.required and not s.installed and not s.name.startswith("model:")
     ]
     if missing:
         if not _confirm(console, "Install the missing pieces?", default=True):

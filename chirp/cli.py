@@ -162,9 +162,7 @@ def _print_record_header(
     duration_minutes: Optional[int],
     device_manager,
 ) -> None:
-    duration_str = (
-        f"{duration_minutes:02d}:00" if duration_minutes else "∞"
-    )
+    duration_str = f"{duration_minutes:02d}:00" if duration_minutes else "∞"
     try:
         default_idx = device_manager.get_default_input_device()
         devices_info = device_manager.list_devices()
@@ -278,8 +276,6 @@ def record(
     from utils.time_utils import format_duration, get_recording_duration
 
     try:
-        import sys
-
         use_cbreak = sys.stdin.isatty() and hasattr(sys.stdin, "fileno")
 
         old_settings = None
@@ -324,9 +320,7 @@ def record(
         else:
             console.print(f"[green]✅ Recording saved: {filename}[/green]")
 
-        console.print(
-            " [dim][space] pause  [q / ^C] stop & save  [x] discard[/dim]"
-        )
+        console.print(" [dim][space] pause  [q / ^C] stop & save  [x] discard[/dim]")
         console.print("[dim]Use 'chirp transcribe' to process this recording[/dim]")
 
     except KeyboardInterrupt:
@@ -431,9 +425,7 @@ def notes_list():
     table.add_column("date", style="cyan", no_wrap=True)
     table.add_column("length", style="dim", justify="right", no_wrap=True)
 
-    sorted_notes = sorted(
-        notes_files, key=lambda p: p.stat().st_mtime, reverse=True
-    )
+    sorted_notes = sorted(notes_files, key=lambda p: p.stat().st_mtime, reverse=True)
     for idx, note_file in enumerate(sorted_notes, start=1):
         title = note_file.stem
         try:
@@ -651,9 +643,7 @@ def transcribe(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
         )
-        task = progress.add_task(
-            "Transcribing audio files...", total=len(audio_files)
-        )
+        task = progress.add_task("Transcribing audio files...", total=len(audio_files))
 
         def on_segment(segment):
             text = segment.get("text", "").strip()
@@ -662,7 +652,9 @@ def transcribe(
 
         segment_callback = on_segment
 
-        with Live(Group(streaming_text, progress), console=console, refresh_per_second=4):
+        with Live(
+            Group(streaming_text, progress), console=console, refresh_per_second=4
+        ):
             results = processor.process_files(
                 audio_files,
                 force=force,
@@ -812,8 +804,8 @@ def _run_transcribe_pipeline(
             if do_index and settings.notes_chat.auto_index:
                 set_state(4, "running")
                 live.update(render())
-                from notes_chat.index import build_index
                 from notes_chat.config import get_notes_config
+                from notes_chat.index import build_index
 
                 build_index(get_notes_config())
                 set_state(4, "done")

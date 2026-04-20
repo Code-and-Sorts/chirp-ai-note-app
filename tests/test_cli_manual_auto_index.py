@@ -19,7 +19,7 @@ def _patch_tty(monkeypatch):
 
 
 def test_notes_auto_index_enabled_success(tmp_path, monkeypatch):
-    from chirp.cli import notes as notes_cmd
+    from chirp.cli import note as notes_cmd
 
     settings = _make_settings(tmp_path, enabled=True)
     monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
@@ -67,7 +67,7 @@ def test_notes_auto_index_enabled_success(tmp_path, monkeypatch):
 
 
 def test_notes_auto_index_disabled(tmp_path, monkeypatch):
-    from chirp.cli import notes as notes_cmd
+    from chirp.cli import note as notes_cmd
 
     settings = _make_settings(tmp_path, enabled=False)
     monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
@@ -105,7 +105,7 @@ def test_notes_auto_index_disabled(tmp_path, monkeypatch):
 
 
 def test_notes_auto_index_add_failure(tmp_path, monkeypatch):
-    from chirp.cli import notes as notes_cmd
+    from chirp.cli import note as notes_cmd
 
     settings = _make_settings(tmp_path, enabled=True)
     monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)

@@ -14,7 +14,7 @@ import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -29,7 +29,6 @@ from chirp.branding import (
     REPO,
     TAGLINE,
 )
-
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -102,8 +101,8 @@ def _logo_line(row_idx: int, beak_open: bool) -> Text:
     return line
 
 
-def _info_lines(version: str, notes_count: int, chat_model: str) -> List[Text]:
-    lines: List[Text] = [Text("")]
+def _info_lines(version: str, notes_count: int, chat_model: str) -> list[Text]:
+    lines: list[Text] = [Text("")]
     title = Text()
     title.append("   ")
     title.append("chirp", style="bold white")
@@ -125,7 +124,7 @@ def run_about(
     console: Console,
     settings,
     speed: float = 1.0,
-    sleeper: Optional[Callable[[float], None]] = None,
+    sleeper: Callable[[float], None] | None = None,
 ) -> None:
     """Run the full 3-phase about animation.
 
@@ -139,7 +138,7 @@ def run_about(
     chat_model = settings.models.llm
     version = _installed_version()
 
-    lines: List[Text] = [_prompt_line(), Text("")]
+    lines: list[Text] = [_prompt_line(), Text("")]
 
     with Live(Group(*lines), console=console, refresh_per_second=20) as live:
         # Phase 1 — spinner + status lines

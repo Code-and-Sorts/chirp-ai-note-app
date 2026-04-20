@@ -216,8 +216,7 @@ class LiveTranscriptionSession:
 
             if self.debug:
                 chunk_path = (
-                    self._debug_dir
-                    / f"direct_chunk_{chunk_counter[0]:04d}.wav"
+                    self._debug_dir / f"direct_chunk_{chunk_counter[0]:04d}.wav"
                 )
                 self._write_debug_chunk(data, chunk_path)
                 chunk_counter[0] += 1

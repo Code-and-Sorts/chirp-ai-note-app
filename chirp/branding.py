@@ -6,10 +6,8 @@ the body once and update just the beak cell on each frame.
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple
 
 from rich.text import Text
-
 
 LOGO_YELLOW = "#dcb84a"
 LOGO_ACCENT = "#d97a3a"
@@ -38,7 +36,7 @@ class LogoCell:
     has_note: bool = False
 
 
-LOGO_ROWS: Tuple[LogoCell, ...] = (
+LOGO_ROWS: tuple[LogoCell, ...] = (
     LogoCell("           .---."),
     LogoCell("    .---. '     \\ _"),
     LogoCell("  /`     `    o  |", "", has_beak=True, has_note=True),
@@ -83,7 +81,7 @@ def render_logo(beak_open: bool = False, show_note: bool = True) -> Text:
     return text
 
 
-def logo_plain_lines(beak_open: bool = False) -> List[str]:
+def logo_plain_lines(beak_open: bool = False) -> list[str]:
     """Plain-text rendering — used by the about animation's line-by-line paint."""
     return [logo_line_plain(row, beak_open) for row in LOGO_ROWS]
 

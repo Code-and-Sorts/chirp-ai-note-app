@@ -76,6 +76,7 @@ def ask(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would be sent to LLM without calling it"
     ),
+    markdown: bool = True,
 ):
     """Ask questions about your meeting notes. Run without a question for interactive chat."""
     config = get_notes_config()
@@ -83,7 +84,7 @@ def ask(
     if question is None:
         from notes_chat.interactive import InteractiveChatSession
 
-        session = InteractiveChatSession(config)
+        session = InteractiveChatSession(config, markdown=markdown)
         session.start()
         return
 
