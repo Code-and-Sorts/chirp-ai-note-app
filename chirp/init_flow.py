@@ -402,7 +402,8 @@ def pull_and_finalize(
     console.print()
     console.print(f" [green]✓[/green] saved config to [bold]{config_path}[/bold]")
     console.print(
-        f" [green]✓[/green] initialized chromadb at [bold]{settings.notes_chat.index_dir / 'chroma'}[/bold]"
+        f" [green]✓[/green] chromadb directory ready at [bold]{settings.notes_chat.index_dir / 'chroma'}[/bold] "
+        "[dim](collection is created on first index)[/dim]"
     )
     console.print(
         f" [green]✓[/green] notes dir: [bold]{settings.directories.notes}[/bold]"

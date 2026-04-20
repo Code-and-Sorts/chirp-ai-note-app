@@ -425,8 +425,7 @@ def notes_list():
     table.add_column("date", style="cyan", no_wrap=True)
     table.add_column("length", style="dim", justify="right", no_wrap=True)
 
-    sorted_notes = sorted(notes_files, key=lambda p: p.stat().st_mtime, reverse=True)
-    for idx, note_file in enumerate(sorted_notes, start=1):
+    for idx, note_file in enumerate(reversed(notes_files), start=1):
         title = note_file.stem
         try:
             with open(note_file, encoding="utf-8") as f:
@@ -583,7 +582,7 @@ def ask(
 def transcribe(
     note_id: Optional[int] = typer.Argument(
         None,
-        help="Optional index from `chirp notes` — pipeline for a single recording.",
+        help="Index of a recording to process (newest-first, as shown by `chirp stats`).",
     ),
     input_dir: Optional[Path] = typer.Option(
         None, "--input", "-i", help="Input directory for audio files"
@@ -601,10 +600,14 @@ def transcribe(
         help="Whisper model to use (e.g. tiny, base, small, medium, large-v3)",
     ),
     no_notes: bool = typer.Option(
-        False, "--no-notes", help="Skip the notes-generation step"
+        False,
+        "--no-notes",
+        help="Skip notes-generation (single-recording mode only).",
     ),
     no_index: bool = typer.Option(
-        False, "--no-index", help="Skip the chromadb indexing step"
+        False,
+        "--no-index",
+        help="Skip chromadb indexing (single-recording mode only).",
     ),
 ):
     """Turn audio into text + AI notes (pipeline)"""
@@ -617,6 +620,13 @@ def transcribe(
             settings, note_id, model=model, do_notes=not no_notes, do_index=not no_index
         )
         return
+
+    if no_notes or no_index:
+        console.print(
+            "[red]--no-notes / --no-index are only valid when a recording index is provided "
+            "(e.g. `chirp transcribe 1`).[/red]"
+        )
+        raise typer.Exit(2)
 
     if input_dir is None:
         input_dir = settings.directories.raw_audio
@@ -696,6 +706,24 @@ def transcribe(
         )
 
 
+def _print_missing_recording(settings, audio_files, note_id: int) -> None:
+    raw_dir = settings.directories.raw_audio
+    if not audio_files:
+        console.print(
+            f"[red]No recording at index {note_id}. No audio files in {raw_dir}.[/red]"
+        )
+        return
+    preview_limit = 3
+    console.print(
+        f"[red]No recording at index {note_id}. Valid indices are 1-{len(audio_files)} "
+        f"(newest first, from {raw_dir}):[/red]"
+    )
+    for idx, path in enumerate(audio_files[:preview_limit], start=1):
+        console.print(f"[dim]  {idx}. {path.name}[/dim]")
+    if len(audio_files) > preview_limit:
+        console.print(f"[dim]  ... and {len(audio_files) - preview_limit} more[/dim]")
+
+
 def _run_transcribe_pipeline(
     settings,
     note_id: int,
@@ -712,15 +740,9 @@ def _run_transcribe_pipeline(
 
     from transcriber.batch_processor import BatchProcessor
 
-    audio_files = sorted(
-        get_audio_files(settings.directories.raw_audio),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    audio_files = list(reversed(get_audio_files(settings.directories.raw_audio)))
     if note_id < 1 or note_id > len(audio_files):
-        console.print(
-            f"[red]No recording at index {note_id} — run `chirp stats` to see how many recordings are on disk.[/red]"
-        )
+        _print_missing_recording(settings, audio_files, note_id)
         raise typer.Exit(1)
 
     audio_path = audio_files[note_id - 1]
