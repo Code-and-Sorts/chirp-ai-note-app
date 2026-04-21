@@ -1,6 +1,5 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 
 def get_timestamp() -> str:
@@ -32,7 +31,7 @@ def format_duration(seconds: float) -> str:
         return f"{hours}h {remaining_minutes}m"
 
 
-def parse_timestamp_from_filename(filename: str) -> Optional[datetime]:
+def parse_timestamp_from_filename(filename: str) -> datetime | None:
     try:
         timestamp_part = filename.split("_")[0] + "_" + filename.split("_")[1]
         if len(timestamp_part) == 15:  # YYYYMMDD_HHMMSS
@@ -42,9 +41,7 @@ def parse_timestamp_from_filename(filename: str) -> Optional[datetime]:
     return None
 
 
-def derive_recording_id(
-    audio_file: Path, recorded_at: Optional[datetime] = None
-) -> str:
+def derive_recording_id(audio_file: Path, recorded_at: datetime | None = None) -> str:
     timestamp = parse_timestamp_from_filename(audio_file.name)
 
     if timestamp is None and recorded_at is not None:
@@ -66,7 +63,7 @@ def get_recording_duration(start_time: datetime) -> float:
 def should_warn_user(
     start_time: datetime,
     warning_minutes: int,
-    last_warning: Optional[datetime] = None,
+    last_warning: datetime | None = None,
     warning_interval: int = 15,
 ) -> bool:
     elapsed_minutes = (datetime.now() - start_time).total_seconds() / 60
@@ -85,7 +82,7 @@ def format_meeting_time(timestamp: datetime) -> str:
     return timestamp.strftime("%I:%M %p").lstrip("0")
 
 
-def get_daily_note_filename(date: Optional[datetime] = None) -> str:
+def get_daily_note_filename(date: datetime | None = None) -> str:
     if date is None:
         date = datetime.now()
     return f"meetings_{date.strftime('%Y_%m_%d')}.md"
@@ -95,7 +92,7 @@ def is_same_day(dt1: datetime, dt2: datetime) -> bool:
     return dt1.date() == dt2.date()
 
 
-def parse_timeframe(text: str) -> Optional[int]:
+def parse_timeframe(text: str) -> int | None:
     """Parse the design's ``30s`` / ``5m`` / ``1h`` timeframe input into minutes.
 
     Returns ``None`` for empty input (user pressed ⏎ to skip). Raises

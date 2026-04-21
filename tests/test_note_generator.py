@@ -1,9 +1,9 @@
+import tomllib
 from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pytest
 import tomli_w
-import tomllib
 
 from notes.note_generator import NoteGenerator
 from utils.file_utils import NoteRecord

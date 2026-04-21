@@ -1,5 +1,3 @@
-from typing import Optional
-
 import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -59,13 +57,13 @@ def index(
 
 @app.command()
 def ask(
-    question: Optional[str] = typer.Option(
+    question: str | None = typer.Option(
         None,
         "--question",
         "-q",
         help="Question to ask about your meetings (omit for interactive chat)",
     ),
-    when: Optional[str] = typer.Option(
+    when: str | None = typer.Option(
         None,
         "--when",
         help="Time range filter (e.g., 'last week', 'on:2025-01-15', '2025-01-01:2025-01-31')",

@@ -1,10 +1,11 @@
 import logging
 import platform
+import tomllib
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
-import tomllib
 from faster_whisper import WhisperModel
 
 from config.settings import ChirpSettings
@@ -281,7 +282,7 @@ class WhisperTranscriber:
             "loaded": self.model is not None,
         }
 
-    def _read_audio_metadata(self, audio_file_path: Path) -> Optional[dict]:
+    def _read_audio_metadata(self, audio_file_path: Path) -> dict | None:
         meta_path = audio_file_path.parent / META_FILENAME
 
         if meta_path.exists():
@@ -295,7 +296,7 @@ class WhisperTranscriber:
         return None
 
     def _get_recording_datetime(
-        self, audio_file_path: Path, audio_metadata: Optional[dict]
+        self, audio_file_path: Path, audio_metadata: dict | None
     ) -> datetime:
         if audio_metadata:
             date_value = audio_metadata.get("date") or audio_metadata.get("recorded_at")
@@ -317,7 +318,7 @@ class WhisperTranscriber:
         except (OSError, ValueError):
             return datetime.now()
 
-    def _get_meeting_name(self, audio_metadata: Optional[dict]) -> str:
+    def _get_meeting_name(self, audio_metadata: dict | None) -> str:
         if audio_metadata:
             title = audio_metadata.get("title")
             if isinstance(title, str) and title.strip():

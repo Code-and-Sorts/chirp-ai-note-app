@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def retrieve_context(
-    config: ChirpSettings, question: str, when_filter: Optional[str] = None
+    config: ChirpSettings, question: str, when_filter: str | None = None
 ) -> dict[str, Any]:
     """Retrieve context for answering a question using hybrid search."""
     try:
@@ -84,7 +84,7 @@ def retrieve_context(
 
 
 def _search_chroma(
-    index_manager: IndexManager, query: str, k: int, time_range: Optional[Any] = None
+    index_manager: IndexManager, query: str, k: int, time_range: Any | None = None
 ) -> list[tuple[str, float, dict[str, Any]]]:
     """Search Chroma vector database."""
     try:
@@ -264,7 +264,7 @@ def _create_chunk_header(data: dict[str, Any]) -> str:
         return "Unknown source"
 
 
-def _generate_suggestion(config: ChirpSettings, time_range: Optional[Any]) -> str:
+def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
     """Generate a helpful suggestion when no results are found."""
     try:
         index_dir = config.notes_chat.index_dir
@@ -299,7 +299,7 @@ def _generate_suggestion(config: ChirpSettings, time_range: Optional[Any]) -> st
         return "Try a broader search or different keywords"
 
 
-def _get_query_embedding(config: ChirpSettings, query: str) -> Optional[list[float]]:
+def _get_query_embedding(config: ChirpSettings, query: str) -> list[float] | None:
     """Get embedding for query text using the same model as indexing."""
     try:
         response = requests.post(
@@ -312,7 +312,7 @@ def _get_query_embedding(config: ChirpSettings, query: str) -> Optional[list[flo
         result = response.json()
         embedding = result.get("embedding")
         if isinstance(embedding, list) and all(
-            isinstance(x, (int, float)) for x in embedding
+            isinstance(x, int | float) for x in embedding
         ):
             return embedding
         return None

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any
 
 from config.settings import ChirpSettings
 from transcriber.whisper_transcriber import WhisperTranscriber
-from utils.file_utils import NoteRecord, list_notes
+from utils.file_utils import TRANSCRIPT_FILENAME, NoteRecord, list_notes
 from utils.popup_manager import PopupManager
 
 
@@ -120,7 +122,7 @@ class BatchProcessor:
         )
 
         if transcription_result.get("success"):
-            transcript_path = record.dir / "transcript.txt"
+            transcript_path = record.dir / TRANSCRIPT_FILENAME
             transcript_path.write_text(
                 transcription_result.get("full_text", ""),
                 encoding="utf-8",
@@ -143,7 +145,7 @@ class BatchProcessor:
 
     def process_directory(
         self,
-        directory,
+        directory: Path,
         force: bool = False,
         progress_callback: Callable | None = None,
     ) -> dict[str, Any]:

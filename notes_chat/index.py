@@ -1,9 +1,10 @@
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import chromadb
 import requests
@@ -36,7 +37,7 @@ class IndexManager:
     def build_index(
         self,
         force: bool = False,
-        progress_callback: Optional[Callable] = None,
+        progress_callback: Callable | None = None,
     ) -> dict[str, Any]:
         """Build or update the search index."""
         try:
@@ -196,7 +197,7 @@ class IndexManager:
                 f"[yellow]⚠️ Failed to remove {Path(file_path).name}: {e}[/yellow]"
             )
 
-    def _extract_metadata(self, file_path: Path, content: str) -> Optional[NoteMeta]:
+    def _extract_metadata(self, file_path: Path, content: str) -> NoteMeta | None:
         """Extract metadata from a notes file."""
         try:
             title_match = re.search(r"^# (.+)$", content, re.MULTILINE)
@@ -317,7 +318,7 @@ class IndexManager:
 
         return chunks
 
-    def _get_embeddings(self, texts: list[str]) -> Optional[list[list[float]]]:
+    def _get_embeddings(self, texts: list[str]) -> list[list[float]] | None:
         """Get embeddings from Ollama."""
         try:
             embeddings = []
@@ -365,7 +366,7 @@ class IndexManager:
 def build_index(
     config: ChirpSettings,
     force: bool = False,
-    progress_callback: Optional[Callable] = None,
+    progress_callback: Callable | None = None,
 ) -> dict[str, Any]:
     """Build the notes search index."""
     manager = IndexManager(config)

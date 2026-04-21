@@ -1,8 +1,7 @@
+import tomllib
 from pathlib import Path
-from typing import Optional
 
 import tomli_w
-import tomllib
 from platformdirs import user_documents_dir
 from pydantic import BaseModel, Field, field_validator
 from rich.console import Console
@@ -96,7 +95,7 @@ class ChirpSettings(BaseModel):
         return cls()
 
     @classmethod
-    def load_from_file(cls, config_path: Optional[Path] = None) -> "ChirpSettings":
+    def load_from_file(cls, config_path: Path | None = None) -> "ChirpSettings":
         if config_path is None:
             config_path = cls.get_config_path()
 

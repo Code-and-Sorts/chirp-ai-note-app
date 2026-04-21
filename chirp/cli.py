@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -136,7 +135,7 @@ def _prompt_title() -> str:
         console.print(" [dim]title can't be empty[/dim]")
 
 
-def _prompt_timeframe() -> Optional[int]:
+def _prompt_timeframe() -> int | None:
     from utils.time_utils import parse_timeframe
 
     console.print()
@@ -154,8 +153,8 @@ def _prompt_timeframe() -> Optional[int]:
 
 
 def _print_record_header(
-    title: Optional[str],
-    duration_minutes: Optional[int],
+    title: str | None,
+    duration_minutes: int | None,
     device_manager,
 ) -> None:
     duration_str = f"{duration_minutes:02d}:00" if duration_minutes else "∞"
@@ -206,16 +205,16 @@ def _render_audio_meter(level: float) -> Table:
 
 @app.command(rich_help_panel=MAIN_PANEL)
 def record(
-    duration: Optional[int] = typer.Option(
+    duration: int | None = typer.Option(
         None,
         "--duration",
         "-d",
         help="Recording duration in minutes (press Ctrl+C to stop if not specified)",
     ),
-    title: Optional[str] = typer.Option(
+    title: str | None = typer.Option(
         None, "--title", "-t", help="Meeting title for filename"
     ),
-    timeframe: Optional[str] = typer.Option(
+    timeframe: str | None = typer.Option(
         None,
         "--timeframe",
         help="Timeframe like 30s / 5m / 1h (auto-stops when reached)",
@@ -345,8 +344,8 @@ def record(
 def _run_live_transcription(
     settings,
     device_manager,
-    title: Optional[str],
-    duration: Optional[int],
+    title: str | None,
+    duration: int | None,
     debug_live: bool = False,
 ):
     from recorder.live_session import LiveSessionResult, LiveTranscriptionSession
@@ -481,7 +480,7 @@ def search():
 
 @app.command(name="note", rich_help_panel=MAIN_PANEL)
 def note(
-    name: Optional[str] = typer.Argument(
+    name: str | None = typer.Argument(
         None,
         metavar="[NAME]",
         help="Optional name for the note (defaults to note-YYYY-MM-DD)",
@@ -563,13 +562,13 @@ def note(
 
 @app.command(rich_help_panel=MAIN_PANEL)
 def ask(
-    question: Optional[str] = typer.Option(
+    question: str | None = typer.Option(
         None,
         "--question",
         "-q",
         help="Question to ask about your meetings (omit for interactive chat)",
     ),
-    when: Optional[str] = typer.Option(None, "--when", help="Time range filter"),
+    when: str | None = typer.Option(None, "--when", help="Time range filter"),
     sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
     markdown: bool = typer.Option(
         True,
@@ -588,11 +587,11 @@ def ask(
 
 @app.command(rich_help_panel=MAIN_PANEL)
 def transcribe(
-    note_id: Optional[int] = typer.Argument(
+    note_id: int | None = typer.Argument(
         None,
-        help="Index of a recording to process (newest-first, as shown by `chirp stats`).",
+        help="Index of a recording to process (newest-first by creation time).",
     ),
-    input_dir: Optional[Path] = typer.Option(
+    input_dir: Path | None = typer.Option(
         None, "--input", "-i", help="Input directory for audio files"
     ),
     force: bool = typer.Option(
@@ -601,7 +600,7 @@ def transcribe(
     stream: bool = typer.Option(
         True, "--stream/--no-stream", help="Stream transcription as it processes"
     ),
-    model: Optional[str] = typer.Option(
+    model: str | None = typer.Option(
         None,
         "--model",
         "-m",
@@ -731,7 +730,7 @@ def _print_missing_recording(settings, records, note_id: int) -> None:
 def _run_transcribe_pipeline(
     settings,
     note_id: int,
-    model: Optional[str],
+    model: str | None,
     do_notes: bool,
     do_index: bool,
 ) -> None:
@@ -903,7 +902,7 @@ def generate(
 
 @app.command(name="transcribe-and-generate", rich_help_panel=SETUP_PANEL)
 def transcribe_and_generate(
-    input_dir: Optional[Path] = typer.Option(
+    input_dir: Path | None = typer.Option(
         None, "--input", "-i", help="Input directory for audio files"
     ),
     force: bool = typer.Option(
@@ -965,21 +964,21 @@ def config(
     list_config: bool = typer.Option(
         False, "--list", "-l", help="List current configuration"
     ),
-    notes_root: Optional[Path] = typer.Option(
+    notes_root: Path | None = typer.Option(
         None, "--notes-root", help="Set the notes root directory"
     ),
-    whisper_model: Optional[str] = typer.Option(
+    whisper_model: str | None = typer.Option(
         None,
         "--whisper-model",
         help="Set Whisper model (e.g. tiny, base, small, medium, large-v3)",
     ),
-    llm_model: Optional[str] = typer.Option(
+    llm_model: str | None = typer.Option(
         None, "--llm-model", help="Set LLM model (e.g. llama3.1:8b)"
     ),
-    ollama_url: Optional[str] = typer.Option(
+    ollama_url: str | None = typer.Option(
         None, "--ollama-url", help="Set Ollama server URL"
     ),
-    embedding_model: Optional[str] = typer.Option(
+    embedding_model: str | None = typer.Option(
         None,
         "--embedding-model",
         help="Set embedding model (e.g. nomic-embed-text)",

@@ -1,5 +1,3 @@
-from typing import Optional
-
 import pyaudio
 
 
@@ -61,7 +59,7 @@ class DeviceManager:
 
         return devices
 
-    def find_blackhole_device(self) -> Optional[int]:
+    def find_blackhole_device(self) -> int | None:
         devices = self.list_devices()
 
         blackhole_names = ["BlackHole 2ch", "BlackHole 16ch", "BlackHole"]
@@ -75,7 +73,7 @@ class DeviceManager:
 
         return None
 
-    def find_aggregate_device(self) -> Optional[int]:
+    def find_aggregate_device(self) -> int | None:
         devices = self.list_devices()
 
         for device in devices:
@@ -117,7 +115,7 @@ class DeviceManager:
     def check_aggregate_available(self) -> bool:
         return self.find_aggregate_device() is not None
 
-    def get_default_input_device(self) -> Optional[int]:
+    def get_default_input_device(self) -> int | None:
         if not self.audio:
             return None
 
@@ -128,7 +126,7 @@ class DeviceManager:
         except Exception:
             return None
 
-    def get_default_output_device(self) -> Optional[int]:
+    def get_default_output_device(self) -> int | None:
         if not self.audio:
             return None
 
@@ -139,7 +137,7 @@ class DeviceManager:
         except Exception:
             return None
 
-    def get_device_info(self, device_index: int) -> Optional[dict]:
+    def get_device_info(self, device_index: int) -> dict | None:
         if not self.audio:
             return None
 
@@ -173,7 +171,7 @@ class DeviceManager:
         except Exception:
             return False
 
-    def find_device_by_name(self, name: str) -> Optional[int]:
+    def find_device_by_name(self, name: str) -> int | None:
         devices = self.list_devices()
         search_name = name.lower()
 
@@ -193,7 +191,7 @@ class DeviceManager:
 
         return None
 
-    def get_recommended_device(self) -> Optional[int]:
+    def get_recommended_device(self) -> int | None:
         return self.get_default_input_device()
 
     def get_device_sample_rates(self, device_index: int) -> list[int]:

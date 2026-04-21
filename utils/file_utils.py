@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import re
 import shutil
+import tomllib
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-
-import tomllib
 
 AUDIO_FILENAME = "audio.wav"
 TRANSCRIPT_FILENAME = "transcript.txt"
@@ -114,12 +113,12 @@ def _build_record(entry: Path) -> NoteRecord | None:
 def _resolve_created_at(meta: dict, entry: Path) -> datetime:
     date_value = meta.get("date")
     if isinstance(date_value, datetime):
-        return date_value
+        return _as_naive(date_value)
     if isinstance(date_value, date):
         return datetime(date_value.year, date_value.month, date_value.day)
     if isinstance(date_value, str):
         try:
-            return datetime.fromisoformat(date_value)
+            return _as_naive(datetime.fromisoformat(date_value))
         except ValueError:
             pass
 
@@ -127,6 +126,12 @@ def _resolve_created_at(meta: dict, entry: Path) -> datetime:
         return datetime.fromtimestamp(entry.stat().st_mtime)
     except OSError:
         return datetime.now()
+
+
+def _as_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone().replace(tzinfo=None)
 
 
 def move_file(src: Path, dst: Path) -> bool:

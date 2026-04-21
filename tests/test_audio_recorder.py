@@ -1,9 +1,9 @@
 import array
+import tomllib
 from unittest.mock import Mock, patch
 
 import pyaudio
 import pytest
-import tomllib
 
 from recorder.audio_recorder import AudioRecorder
 

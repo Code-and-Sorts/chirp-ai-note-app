@@ -1,6 +1,5 @@
-from datetime import datetime
-
 import tomllib
+from datetime import datetime
 
 from config.settings import ChirpSettings
 from notes.manual_note_manager import ManualNoteManager

@@ -1,7 +1,7 @@
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from config.settings import MonitoringConfig
 from utils.time_utils import should_warn_user

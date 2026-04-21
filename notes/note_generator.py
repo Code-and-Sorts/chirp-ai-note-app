@@ -1,11 +1,11 @@
+import tomllib
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import requests
 import tomli_w
-import tomllib
 from rich.console import Console
 
 from config.settings import ChirpSettings
@@ -167,7 +167,7 @@ class NoteGenerator:
 
     def generate_from_notes_root(
         self,
-        notes_root: Optional[Path] = None,
+        notes_root: Path | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
         resolved_root = notes_root or self.settings.directories.notes_root
@@ -268,9 +268,7 @@ class NoteGenerator:
 
         meta["whisper_model"] = self.settings.models.whisper
         meta["llm_model"] = self.settings.models.llm
-        meta["indexed_at"] = (
-            datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-        )
+        meta["indexed_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
 
         meta_path.parent.mkdir(parents=True, exist_ok=True)
         with meta_path.open("wb") as fh:
@@ -280,9 +278,7 @@ class NoteGenerator:
         metadata = {
             "chirp_source": "generated",
             "readonly": True,
-            "generated_at": datetime.now(timezone.utc)
-            .replace(microsecond=0)
-            .isoformat(),
+            "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
             "note_date": note_date.date().isoformat(),
         }
         cleaned_body = self._strip_front_matter(body)
@@ -328,8 +324,8 @@ class NoteGenerator:
         return str(value)
 
     def _generate_structured_notes(
-        self, transcript_text: str, provided_title: Optional[str] = None
-    ) -> Optional[dict[str, Any]]:
+        self, transcript_text: str, provided_title: str | None = None
+    ) -> dict[str, Any] | None:
         title_instruction = ""
         if provided_title:
             title_instruction = (
@@ -400,7 +396,7 @@ Return ONLY the XML document, no additional text before or after."""
 
         return "".join(full_response).strip()
 
-    def _parse_xml_response(self, response: str) -> Optional[dict[str, Any]]:
+    def _parse_xml_response(self, response: str) -> dict[str, Any] | None:
         try:
             xml_start = response.find("<?xml")
             if xml_start == -1:

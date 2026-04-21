@@ -1,20 +1,21 @@
 """Animated `chirp about` command.
 
-Three-beat reveal, matching the design handoff's live preview:
+Three-beat reveal:
 
- 1. spinner + status lines while chirp "wakes up"
- 2. ASCII chick logo paints in line-by-line
- 3. info lines (version, tagline, credits) type out while the beak keeps
+ 1. ASCII chick logo appears in full
+ 2. spinner + status lines animate beneath it while chirp "wakes up"
+ 3. the status lines clear and the info panel (version, notes count,
+    models, notes root, credits, repo) types out while the beak keeps
     chirping (< ↔ v at ~2 Hz)
 """
 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
-from typing import Callable
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -40,7 +41,6 @@ PHASE_ONE = [
 
 CHIRP_CYCLES = 6
 CHIRP_INTERVAL = 0.45
-LOGO_PAINT_INTERVAL = 0.14
 INFO_INTERVAL = 0.1
 SPIN_TICK = 1 / 12
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import collections
 import queue
 import threading
-from typing import Callable
+from collections.abc import Callable
 
 from recorder.live_types import AudioFrame, SpeechChunk
 

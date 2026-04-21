@@ -2,15 +2,15 @@ import array
 import logging
 import math
 import threading
+import tomllib
 import wave
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from threading import Timer
-from typing import Callable, Optional
 
 import pyaudio
 import tomli_w
-import tomllib
 
 from config.settings import ChirpSettings
 from recorder.device_manager import DeviceManager
@@ -33,15 +33,15 @@ class AudioRecorder:
         self.is_recording = False
         self.frames: list[bytes] = []
         self.stream = None
-        self.recording_thread: Optional[Timer] = None
-        self.monitor: Optional[MeetingMonitor] = None
-        self.start_time: Optional[datetime] = None
-        self.title: Optional[str] = None
+        self.recording_thread: Timer | None = None
+        self.monitor: MeetingMonitor | None = None
+        self.start_time: datetime | None = None
+        self.title: str | None = None
         self.current_level: float = 0.0
         self._record_channels: int = 1
         self._output_channels: int = 1
-        self.note_dir: Optional[Path] = None
-        self.slug: Optional[str] = None
+        self.note_dir: Path | None = None
+        self.slug: str | None = None
 
     def __del__(self):
         if self.audio:
@@ -49,10 +49,10 @@ class AudioRecorder:
 
     def start_recording(
         self,
-        duration_minutes: Optional[int] = None,
-        title: Optional[str] = None,
-        level_callback: Optional[Callable[[float], None]] = None,
-        tags: Optional[list[str]] = None,
+        duration_minutes: int | None = None,
+        title: str | None = None,
+        level_callback: Callable[[float], None] | None = None,
+        tags: list[str] | None = None,
     ) -> str:
         if self.is_recording:
             raise RuntimeError("Recording already in progress")
