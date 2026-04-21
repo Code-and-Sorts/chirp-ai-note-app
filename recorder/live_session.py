@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from recorder.vad_chunker import VADChunker
 
+import tomli_w
 from rich.console import Console
 
 from chirp.exceptions import RecordingError
@@ -20,7 +21,7 @@ from recorder.live_audio import LiveAudioStream
 from recorder.live_dashboard import LiveDashboard
 from recorder.live_transcriber import LiveTranscriber
 from recorder.live_types import DashboardEvent, SpeechChunk
-from utils.file_utils import generate_audio_filename
+from utils.file_utils import AUDIO_FILENAME, META_FILENAME, slugify
 
 
 @dataclass
@@ -137,17 +138,28 @@ class LiveTranscriptionSession:
         if not self.audio_stream:
             raise RecordingError("Audio stream not initialized")
 
-        filename = generate_audio_filename(self.title, self.settings.audio.format)
-        audio_path = self.settings.directories.raw_audio / filename
+        notes_root = self.settings.directories.notes_root
+        notes_root.mkdir(parents=True, exist_ok=True)
+
+        from datetime import date
+
+        effective_title = self.title or "untitled"
+        slug = slugify(effective_title, date.today(), notes_root)
+        note_dir = notes_root / slug
+        note_dir.mkdir(parents=True, exist_ok=True)
+        audio_path = note_dir / AUDIO_FILENAME
+
         self.audio_stream.save_recording(audio_path, title=self.title)
         self.audio_stream.close()
+
+        self._write_live_meta(note_dir, effective_title)
 
         total_words = 0
         transcript_path = None
         if self.transcriber:
             total_words = self.transcriber.total_words
             if self.transcriber.segments:
-                transcript_path = audio_path.with_suffix(".live.txt")
+                transcript_path = note_dir / "transcript.live.txt"
                 self.transcriber.export_transcript(transcript_path)
 
         duration_seconds = time.monotonic() - self.start_time
@@ -264,10 +276,23 @@ class LiveTranscriptionSession:
 
     @property
     def _debug_dir(self) -> Path:
-        debug_dir = self.settings.directories.transcriptions / "debug-live"
+        debug_dir = self.settings.directories.notes_root / ".debug-live"
         if self.debug:
             debug_dir.mkdir(parents=True, exist_ok=True)
         return debug_dir
+
+    def _write_live_meta(self, note_dir: Path, title: str) -> None:
+        from datetime import datetime
+
+        meta = {
+            "title": title,
+            "date": datetime.now().isoformat(),
+            "mic": "default",
+            "tags": [],
+        }
+        meta_path = note_dir / META_FILENAME
+        with meta_path.open("wb") as fh:
+            tomli_w.dump(meta, fh)
 
     def _write_debug_chunk(self, data: bytes, path: Path):
         if not data or not self.audio_stream:

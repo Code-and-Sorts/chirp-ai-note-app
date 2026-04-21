@@ -1,20 +1,18 @@
-import json
+from __future__ import annotations
+
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from config.settings import ChirpSettings
-from transcriber.compression import JSONCompressor
 from transcriber.whisper_transcriber import WhisperTranscriber
-from utils.file_utils import get_audio_files
+from utils.file_utils import NoteRecord, list_notes
 from utils.popup_manager import PopupManager
-from utils.time_utils import derive_recording_id
 
 
 class BatchProcessor:
-    def __init__(self, settings: ChirpSettings, model_override: Optional[str] = None):
+    def __init__(self, settings: ChirpSettings, model_override: str | None = None):
         if model_override:
             settings = settings.model_copy(
                 update={
@@ -25,38 +23,32 @@ class BatchProcessor:
             )
         self.settings = settings
         self.transcriber = WhisperTranscriber(settings)
-        self.compressor = JSONCompressor()
         self.popup_manager = PopupManager()
         self._lock = threading.Lock()
 
-    def process_files(
+    def process_records(
         self,
-        audio_files: list[Path],
+        records: list[NoteRecord],
         force: bool = False,
-        progress_callback: Optional[Callable] = None,
-        on_segment: Optional[Callable] = None,
-        max_workers: int = 1,  # Keep at 1 for Whisper to avoid memory issues
+        progress_callback: Callable | None = None,
+        on_segment: Callable | None = None,
+        max_workers: int = 1,
     ) -> list[dict[str, Any]]:
-        files_to_process = self._filter_files_to_process(audio_files, force)
+        records_to_process = self._filter_records(records, force)
 
-        if not files_to_process:
+        if not records_to_process:
             return []
-
-        self.settings.directories.transcriptions.mkdir(parents=True, exist_ok=True)
-
-        results = []
 
         if max_workers == 1:
             results = self._process_sequentially(
-                files_to_process, progress_callback, on_segment
+                records_to_process, progress_callback, on_segment
             )
         else:
             results = self._process_concurrently(
-                files_to_process, progress_callback, max_workers
+                records_to_process, progress_callback, max_workers
             )
 
         success_count = sum(1 for r in results if r["success"])
-
         if success_count > 0:
             self.popup_manager.show_transcription_complete(success_count)
 
@@ -64,151 +56,101 @@ class BatchProcessor:
 
     def _process_sequentially(
         self,
-        files_to_process: list[Path],
-        progress_callback: Optional[Callable] = None,
-        on_segment: Optional[Callable] = None,
+        records: list[NoteRecord],
+        progress_callback: Callable | None,
+        on_segment: Callable | None,
     ) -> list[dict[str, Any]]:
         results = []
-
-        for audio_file in files_to_process:
-            try:
-                result = self._process_single_file(audio_file, on_segment=on_segment)
-                results.append(result)
-
-                if progress_callback:
-                    progress_callback()
-
-            except Exception as e:
-                error_result = {
-                    "success": False,
-                    "filename": audio_file.name,
-                    "error": str(e),
-                    "transcribed_at": datetime.now().isoformat(),
-                }
-                results.append(error_result)
-
-                if progress_callback:
-                    progress_callback()
-
+        for record in records:
+            results.append(self._process_record_safely(record, on_segment))
+            if progress_callback:
+                progress_callback()
         return results
 
     def _process_concurrently(
         self,
-        files_to_process: list[Path],
-        progress_callback: Optional[Callable] = None,
-        max_workers: int = 2,
+        records: list[NoteRecord],
+        progress_callback: Callable | None,
+        max_workers: int,
     ) -> list[dict[str, Any]]:
         results = []
-
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_file = {
-                executor.submit(self._process_single_file, audio_file): audio_file
-                for audio_file in files_to_process
+            future_to_record = {
+                executor.submit(self._process_record_safely, record, None): record
+                for record in records
             }
-
-            for future in as_completed(future_to_file):
-                audio_file = future_to_file[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    error_result = {
-                        "success": False,
-                        "filename": audio_file.name,
-                        "error": str(e),
-                        "transcribed_at": datetime.now().isoformat(),
-                    }
-                    results.append(error_result)
-
+            for future in as_completed(future_to_record):
+                results.append(future.result())
                 if progress_callback:
                     progress_callback()
-
         return results
 
-    def _process_single_file(
-        self, audio_file: Path, on_segment: Optional[Callable] = None
+    def _process_record_safely(
+        self,
+        record: NoteRecord,
+        on_segment: Callable | None,
     ) -> dict[str, Any]:
+        try:
+            return self._process_record(record, on_segment)
+        except Exception as exc:
+            return {
+                "success": False,
+                "slug": record.slug,
+                "filename": record.audio.name if record.audio else record.slug,
+                "error": str(exc),
+                "transcribed_at": datetime.now().isoformat(),
+            }
+
+    def _process_record(
+        self,
+        record: NoteRecord,
+        on_segment: Callable | None,
+    ) -> dict[str, Any]:
+        if record.audio is None:
+            return {
+                "success": False,
+                "slug": record.slug,
+                "filename": record.slug,
+                "error": "No audio file",
+                "transcribed_at": datetime.now().isoformat(),
+            }
+
         transcription_result = self.transcriber.transcribe_file(
-            audio_file, on_segment=on_segment
+            record.audio, on_segment=on_segment
         )
 
-        metadata = transcription_result.get("metadata", {})
-        recording_id = metadata.get("recording_id")
-        output_path = self._get_output_path(audio_file, recording_id)
+        if transcription_result.get("success"):
+            transcript_path = record.dir / "transcript.txt"
+            transcript_path.write_text(
+                transcription_result.get("full_text", ""),
+                encoding="utf-8",
+            )
+            transcription_result["transcript_path"] = str(transcript_path)
 
-        if transcription_result["success"]:
-            if self.compressor.compress_json(transcription_result, output_path):
-                transcription_result["output_path"] = str(output_path)
-                transcription_result["compressed"] = True
-                metadata_path = self._write_metadata_file(output_path.parent, metadata)
-                if metadata_path:
-                    transcription_result["metadata_path"] = str(metadata_path)
-            else:
-                transcription_result["compressed"] = False
-                transcription_result["compression_error"] = (
-                    "Failed to compress transcription"
-                )
-
+        transcription_result["slug"] = record.slug
         return transcription_result
 
-    def _filter_files_to_process(
-        self, audio_files: list[Path], force: bool
-    ) -> list[Path]:
+    def _filter_records(
+        self, records: list[NoteRecord], force: bool
+    ) -> list[NoteRecord]:
         if force:
-            return audio_files
-
-        files_to_process = []
-
-        for audio_file in audio_files:
-            output_path = self._get_output_path(audio_file)
-            if not output_path.exists():
-                files_to_process.append(audio_file)
-
-        return files_to_process
-
-    def _get_output_path(
-        self, audio_file: Path, recording_id: Optional[str] = None
-    ) -> Path:
-        transcription_id = recording_id or derive_recording_id(audio_file)
-        transcription_dir = self.settings.directories.transcriptions / transcription_id
-        return transcription_dir / f"{transcription_id}.json.gz"
-
-    def _write_metadata_file(
-        self, target_directory: Path, metadata: dict[str, Any]
-    ) -> Optional[Path]:
-        if not metadata:
-            return None
-
-        metadata_path = target_directory / "metadata.json"
-
-        try:
-            target_directory.mkdir(parents=True, exist_ok=True)
-            with metadata_path.open("w", encoding="utf-8") as fh:
-                json.dump(metadata, fh, indent=2, ensure_ascii=False)
-            return metadata_path
-        except Exception:
-            return None
-
-    def get_transcription_data(self, audio_file_path: Path) -> Optional[dict[str, Any]]:
-        output_path = self._get_output_path(audio_file_path)
-
-        if not output_path.exists():
-            return None
-
-        try:
-            return self.compressor.decompress_json(output_path)
-        except Exception:
-            return None
+            return [record for record in records if record.audio is not None]
+        return [
+            record
+            for record in records
+            if record.audio is not None and record.transcript is None
+        ]
 
     def process_directory(
         self,
-        directory: Path,
+        directory,
         force: bool = False,
-        progress_callback: Optional[Callable] = None,
+        progress_callback: Callable | None = None,
     ) -> dict[str, Any]:
-        audio_files = get_audio_files(directory)
+        records = list_notes(directory)
+        candidates = [record for record in records if record.audio is not None]
 
-        if not audio_files:
+        if not candidates:
             return {
                 "success": True,
                 "processed_count": 0,
@@ -217,29 +159,26 @@ class BatchProcessor:
                 "message": f"No audio files found in {directory}",
             }
 
-        results = self.process_files(audio_files, force, progress_callback)
-
+        results = self.process_records(candidates, force, progress_callback)
         success_count = sum(1 for r in results if r["success"])
 
         return {
             "success": True,
             "processed_count": success_count,
-            "total_count": len(audio_files),
+            "total_count": len(candidates),
             "results": results,
-            "message": f"Processed {success_count}/{len(audio_files)} files successfully",
+            "message": f"Processed {success_count}/{len(candidates)} notes successfully",
         }
 
     def get_processing_stats(self) -> dict[str, Any]:
-        transcription_files = list(
-            self.settings.directories.transcriptions.rglob("*.json.gz")
-        )
-
-        total_files = len(transcription_files)
-        total_size = sum(f.stat().st_size for f in transcription_files)
+        notes_root = self.settings.directories.notes_root
+        records = list_notes(notes_root)
+        transcripts = [record.transcript for record in records if record.transcript]
+        total_size = sum(transcript.stat().st_size for transcript in transcripts)
 
         return {
-            "total_transcriptions": total_files,
+            "total_transcriptions": len(transcripts),
             "total_size_mb": total_size / (1024 * 1024),
-            "transcription_directory": str(self.settings.directories.transcriptions),
+            "notes_root": str(notes_root),
             "model_info": self.transcriber.get_model_info(),
         }

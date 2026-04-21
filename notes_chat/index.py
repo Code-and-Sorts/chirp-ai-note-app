@@ -20,7 +20,7 @@ class IndexManager:
     def __init__(self, config: ChirpSettings):
         self.config = config
         self.settings = config.notes_chat
-        self.notes_dir = config.directories.notes
+        self.notes_root = config.directories.notes_root
 
         self.chroma_client = chromadb.PersistentClient(
             path=str(self.settings.index_dir / "chroma"),
@@ -116,12 +116,12 @@ class IndexManager:
             self.bm25_file.unlink()
 
     def _scan_notes_files(self) -> dict[str, dict[str, Any]]:
-        """Scan notes directory and return file signatures."""
+        """Scan per-note directories and return file signatures."""
         files: dict[str, dict[str, Any]] = {}
-        if not self.notes_dir.exists():
+        if not self.notes_root.exists():
             return files
 
-        for note_file in self.notes_dir.glob("*.md"):
+        for note_file in self.notes_root.glob("*/notes.md"):
             stat = note_file.stat()
             files[str(note_file)] = {
                 "mtime": stat.st_mtime,

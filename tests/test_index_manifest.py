@@ -8,10 +8,12 @@ class TestIndexManifest:
     def test_signature_calculation(self, tmp_path):
         """Test file signature calculation."""
         config = ChirpSettings()
-        config.directories.notes = tmp_path
+        config.directories.notes_root = tmp_path
         config.notes_chat.index_dir = tmp_path / ".notes_index"
 
-        note_file = tmp_path / "test.md"
+        note_dir = tmp_path / "test-2026-04-20"
+        note_dir.mkdir()
+        note_file = note_dir / "notes.md"
         note_file.write_text(
             "# Test Meeting\n\nThis is some longer content that should be sufficient for chunking and indexing purposes. It contains enough text to pass the minimum length requirements."
         )
@@ -33,10 +35,12 @@ class TestIndexManifest:
         mock_post.return_value = mock_response
 
         config = ChirpSettings()
-        config.directories.notes = tmp_path
+        config.directories.notes_root = tmp_path
         config.notes_chat.index_dir = tmp_path / ".notes_index"
 
-        note_file = tmp_path / "test.md"
+        note_dir = tmp_path / "test-2026-04-20"
+        note_dir.mkdir()
+        note_file = note_dir / "notes.md"
         note_file.write_text(
             "# Test Meeting\n\nThis is some longer content that should be sufficient for chunking and indexing purposes. It contains enough text to pass the minimum length requirements."
         )
@@ -61,10 +65,12 @@ class TestIndexManifest:
         mock_post.return_value = mock_response
 
         config = ChirpSettings()
-        config.directories.notes = tmp_path
+        config.directories.notes_root = tmp_path
         config.notes_chat.index_dir = tmp_path / ".notes_index"
 
-        note_file = tmp_path / "test.md"
+        note_dir = tmp_path / "test-2026-04-20"
+        note_dir.mkdir()
+        note_file = note_dir / "notes.md"
         note_file.write_text(
             "# Test Meeting\n\nThis is some longer content that should be sufficient for chunking and indexing purposes. It contains enough text to pass the minimum length requirements."
         )
@@ -87,10 +93,12 @@ class TestIndexManifest:
         mock_post.return_value = mock_response
 
         config = ChirpSettings()
-        config.directories.notes = tmp_path
+        config.directories.notes_root = tmp_path
         config.notes_chat.index_dir = tmp_path / ".notes_index"
 
-        note_file = tmp_path / "test.md"
+        note_dir = tmp_path / "test-2026-04-20"
+        note_dir.mkdir()
+        note_file = note_dir / "notes.md"
         note_file.write_text(
             "# Test Meeting\n\nThis is some longer content that should be sufficient for chunking and indexing purposes. It contains enough text to pass the minimum length requirements."
         )
@@ -115,10 +123,12 @@ class TestIndexManifest:
         mock_post.return_value = mock_response
 
         config = ChirpSettings()
-        config.directories.notes = tmp_path
+        config.directories.notes_root = tmp_path
         config.notes_chat.index_dir = tmp_path / ".notes_index"
 
-        note_file = tmp_path / "test.md"
+        note_dir = tmp_path / "test-2026-04-20"
+        note_dir.mkdir()
+        note_file = note_dir / "notes.md"
         note_file.write_text(
             "# Test Meeting\n\nThis is some longer content that should be sufficient for chunking and indexing purposes. It contains enough text to pass the minimum length requirements."
         )
@@ -143,10 +153,12 @@ class TestIndexManifest:
         mock_post.return_value.status_code = 500
 
         config = ChirpSettings()
-        config.directories.notes = tmp_path
+        config.directories.notes_root = tmp_path
         config.notes_chat.index_dir = tmp_path / ".notes_index"
 
-        note_file = tmp_path / "test.md"
+        note_dir = tmp_path / "test-2026-04-20"
+        note_dir.mkdir()
+        note_file = note_dir / "notes.md"
         note_file.write_text(
             "# Test Meeting\n\nThis is some longer content that should be sufficient for chunking and indexing purposes. It contains enough text to pass the minimum length requirements."
         )
@@ -160,7 +172,7 @@ class TestIndexManifest:
     def test_metadata_extraction(self, tmp_path):
         """Test extraction of metadata from notes files."""
         config = ChirpSettings()
-        config.directories.notes = tmp_path
+        config.directories.notes_root = tmp_path
         config.notes_chat.index_dir = tmp_path / ".notes_index"
 
         content = """# Weekly Standup Meeting
@@ -172,7 +184,9 @@ class TestIndexManifest:
 Test meeting content
 """
 
-        note_file = tmp_path / "meetings_2025_01_15.md"
+        note_dir = tmp_path / "weekly-standup-2025-01-15"
+        note_dir.mkdir()
+        note_file = note_dir / "notes.md"
         note_file.write_text(content)
 
         manager = IndexManager(config)

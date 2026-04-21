@@ -8,7 +8,7 @@ from notes.note_editor import EditorResult
 
 def _make_settings(tmp_path: Path, enabled: bool) -> ChirpSettings:
     settings = ChirpSettings()
-    settings.directories.notes = tmp_path
+    settings.directories.notes_root = tmp_path
     settings.notes_chat.auto_index = enabled
     return settings
 
@@ -24,7 +24,9 @@ def test_notes_auto_index_enabled_success(tmp_path, monkeypatch):
     settings = _make_settings(tmp_path, enabled=True)
     monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
 
-    note_path = tmp_path / "Test-Note.md"
+    note_dir = tmp_path / "test-note-2026-04-20"
+    note_dir.mkdir(exist_ok=True)
+    note_path = note_dir / "notes.md"
     context = NoteContext(
         path=note_path,
         title="Test Note",
@@ -72,7 +74,9 @@ def test_notes_auto_index_disabled(tmp_path, monkeypatch):
     settings = _make_settings(tmp_path, enabled=False)
     monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
 
-    note_path = tmp_path / "Test-Note.md"
+    note_dir = tmp_path / "test-note-2026-04-20"
+    note_dir.mkdir(exist_ok=True)
+    note_path = note_dir / "notes.md"
     context = NoteContext(
         path=note_path,
         title="Test Note",
@@ -110,7 +114,9 @@ def test_notes_auto_index_add_failure(tmp_path, monkeypatch):
     settings = _make_settings(tmp_path, enabled=True)
     monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
 
-    note_path = tmp_path / "Test-Note.md"
+    note_dir = tmp_path / "test-note-2026-04-20"
+    note_dir.mkdir(exist_ok=True)
+    note_path = note_dir / "notes.md"
     context = NoteContext(
         path=note_path,
         title="Test Note",

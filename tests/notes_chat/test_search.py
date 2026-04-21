@@ -77,9 +77,14 @@ Review and prioritization of critical bugs.
 Quarterly company updates and announcements.
 """
 
-        (notes_dir / "meetings_2025_09_13.md").write_text(note1_content)
-        (notes_dir / "meetings_2025_09_14.md").write_text(note2_content)
-        (notes_dir / "meetings_2025_09_15.md").write_text(note3_content)
+        for folder, content in [
+            ("meetings-2025-09-13", note1_content),
+            ("meetings-2025-09-14", note2_content),
+            ("meetings-2025-09-15", note3_content),
+        ]:
+            note_subdir = notes_dir / folder
+            note_subdir.mkdir()
+            (note_subdir / "notes.md").write_text(content)
 
         yield notes_dir
 
@@ -89,7 +94,7 @@ def mock_config(temp_notes_dir):
     """Create mock config with temporary notes directory"""
     config = Mock(spec=ChirpSettings)
     config.directories = Mock()
-    config.directories.notes = str(temp_notes_dir)
+    config.directories.notes_root = str(temp_notes_dir)
     return config
 
 
@@ -128,7 +133,7 @@ class TestLiveSearchSession:
         """Test handling of non-existent notes directory"""
         config = Mock(spec=ChirpSettings)
         config.directories = Mock()
-        config.directories.notes = "/nonexistent/path"
+        config.directories.notes_root = "/nonexistent/path"
         session = LiveSearchSession(config)
 
         assert session.notes == []
@@ -164,8 +169,8 @@ class TestLiveSearchSession:
         assert "Meeting Notes - September 13, 2025" in filtered_titles
 
     def test_filter_notes_filename_search(self, search_session):
-        """Test searching by filename"""
-        search_session.search_term = "meetings_2025_09_14"
+        """Test searching by slug (folder name)"""
+        search_session.search_term = "meetings-2025-09-14"
         search_session.filter_notes()
 
         filtered_titles = [
@@ -175,18 +180,18 @@ class TestLiveSearchSession:
         assert "Meeting Notes - September 14, 2025" in filtered_titles
 
     def test_filter_notes_filename_partial_match(self, search_session):
-        """Test partial filename matching"""
-        search_session.search_term = "2025_09"
+        """Test partial slug matching"""
+        search_session.search_term = "2025-09"
         search_session.filter_notes()
 
         filtered_titles = [
             meeting_title for meeting_title, _, _ in search_session.filtered_notes
         ]
-        assert len(filtered_titles) == 3  # All files have "2025_09" in filename
+        assert len(filtered_titles) == 3  # All slugs contain "2025-09"
 
     def test_filter_notes_multiple_matches(self, search_session):
         """Test filtering with multiple matches"""
-        search_session.search_term = "2025"
+        search_session.search_term = "September"
         search_session.filter_notes()
 
         filtered_titles = [
@@ -415,7 +420,7 @@ class TestLiveSearchSession:
         """Test starting search session with no notes"""
         config = Mock(spec=ChirpSettings)
         config.directories = Mock()
-        config.directories.notes = "/empty/path"
+        config.directories.notes_root = "/empty/path"
         session = LiveSearchSession(config)
 
         session.start()

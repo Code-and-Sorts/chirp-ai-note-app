@@ -6,16 +6,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import tomli_w
+
 from config.settings import ChirpSettings
-from utils.file_utils import ensure_directory, sanitize_filename
+from utils.file_utils import (
+    META_FILENAME,
+    NOTES_FILENAME,
+    ensure_directory,
+    slugify,
+)
 
 DEFAULT_NOTE_PREFIX = "note"
 
 
 @dataclass
 class NoteContext:
-    """Information required to edit a manual note."""
-
     path: Path
     title: str
     content: str
@@ -23,22 +28,23 @@ class NoteContext:
 
 
 class ManualNoteManager:
-    """Prepare manual notes for editing and handle boilerplate content."""
-
     def __init__(self, settings: ChirpSettings):
         self._settings = settings
 
     def prepare_note(
         self, name: str | None = None, now: datetime | None = None
     ) -> NoteContext:
-        """Create or update a manual note and return the editing context."""
-
         current_time = now or datetime.now()
 
         title = self._resolve_title(name, current_time)
-        note_path = self._resolve_path(title)
+        notes_root = self._settings.directories.notes_root
+        ensure_directory(notes_root)
 
-        ensure_directory(note_path.parent)
+        note_dir = self._resolve_note_dir(notes_root, title, current_time)
+        ensure_directory(note_dir)
+
+        note_path = note_dir / NOTES_FILENAME
+        meta_path = note_dir / META_FILENAME
 
         if note_path.exists():
             content = self._prepare_existing_content(note_path, title, current_time)
@@ -46,27 +52,41 @@ class ManualNoteManager:
         else:
             content = self._prepare_new_content(title, current_time)
             is_new = True
+            self._write_initial_meta(meta_path, title, current_time)
 
         return NoteContext(path=note_path, title=title, content=content, is_new=is_new)
 
     def _resolve_title(self, provided: str | None, now: datetime) -> str:
         if provided and provided.strip():
             return provided.strip()
+        return DEFAULT_NOTE_PREFIX
 
-        return f"{DEFAULT_NOTE_PREFIX}-{now.strftime('%Y-%m-%d')}"
+    def _resolve_note_dir(self, notes_root: Path, title: str, now: datetime) -> Path:
+        existing_slug = self._find_existing_slug(notes_root, title)
+        if existing_slug is not None:
+            return notes_root / existing_slug
+        slug = slugify(title, now.date(), notes_root)
+        return notes_root / slug
 
-    def _resolve_path(self, title: str) -> Path:
-        notes_dir = Path(self._settings.directories.notes)
+    def _find_existing_slug(self, notes_root: Path, title: str) -> str | None:
+        if not notes_root.exists():
+            return None
+        for candidate in notes_root.iterdir():
+            if not candidate.is_dir():
+                continue
+            meta_path = candidate / META_FILENAME
+            if not meta_path.exists():
+                continue
+            try:
+                import tomllib
 
-        sanitized = sanitize_filename(title)
-        sanitized = sanitized.replace(" ", "-")
-        if not sanitized:
-            sanitized = (
-                f"{DEFAULT_NOTE_PREFIX}-{datetime.now().strftime('%Y%m%d-%H%M')}"
-            )
-
-        filename = f"{sanitized}.md"
-        return notes_dir / filename
+                with meta_path.open("rb") as fh:
+                    meta = tomllib.load(fh)
+            except Exception:
+                continue
+            if meta.get("title") == title:
+                return candidate.name
+        return None
 
     def _prepare_new_content(self, title: str, now: datetime) -> str:
         timestamp = now.strftime("%Y-%m-%d %H:%M")
@@ -81,7 +101,6 @@ class ManualNoteManager:
 
         if remainder:
             return f"{header}\n\n{timestamp}\n\n{remainder}"
-
         return f"{header}\n\n{timestamp}\n\n"
 
     def _split_header(self, content: str, fallback_title: str) -> tuple[str, str]:
@@ -100,3 +119,13 @@ class ManualNoteManager:
             header_line = f"# {fallback_title}"
 
         return header_line, remainder
+
+    def _write_initial_meta(self, meta_path: Path, title: str, now: datetime) -> None:
+        meta = {
+            "title": title,
+            "date": now.isoformat(),
+            "tags": [],
+            "source": "manual",
+        }
+        with meta_path.open("wb") as fh:
+            tomli_w.dump(meta, fh)

@@ -13,11 +13,7 @@ from rich.text import Text
 
 from chirp.exceptions import *
 from config.settings import ChirpSettings, get_settings
-from utils.file_utils import (
-    get_audio_files,
-    get_notes_files,
-    get_transcription_files,
-)
+from utils.file_utils import NoteRecord, list_notes
 
 app = typer.Typer(
     name="chirp",
@@ -131,7 +127,7 @@ def _prompt_title() -> str:
     console.print(" [yellow bold]title[/yellow bold] [dim](required)[/dim]")
     while True:
         try:
-            value = console.input(" [green]›[/green] ").strip()
+            value: str = console.input(" [green]›[/green] ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
             raise typer.Exit(1)
@@ -395,22 +391,24 @@ def _run_live_transcription(
 def notes_list():
     """Browse your notes"""
     settings = get_settings()
-    notes_files = get_notes_files(settings.directories.notes)
+    records = [
+        record
+        for record in list_notes(settings.directories.notes_root)
+        if record.notes is not None
+    ]
 
-    if not notes_files:
+    if not records:
         console.print(
-            f"[yellow]No notes found in {settings.directories.notes}[/yellow]"
+            f"[yellow]No notes found in {settings.directories.notes_root}[/yellow]"
         )
         console.print(
             "[dim]Run 'chirp transcribe' to create notes from recordings[/dim]"
         )
         return
 
-    from datetime import datetime as dt
-
     console.print()
     console.print(
-        f" [bold]Your notes[/bold] [dim]· {len(notes_files)} total · sorted by date[/dim]"
+        f" [bold]Your notes[/bold] [dim]· {len(records)} total · sorted by date[/dim]"
     )
     console.print()
 
@@ -425,24 +423,18 @@ def notes_list():
     table.add_column("date", style="cyan", no_wrap=True)
     table.add_column("length", style="dim", justify="right", no_wrap=True)
 
-    for idx, note_file in enumerate(reversed(notes_files), start=1):
-        title = note_file.stem
-        try:
-            with open(note_file, encoding="utf-8") as f:
-                for raw in f:
-                    stripped = raw.strip()
-                    if stripped.startswith("# "):
-                        title = stripped[2:].strip()
-                        break
-        except OSError:
-            pass
+    for idx, record in enumerate(reversed(records), start=1):
+        title = _resolve_display_title(record)
 
         try:
-            stat = note_file.stat()
-            date_str = dt.fromtimestamp(stat.st_mtime).strftime("%b %d").lower()
-            size_kb = stat.st_size / 1024
-            length_str = f"{size_kb:.1f} KB"
+            stat = record.notes.stat() if record.notes else None
         except OSError:
+            stat = None
+
+        if stat is not None:
+            date_str = record.created_at.strftime("%b %d").lower()
+            length_str = f"{stat.st_size / 1024:.1f} KB"
+        else:
             date_str = "?"
             length_str = "?"
 
@@ -452,6 +444,22 @@ def notes_list():
     console.print()
     console.print(" [dim]› chirp note [NAME]      · open a note by name[/dim]")
     console.print(" [dim]› chirp ask              · ask a question[/dim]")
+
+
+def _resolve_display_title(record: NoteRecord) -> str:
+    if record.title:
+        return record.title
+    if record.notes is None:
+        return record.slug
+    try:
+        with record.notes.open(encoding="utf-8") as fh:
+            for raw in fh:
+                stripped = raw.strip()
+                if stripped.startswith("# "):
+                    return stripped[2:].strip()
+    except OSError:
+        pass
+    return record.slug
 
 
 @app.command(rich_help_panel=MAIN_PANEL)
@@ -628,13 +636,11 @@ def transcribe(
         )
         raise typer.Exit(2)
 
-    if input_dir is None:
-        input_dir = settings.directories.raw_audio
+    notes_root = input_dir or settings.directories.notes_root
+    records = [record for record in list_notes(notes_root) if record.audio is not None]
 
-    audio_files = get_audio_files(input_dir)
-
-    if not audio_files:
-        console.print(f"[yellow]No audio files found in {input_dir}[/yellow]")
+    if not records:
+        console.print(f"[yellow]No audio files found in {notes_root}[/yellow]")
         return
 
     if model:
@@ -653,7 +659,7 @@ def transcribe(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
         )
-        task = progress.add_task("Transcribing audio files...", total=len(audio_files))
+        task = progress.add_task("Transcribing audio files...", total=len(records))
 
         def on_segment(segment):
             text = segment.get("text", "").strip()
@@ -665,8 +671,8 @@ def transcribe(
         with Live(
             Group(streaming_text, progress), console=console, refresh_per_second=4
         ):
-            results = processor.process_files(
-                audio_files,
+            results = processor.process_records(
+                records,
                 force=force,
                 progress_callback=lambda: progress.update(task, advance=1),
                 on_segment=segment_callback,
@@ -677,23 +683,21 @@ def transcribe(
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            task = progress.add_task(
-                "Transcribing audio files...", total=len(audio_files)
-            )
+            task = progress.add_task("Transcribing audio files...", total=len(records))
 
-            results = processor.process_files(
-                audio_files,
+            results = processor.process_records(
+                records,
                 force=force,
                 progress_callback=lambda: progress.update(task, advance=1),
             )
 
     success_count = sum(1 for r in results if r["success"])
     processed_count = len(results)
-    skipped_count = len(audio_files) - processed_count
+    skipped_count = len(records) - processed_count
 
     if processed_count > 0:
         console.print(
-            f"[green]✅ Successfully transcribed {success_count}/{processed_count} files[/green]"
+            f"[green]✅ Successfully transcribed {success_count}/{processed_count} notes[/green]"
         )
         if not no_notes:
             console.print(
@@ -702,26 +706,26 @@ def transcribe(
 
     if skipped_count > 0 and not force:
         console.print(
-            f"[yellow]⏭️  Skipped {skipped_count} file(s) - already transcribed (use --force to re-transcribe)[/yellow]"
+            f"[yellow]⏭️  Skipped {skipped_count} note(s) - already transcribed (use --force to re-transcribe)[/yellow]"
         )
 
 
-def _print_missing_recording(settings, audio_files, note_id: int) -> None:
-    raw_dir = settings.directories.raw_audio
-    if not audio_files:
+def _print_missing_recording(settings, records, note_id: int) -> None:
+    notes_root = settings.directories.notes_root
+    if not records:
         console.print(
-            f"[red]No recording at index {note_id}. No audio files in {raw_dir}.[/red]"
+            f"[red]No recording at index {note_id}. No recordings in {notes_root}.[/red]"
         )
         return
     preview_limit = 3
     console.print(
-        f"[red]No recording at index {note_id}. Valid indices are 1-{len(audio_files)} "
-        f"(newest first, from {raw_dir}):[/red]"
+        f"[red]No recording at index {note_id}. Valid indices are 1-{len(records)} "
+        f"(newest first, from {notes_root}):[/red]"
     )
-    for idx, path in enumerate(audio_files[:preview_limit], start=1):
-        console.print(f"[dim]  {idx}. {path.name}[/dim]")
-    if len(audio_files) > preview_limit:
-        console.print(f"[dim]  ... and {len(audio_files) - preview_limit} more[/dim]")
+    for idx, record in enumerate(records[:preview_limit], start=1):
+        console.print(f"[dim]  {idx}. {record.slug}[/dim]")
+    if len(records) > preview_limit:
+        console.print(f"[dim]  ... and {len(records) - preview_limit} more[/dim]")
 
 
 def _run_transcribe_pipeline(
@@ -740,12 +744,19 @@ def _run_transcribe_pipeline(
 
     from transcriber.batch_processor import BatchProcessor
 
-    audio_files = list(reversed(get_audio_files(settings.directories.raw_audio)))
-    if note_id < 1 or note_id > len(audio_files):
-        _print_missing_recording(settings, audio_files, note_id)
+    records = [
+        record
+        for record in list_notes(settings.directories.notes_root)
+        if record.audio is not None
+    ]
+    records_newest_first = list(reversed(records))
+    if note_id < 1 or note_id > len(records_newest_first):
+        _print_missing_recording(settings, records_newest_first, note_id)
         raise typer.Exit(1)
 
-    audio_path = audio_files[note_id - 1]
+    target_record = records_newest_first[note_id - 1]
+    assert target_record.audio is not None, "filtered list guarantees audio is present"
+    audio_path: Path = target_record.audio
 
     steps = [
         ("loaded audio", "pending"),
@@ -803,8 +814,8 @@ def _run_transcribe_pipeline(
                     live.update(render())
 
             processor = BatchProcessor(settings, model_override=model)
-            results = processor.process_files(
-                [audio_path], force=False, on_segment=on_segment
+            results = processor.process_records(
+                [target_record], force=False, on_segment=on_segment
             )
             set_state(2, "done")
             live.update(render())
@@ -813,17 +824,16 @@ def _run_transcribe_pipeline(
                 set_state(3, "running")
                 live.update(render())
                 from notes.note_generator import NoteGenerator
-                from utils.file_utils import get_transcription_files
 
-                transcription_files = [
-                    t
-                    for t in get_transcription_files(
-                        settings.directories.transcriptions
-                    )
-                    if t.stem == audio_path.stem
+                refreshed_records = [
+                    record
+                    for record in list_notes(settings.directories.notes_root)
+                    if record.slug == target_record.slug and record.transcript
                 ]
-                if transcription_files:
-                    NoteGenerator(settings).generate_daily_notes(transcription_files)
+                if refreshed_records:
+                    NoteGenerator(settings).generate_for_records(
+                        refreshed_records, force=True
+                    )
                     set_state(3, "done")
                 else:
                     set_state(3, "skip")
@@ -856,33 +866,34 @@ def generate(
     force: bool = typer.Option(
         False, "--force", "-f", help="Regenerate notes even if they exist"
     ),
-    filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        "-n",
-        help="Override the default filename for generated notes",
-    ),
 ):
     """Generate meeting notes from transcriptions"""
     from notes.note_generator import NoteGenerator
 
     settings = get_settings()
 
-    transcription_files = get_transcription_files(settings.directories.transcriptions)
+    records = [
+        record
+        for record in list_notes(settings.directories.notes_root)
+        if record.transcript is not None
+    ]
 
-    if not transcription_files:
+    if not records:
         console.print(
-            f"[yellow]No transcription files found in {settings.directories.transcriptions}[/yellow]"
+            f"[yellow]No transcripts found in {settings.directories.notes_root}[/yellow]"
         )
         console.print("[dim]Run 'chirp transcribe' first[/dim]")
+        return
+
+    pending = [record for record in records if force or record.notes is None]
+    if not pending:
+        console.print("[green]All transcripts already have notes[/green]")
         return
 
     note_generator = NoteGenerator(settings)
 
     console.print("[bold blue]🧠 Generating notes with AI...[/bold blue]")
-    result = note_generator.generate_daily_notes(
-        transcription_files, force=force, filename_override=filename
-    )
+    result = note_generator.generate_for_records(pending, force=force)
 
     if result["success"]:
         console.print(f"[green]✅ Notes generated: {result['filename']}[/green]")
@@ -901,19 +912,13 @@ def transcribe_and_generate(
         "-f",
         help="Process all files, including already processed ones",
     ),
-    filename: Optional[str] = typer.Option(
-        None,
-        "--filename",
-        "-n",
-        help="Override the default filename for generated notes",
-    ),
 ):
     """Process audio files (transcribe + generate notes)"""
     get_settings()
 
     try:
         transcribe(input_dir=input_dir, force=force)
-        generate(force=force, filename=filename)
+        generate(force=force)
     except Exception as e:
         console.print(f"[red]Error in process command: {e}[/red]")
 
@@ -937,16 +942,16 @@ def stats():
     table.add_column("Category", style="cyan")
     table.add_column("Value", style="green")
 
-    audio_files = get_audio_files(settings.directories.raw_audio)
-    transcription_files = get_transcription_files(settings.directories.transcriptions)
-    notes_files = get_notes_files(settings.directories.notes)
+    records = list_notes(settings.directories.notes_root)
+    audio_count = sum(1 for record in records if record.audio is not None)
+    transcript_count = sum(1 for record in records if record.transcript is not None)
+    notes_count = sum(1 for record in records if record.notes is not None)
 
-    table.add_row("Raw Audio Files", str(len(audio_files)))
-    table.add_row("Transcriptions", str(len(transcription_files)))
-    table.add_row("Notes", str(len(notes_files)))
-    table.add_row("Audio Directory", str(settings.directories.raw_audio))
-    table.add_row("Transcription Directory", str(settings.directories.transcriptions))
-    table.add_row("Notes Directory", str(settings.directories.notes))
+    table.add_row("Notes", str(len(records)))
+    table.add_row("With Audio", str(audio_count))
+    table.add_row("With Transcript", str(transcript_count))
+    table.add_row("With Notes", str(notes_count))
+    table.add_row("Notes Root", str(settings.directories.notes_root))
     table.add_row("Whisper Model", settings.models.whisper)
     table.add_row("LLM Model", settings.models.llm)
     table.add_row("Embedding Model", settings.notes_chat.emb_model)
@@ -960,14 +965,8 @@ def config(
     list_config: bool = typer.Option(
         False, "--list", "-l", help="List current configuration"
     ),
-    audio_dir: Optional[Path] = typer.Option(
-        None, "--audio-dir", help="Set audio directory"
-    ),
-    transcription_dir: Optional[Path] = typer.Option(
-        None, "--transcription-dir", help="Set transcription directory"
-    ),
-    notes_dir: Optional[Path] = typer.Option(
-        None, "--notes-dir", help="Set notes directory"
+    notes_root: Optional[Path] = typer.Option(
+        None, "--notes-root", help="Set the notes root directory"
     ),
     whisper_model: Optional[str] = typer.Option(
         None,
@@ -992,10 +991,7 @@ def config(
     if list_config:
         panel = Panel.fit(
             f"""[cyan]Directories:[/cyan]
-Audio: {settings.directories.raw_audio}
-Transcriptions: {settings.directories.transcriptions}
-Notes: {settings.directories.notes}
-Templates: {settings.directories.templates}
+Notes Root: {settings.directories.notes_root}
 
 [cyan]Models:[/cyan]
 Whisper: {settings.models.whisper}
@@ -1017,16 +1013,8 @@ Interval: {settings.monitoring.warning_interval} minutes""",
 
     changes_made = False
 
-    if audio_dir:
-        settings.directories.raw_audio = audio_dir
-        changes_made = True
-
-    if transcription_dir:
-        settings.directories.transcriptions = transcription_dir
-        changes_made = True
-
-    if notes_dir:
-        settings.directories.notes = notes_dir
+    if notes_root:
+        settings.directories.notes_root = notes_root
         changes_made = True
 
     if whisper_model:

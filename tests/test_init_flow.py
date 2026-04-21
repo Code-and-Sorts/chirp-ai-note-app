@@ -14,10 +14,7 @@ from config.settings import ChirpSettings
 
 def _fake_settings(tmp_path):
     settings = ChirpSettings()
-    settings.directories.notes = tmp_path / "notes"
-    settings.directories.raw_audio = tmp_path / "audio"
-    settings.directories.transcriptions = tmp_path / "transcripts"
-    settings.directories.templates = tmp_path / "templates"
+    settings.directories.notes_root = tmp_path / "notes"
     settings.notes_chat.index_dir = tmp_path / "index"
     return settings
 

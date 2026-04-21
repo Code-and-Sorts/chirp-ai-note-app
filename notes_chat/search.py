@@ -34,20 +34,21 @@ class LiveSearchSession:
 
     def load_notes(self) -> None:
         """Load meeting names from the notes directory"""
-        notes_dir = Path(self.config.directories.notes)
-        if not notes_dir.exists():
+        notes_root = Path(self.config.directories.notes_root)
+        if not notes_root.exists():
             return
 
-        for note_file in notes_dir.glob("*.md"):
+        for note_file in notes_root.glob("*/notes.md"):
             try:
                 with open(note_file, encoding="utf-8") as f:
                     lines = f.readlines()
 
+                slug = note_file.parent.name
                 for line in lines:
                     line = line.strip()
                     if line.startswith("# "):
                         meeting_title = line[2:].strip()
-                        self.notes.append((meeting_title, note_file.name, note_file))
+                        self.notes.append((meeting_title, slug, note_file))
                         break
 
             except Exception:

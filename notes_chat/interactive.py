@@ -88,10 +88,10 @@ class InteractiveChatSession:
 
     def _count_notes(self) -> int:
         try:
-            notes_dir = self.config.directories.notes
-            if not notes_dir.exists():
+            notes_root = self.config.directories.notes_root
+            if not notes_root.exists():
                 return 0
-            return sum(1 for _ in notes_dir.glob("*.md"))
+            return sum(1 for _ in notes_root.glob("*/notes.md"))
         except OSError:
             return 0
 

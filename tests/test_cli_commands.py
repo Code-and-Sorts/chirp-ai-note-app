@@ -6,8 +6,28 @@ from config.settings import ChirpSettings
 
 def _make_settings(tmp_path: Path) -> ChirpSettings:
     settings = ChirpSettings()
-    settings.directories.notes = tmp_path
+    settings.directories.notes_root = tmp_path
     return settings
+
+
+def _write_note(tmp_path: Path, slug: str, title: str, body: str) -> Path:
+    note_dir = tmp_path / slug
+    note_dir.mkdir()
+    notes_path = note_dir / "notes.md"
+    notes_path.write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
+
+    import tomli_w
+
+    with (note_dir / "meta.toml").open("wb") as fh:
+        tomli_w.dump(
+            {
+                "title": title,
+                "date": "2026-04-20T09:00:00",
+                "tags": [],
+            },
+            fh,
+        )
+    return notes_path
 
 
 class TestListNotes:
@@ -28,27 +48,12 @@ class TestListNotes:
         settings = _make_settings(tmp_path)
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
 
-        note = tmp_path / "meetings_2025_01_15.md"
-        note.write_text("# Team Standup\n\nSome meeting content here.\n")
+        _write_note(tmp_path, "team-standup-2026-01-15", "Team Standup", "Content")
 
         notes_list()
 
         output = capsys.readouterr().out
         assert "Team Standup" in output
-
-    def test_list_notes_shows_stem_when_no_header(self, tmp_path, monkeypatch, capsys):
-        from chirp.cli import notes_list
-
-        settings = _make_settings(tmp_path)
-        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
-        note = tmp_path / "my_note.md"
-        note.write_text("No heading here, just content.\n")
-
-        notes_list()
-
-        output = capsys.readouterr().out
-        assert "my_note" in output
 
     def test_list_notes_shows_total_count(self, tmp_path, monkeypatch, capsys):
         from chirp.cli import notes_list
@@ -56,8 +61,8 @@ class TestListNotes:
         settings = _make_settings(tmp_path)
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
 
-        (tmp_path / "note1.md").write_text("# First\n")
-        (tmp_path / "note2.md").write_text("# Second\n")
+        _write_note(tmp_path, "first", "First", "Body")
+        _write_note(tmp_path, "second", "Second", "Body")
 
         notes_list()
 
@@ -91,16 +96,30 @@ class TestVersion:
 
 
 class TestTranscribeModelOverride:
+    def _seed_note_with_audio(self, tmp_path: Path) -> None:
+        note_dir = tmp_path / "sample-2026-04-20"
+        note_dir.mkdir()
+        (note_dir / "audio.wav").write_bytes(b"\x00" * 100)
+
+        import tomli_w
+
+        with (note_dir / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {
+                    "title": "Sample",
+                    "date": "2026-04-20T09:00:00",
+                    "tags": [],
+                },
+                fh,
+            )
+
     def test_model_override_passed_to_batch_processor(self, tmp_path, monkeypatch):
         import sys
         from unittest.mock import MagicMock
 
         settings = _make_settings(tmp_path)
 
-        audio_dir = tmp_path / "audio"
-        audio_dir.mkdir()
-        (audio_dir / "test.wav").write_bytes(b"\x00" * 100)
-        settings.directories.raw_audio = audio_dir
+        self._seed_note_with_audio(tmp_path)
 
         captured_args = {}
 
@@ -109,9 +128,9 @@ class TestTranscribeModelOverride:
                 captured_args["settings"] = s
                 captured_args["model_override"] = model_override
 
-            def process_files(
+            def process_records(
                 self,
-                files,
+                records,
                 force=False,
                 progress_callback=None,
                 on_segment=None,
@@ -141,10 +160,7 @@ class TestTranscribeModelOverride:
 
         settings = _make_settings(tmp_path)
 
-        audio_dir = tmp_path / "audio"
-        audio_dir.mkdir()
-        (audio_dir / "test.wav").write_bytes(b"\x00" * 100)
-        settings.directories.raw_audio = audio_dir
+        self._seed_note_with_audio(tmp_path)
 
         captured_args = {}
 
@@ -152,9 +168,9 @@ class TestTranscribeModelOverride:
             def __init__(self, s, model_override=None):
                 captured_args["model_override"] = model_override
 
-            def process_files(
+            def process_records(
                 self,
-                files,
+                records,
                 force=False,
                 progress_callback=None,
                 on_segment=None,

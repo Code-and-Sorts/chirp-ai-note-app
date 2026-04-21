@@ -42,23 +42,38 @@ record: ## Start recording a meeting (with optional DURATION and TITLE)
 transcribe: ## Transcribe audio files
 	uv run chirp transcribe $(if $(FORCE),--force)
 
-notes: ## Generate meeting notes
-	uv run chirp notes $(if $(FORCE),--force)
+generate: ## Generate meeting notes from transcripts
+	uv run chirp generate $(if $(FORCE),--force)
 
-process: ## Process audio files (transcribe + notes)
-	uv run chirp process $(if $(FORCE),--force)
+process: ## Process audio files (transcribe + generate notes)
+	uv run chirp transcribe-and-generate $(if $(FORCE),--force)
+
+notes: ## Browse your notes (list)
+	uv run chirp notes
+
+note: ## Create or edit a single note (optional NAME)
+	uv run chirp note $(NAME)
+
+search: ## Keyword search through your notes
+	uv run chirp search
 
 ask: ## Start interactive chat with your notes
-	uv run chirp notes ask
+	uv run chirp ask
 
-notes-index: ## Build notes search index
-	uv run chirp notes index $(if $(FORCE),--force)
+ask-question: ## Ask a question about your notes (requires QUESTION)
+	uv run chirp ask --question "$(QUESTION)" $(if $(WHEN),--when "$(WHEN)")
 
-notes-ask: ## Ask a question about your notes (requires QUESTION)
-	uv run chirp notes ask --question "$(QUESTION)" $(if $(WHEN),--when "$(WHEN)")
+index: ## Build notes search index
+	uv run chirp index $(if $(FORCE),--force)
 
-status: ## Show Chirp status
-	uv run chirp status
+stats: ## Show Chirp statistics
+	uv run chirp stats
+
+about: ## Show the animated Chirp logo + version info
+	uv run chirp about
+
+version: ## Show the installed Chirp version
+	uv run chirp version
 
 config: ## Show Chirp configuration
 	uv run chirp config --list
@@ -66,9 +81,24 @@ config: ## Show Chirp configuration
 devices: ## List audio devices
 	uv run chirp devices
 
+init: ## First-run setup & model picker
+	uv run chirp init $(if $(RECHECK),--recheck) $(if $(SWITCH_MODEL),--switch-model)
+
+chirp-setup: ## Step-by-step audio setup guide (chirp setup)
+	uv run chirp setup
+
+chirp-test: ## Test Chirp dependencies and configuration (chirp test)
+	uv run chirp test
+
 # Testing commands
 test: ## Run unit tests
 	uv run pytest
+
+test-file: ## Run a single test file (FILE=tests/test_settings.py)
+	uv run pytest $(FILE)
+
+test-match: ## Run tests matching a pattern (PATTERN=slugify)
+	uv run pytest -k "$(PATTERN)"
 
 test-coverage: ## Run tests with coverage report
 	uv run pytest --cov --cov-report=html --cov-report=term
@@ -126,7 +156,7 @@ check: validate style-check type-check ## Run all quality checks (excluding test
 ci: lint format-check type-check test ## Run CI checks (lint, format, type-check, test)
 
 # Dependency management
-check-deps: ## Check if all dependencies are available
+check-deps: ## Check if all dependencies are available (alias for chirp-test)
 	uv run chirp test
 
 update: ## Update dependencies
@@ -201,8 +231,8 @@ demo: ## Run a complete demo workflow
 	@echo "🎬 Chirp Demo Workflow"
 	@echo "1. Checking dependencies..."
 	@$(MAKE) check-deps
-	@echo "2. Showing status..."
-	@$(MAKE) status
+	@echo "2. Showing stats..."
+	@$(MAKE) stats
 	@echo "3. Listing audio devices..."
 	@$(MAKE) devices
 	@echo "4. Showing configuration..."
@@ -226,7 +256,7 @@ info: ## Show system and version information
 	@echo "Architecture: $(shell uname -m)"
 	@echo "Working Directory: $(PWD)"
 	@echo ""
-	@$(MAKE) status
+	@$(MAKE) stats
 
 # Quick examples
 example: ## Example: Record a 1-minute meeting and process it
@@ -236,5 +266,5 @@ example: ## Example: Record a 1-minute meeting and process it
 	@echo "2. Processing audio files..."
 	@$(MAKE) process FORCE=true
 	@echo "3. Example notes search commands:"
-	@echo "   make notes-ask QUESTION='what was discussed?'"
-	@echo "   make notes-ask QUESTION='any action items?' WHEN='yesterday'"
+	@echo "   make ask-question QUESTION='what was discussed?'"
+	@echo "   make ask-question QUESTION='any action items?' WHEN='yesterday'"

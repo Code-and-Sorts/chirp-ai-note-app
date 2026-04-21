@@ -1,104 +1,138 @@
-from unittest.mock import Mock, patch
+import time
+from datetime import date
+from unittest.mock import Mock
+
+import tomli_w
 
 from utils.file_utils import (
-    generate_audio_filename,
-    get_audio_files,
+    NoteRecord,
     get_file_size_mb,
-    get_transcription_files,
+    list_notes,
     sanitize_filename,
+    slugify,
 )
 
 
-class TestFileUtils:
-    def test_generate_audio_filename_with_title(self):
-        with patch("utils.file_utils.datetime") as mock_datetime:
-            mock_datetime.now.return_value.strftime.return_value = "20231201_140000"
+class TestSanitizeFilename:
+    def test_removes_invalid_chars(self):
+        assert (
+            sanitize_filename("Test<File>Name:With/Invalid\\Chars|?*")
+            == "TestFileNameWithInvalidChars"
+        )
 
-            result = generate_audio_filename("Test Meeting", "wav")
+    def test_truncates_long_names(self):
+        assert len(sanitize_filename("A" * 100)) <= 50
 
-            assert result == "20231201_140000_Test Meeting.wav"
 
-    def test_generate_audio_filename_without_title(self):
-        with patch("utils.file_utils.datetime") as mock_datetime:
-            mock_datetime.now.return_value.strftime.return_value = "20231201_140000"
+class TestSlugify:
+    def test_produces_kebab_case_with_date(self):
+        assert (
+            slugify("Project Kickoff", date(2026, 4, 20))
+            == "project-kickoff-2026-04-20"
+        )
 
-            result = generate_audio_filename()
+    def test_strips_punctuation(self):
+        assert (
+            slugify("Q2 Planning: Day 1!", date(2026, 4, 20))
+            == "q2-planning-day-1-2026-04-20"
+        )
 
-            assert result == "20231201_140000.wav"
+    def test_appends_numeric_suffix_on_collision(self, tmp_path):
+        (tmp_path / "standup-2026-04-20").mkdir()
+        assert slugify("standup", date(2026, 4, 20), tmp_path) == "standup-2026-04-20-2"
 
-    def test_sanitize_filename_removes_invalid_chars(self):
-        filename = "Test<File>Name:With/Invalid\\Chars|?*"
-        result = sanitize_filename(filename)
+        (tmp_path / "standup-2026-04-20-2").mkdir()
+        assert slugify("standup", date(2026, 4, 20), tmp_path) == "standup-2026-04-20-3"
 
-        assert result == "TestFileNameWithInvalidChars"
+    def test_fallback_for_empty_title(self):
+        assert slugify("   ", date(2026, 4, 20)) == "note-2026-04-20"
 
-    def test_sanitize_filename_truncates_long_names(self):
-        long_filename = "A" * 100
-        result = sanitize_filename(long_filename)
 
-        assert len(result) <= 50
+class TestListNotes:
+    def test_returns_empty_when_root_missing(self, tmp_path):
+        assert list_notes(tmp_path / "missing") == []
 
-    def test_get_audio_files_finds_audio_extensions(self):
-        mock_directory = Mock()
-        mock_directory.exists.return_value = True
+    def test_returns_records_sorted_by_created_at(self, tmp_path):
+        first_dir = tmp_path / "first-2026-04-20"
+        first_dir.mkdir()
+        _write_meta(first_dir, title="First", iso="2026-04-20T09:00:00")
 
-        mock_files = [
-            Mock(is_file=lambda: True, suffix=".wav", stat=lambda: Mock(st_mtime=1)),
-            Mock(is_file=lambda: True, suffix=".mp3", stat=lambda: Mock(st_mtime=2)),
-            Mock(is_file=lambda: True, suffix=".txt", stat=lambda: Mock(st_mtime=3)),
+        second_dir = tmp_path / "second-2026-04-20"
+        second_dir.mkdir()
+        _write_meta(second_dir, title="Second", iso="2026-04-20T10:00:00")
+
+        records = list_notes(tmp_path)
+
+        assert [record.slug for record in records] == [
+            "first-2026-04-20",
+            "second-2026-04-20",
         ]
-        mock_directory.iterdir.return_value = mock_files
 
-        result = get_audio_files(mock_directory)
+    def test_falls_back_to_mtime_when_meta_missing(self, tmp_path):
+        older_dir = tmp_path / "older"
+        older_dir.mkdir()
+        newer_dir = tmp_path / "newer"
+        newer_dir.mkdir()
 
-        assert len(result) == 2
+        older_time = time.time() - 100
+        import os
 
-    def test_get_audio_files_empty_directory(self):
-        mock_directory = Mock()
-        mock_directory.exists.return_value = False
+        os.utime(older_dir, (older_time, older_time))
 
-        result = get_audio_files(mock_directory)
+        records = list_notes(tmp_path)
+        assert [record.slug for record in records] == ["older", "newer"]
 
-        assert result == []
+    def test_populates_artifact_paths(self, tmp_path):
+        note_dir = tmp_path / "team-standup-2026-04-20"
+        note_dir.mkdir()
+        (note_dir / "audio.wav").write_bytes(b"")
+        (note_dir / "transcript.txt").write_text("hello", encoding="utf-8")
+        (note_dir / "notes.md").write_text("# hi", encoding="utf-8")
+        _write_meta(
+            note_dir, title="Team Standup", iso="2026-04-20T09:00:00", tags=["ops"]
+        )
 
-    def test_get_file_size_mb_existing_file(self):
+        records = list_notes(tmp_path)
+
+        assert len(records) == 1
+        record = records[0]
+        assert isinstance(record, NoteRecord)
+        assert record.audio == note_dir / "audio.wav"
+        assert record.transcript == note_dir / "transcript.txt"
+        assert record.notes == note_dir / "notes.md"
+        assert record.meta == note_dir / "meta.toml"
+        assert record.tags == ["ops"]
+        assert record.title == "Team Standup"
+
+    def test_skips_hidden_directories(self, tmp_path):
+        (tmp_path / ".debug-live").mkdir()
+        (tmp_path / ".DS_Store").mkdir()
+        visible_dir = tmp_path / "visible-2026-04-20"
+        visible_dir.mkdir()
+        _write_meta(visible_dir, title="Visible", iso="2026-04-20T09:00:00")
+
+        records = list_notes(tmp_path)
+        assert [record.slug for record in records] == ["visible-2026-04-20"]
+
+
+class TestGetFileSizeMb:
+    def test_existing_file(self):
         mock_path = Mock()
         mock_path.exists.return_value = True
-        mock_path.stat.return_value.st_size = 1024 * 1024  # 1 MB
+        mock_path.stat.return_value.st_size = 1024 * 1024
+        assert get_file_size_mb(mock_path) == 1.0
 
-        result = get_file_size_mb(mock_path)
-
-        assert result == 1.0
-
-    def test_get_file_size_mb_nonexistent_file(self):
+    def test_missing_file(self):
         mock_path = Mock()
         mock_path.exists.return_value = False
+        assert get_file_size_mb(mock_path) == 0.0
 
-        result = get_file_size_mb(mock_path)
 
-        assert result == 0.0
-
-    def test_get_transcription_files_in_nested_structure(self, tmp_path):
-        transcription_dir = tmp_path / "transcriptions"
-        recording_dir = transcription_dir / "20250101_120000"
-        recording_dir.mkdir(parents=True)
-
-        transcript_file = recording_dir / "20250101_120000.json.gz"
-        transcript_file.write_bytes(b"compressed")
-        metadata_file = recording_dir / "metadata.json"
-        metadata_file.write_text("{}", encoding="utf-8")
-
-        files = get_transcription_files(transcription_dir)
-
-        assert files == [transcript_file]
-
-    def test_get_transcription_files_ignores_metadata_json(self, tmp_path):
-        transcription_dir = tmp_path / "transcriptions"
-        transcription_dir.mkdir(parents=True)
-
-        metadata_file = transcription_dir / "metadata.json"
-        metadata_file.write_text("{}", encoding="utf-8")
-
-        files = get_transcription_files(transcription_dir)
-
-        assert files == []
+def _write_meta(note_dir, title, iso, tags=None):
+    payload = {
+        "title": title,
+        "date": iso,
+        "tags": tags or [],
+    }
+    with (note_dir / "meta.toml").open("wb") as fh:
+        tomli_w.dump(payload, fh)

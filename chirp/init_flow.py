@@ -356,7 +356,7 @@ def _pick(console: Console, title: str, options: list[ModelOption]) -> str:
         )
     console.print(f"   [dim]{len(options) + 1}. custom… (type an ollama tag)[/dim]")
     try:
-        choice = console.input(
+        choice: str = console.input(
             " [green]›[/green] [dim]pick one (default 1):[/dim] "
         ).strip()
     except (EOFError, KeyboardInterrupt):
@@ -369,7 +369,9 @@ def _pick(console: Console, title: str, options: list[ModelOption]) -> str:
         if 1 <= idx <= len(options):
             return options[idx - 1].tag
         if idx == len(options) + 1:
-            custom = console.input(" [green]›[/green] [dim]ollama tag:[/dim] ").strip()
+            custom: str = console.input(
+                " [green]›[/green] [dim]ollama tag:[/dim] "
+            ).strip()
             return custom or options[0].tag
     return choice
 
@@ -406,7 +408,7 @@ def pull_and_finalize(
         "[dim](collection is created on first index)[/dim]"
     )
     console.print(
-        f" [green]✓[/green] notes dir: [bold]{settings.directories.notes}[/bold]"
+        f" [green]✓[/green] notes root: [bold]{settings.directories.notes_root}[/bold]"
     )
     console.print()
     console.print(" [bold]your nest is ready.[/bold] try:")

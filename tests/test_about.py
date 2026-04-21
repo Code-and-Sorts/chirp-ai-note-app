@@ -15,13 +15,16 @@ from chirp.branding import LOGO_ROWS, TAGLINE
 
 
 def _fake_settings(tmp_path):
-    notes_dir = tmp_path / "notes"
-    notes_dir.mkdir()
-    (notes_dir / "a.md").write_text("hi")
-    (notes_dir / "b.md").write_text("hi")
+    notes_root = tmp_path / "chirp"
+    notes_root.mkdir()
+    for slug in ("first-2026-04-20", "second-2026-04-20"):
+        note_dir = notes_root / slug
+        note_dir.mkdir()
+        (note_dir / "notes.md").write_text("hi")
     return SimpleNamespace(
-        directories=SimpleNamespace(notes=notes_dir),
+        directories=SimpleNamespace(notes_root=notes_root),
         models=SimpleNamespace(llm="llama3.1:8b"),
+        notes_chat=SimpleNamespace(emb_model="nomic-embed-text"),
     )
 
 

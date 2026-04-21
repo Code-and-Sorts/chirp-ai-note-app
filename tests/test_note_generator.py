@@ -1,8 +1,12 @@
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pytest
+import tomli_w
+import tomllib
 
 from notes.note_generator import NoteGenerator
+from utils.file_utils import NoteRecord
 
 
 def _make_streaming_response(text: str):
@@ -22,33 +26,68 @@ def _make_streaming_response(text: str):
     return mock_response
 
 
-class TestNoteGenerator:
-    @pytest.fixture
-    def mock_settings(self):
-        settings = Mock()
-        models = Mock()
-        models.ollama_url = "http://localhost:11434"
-        models.llm = "llama3.1:8b"
-        models.num_predict = 4096
-        settings.models = models
-        return settings
+@pytest.fixture
+def mock_settings():
+    settings = Mock()
+    models = Mock()
+    models.ollama_url = "http://localhost:11434"
+    models.llm = "llama3.1:8b"
+    models.whisper = "large-v3-turbo"
+    models.num_predict = 4096
+    settings.models = models
+    settings.notes_chat = Mock()
+    settings.notes_chat.auto_index = False
+    directories = Mock()
+    directories.notes_root = None
+    settings.directories = directories
+    return settings
 
+
+def _seed_record(tmp_path, title: str, transcript: str) -> NoteRecord:
+    note_dir = tmp_path / "sample-2026-04-20"
+    note_dir.mkdir()
+    transcript_path = note_dir / "transcript.txt"
+    transcript_path.write_text(transcript, encoding="utf-8")
+    meta_path = note_dir / "meta.toml"
+    with meta_path.open("wb") as fh:
+        tomli_w.dump(
+            {
+                "title": title,
+                "date": "2026-04-20T09:00:00",
+                "tags": [],
+            },
+            fh,
+        )
+    return NoteRecord(
+        slug=note_dir.name,
+        dir=note_dir,
+        audio=None,
+        transcript=transcript_path,
+        notes=None,
+        meta=meta_path,
+        created_at=datetime(2026, 4, 20, 9, 0, 0),
+        tags=[],
+        title=title,
+    )
+
+
+class TestNoteGenerator:
     def test_initialization(self, mock_settings):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-                        assert generator.settings == mock_settings
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            assert generator.settings is mock_settings
 
     def test_parse_xml_response_valid(self, mock_settings):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
 
-                        xml_response = """<?xml version="1.0" encoding="UTF-8"?>
+            xml_response = """<?xml version="1.0" encoding="UTF-8"?>
 <MEETING_NOTES>
     <MEETING_TITLE>Project Alpha Sync</MEETING_TITLE>
     <EXECUTIVE_SUMMARY>Discussed project timeline and resource allocation.</EXECUTIVE_SUMMARY>
@@ -74,28 +113,26 @@ class TestNoteGenerator:
     </DISCUSSION_HIGHLIGHTS>
 </MEETING_NOTES>"""
 
-                        result = generator._parse_xml_response(xml_response)
+            result = generator._parse_xml_response(xml_response)
 
-                        assert result is not None
-                        assert result["meeting_title"] == "Project Alpha Sync"
-                        assert (
-                            "Discussed project timeline" in result["executive_summary"]
-                        )
-                        assert len(result["agenda"]) == 2
-                        assert len(result["action_items"]) == 2
-                        assert "Review budget proposal" in result["action_items"][0]
-                        assert len(result["decisions"]) == 1
-                        assert len(result["open_questions"]) == 1
-                        assert len(result["discussion_highlights"]) == 1
+            assert result is not None
+            assert result["meeting_title"] == "Project Alpha Sync"
+            assert "Discussed project timeline" in result["executive_summary"]
+            assert len(result["agenda"]) == 2
+            assert len(result["action_items"]) == 2
+            assert "Review budget proposal" in result["action_items"][0]
+            assert len(result["decisions"]) == 1
+            assert len(result["open_questions"]) == 1
+            assert len(result["discussion_highlights"]) == 1
 
     def test_parse_xml_response_with_none_sections(self, mock_settings):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
 
-                        xml_response = """<?xml version="1.0" encoding="UTF-8"?>
+            xml_response = """<?xml version="1.0" encoding="UTF-8"?>
 <MEETING_NOTES>
     <MEETING_TITLE>Brief Check-in</MEETING_TITLE>
     <EXECUTIVE_SUMMARY>Short informal chat.</EXECUTIVE_SUMMARY>
@@ -109,338 +146,97 @@ class TestNoteGenerator:
     </DISCUSSION_HIGHLIGHTS>
 </MEETING_NOTES>"""
 
-                        result = generator._parse_xml_response(xml_response)
+            result = generator._parse_xml_response(xml_response)
 
-                        assert result is not None
-                        assert result["meeting_title"] == "Brief Check-in"
-                        assert result["agenda"] == []
-                        assert result["action_items"] == []
-                        assert result["next_steps"] == []
-                        assert result["decisions"] == []
-                        assert result["open_questions"] == []
-                        assert len(result["discussion_highlights"]) == 1
-
-    def test_parse_fallback_response(self, mock_settings):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        response = "Test response"
-                        result = generator._parse_fallback_response(response)
-
-                        assert isinstance(result, dict)
-                        assert "meeting_title" in result
-                        assert "executive_summary" in result
-                        assert "agenda" in result
-                        assert "action_items" in result
-                        assert "next_steps" in result
-                        assert "decisions" in result
-                        assert "open_questions" in result
-                        assert "discussion_highlights" in result
+            assert result is not None
+            assert result["meeting_title"] == "Brief Check-in"
+            assert result["agenda"] == []
+            assert result["action_items"] == []
+            assert result["next_steps"] == []
+            assert result["decisions"] == []
+            assert result["open_questions"] == []
+            assert len(result["discussion_highlights"]) == 1
 
     def test_call_ollama_success(self, mock_settings):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        with patch("notes.note_generator.requests.post") as mock_post:
-                            mock_post.return_value = _make_streaming_response(
-                                "Test response"
-                            )
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+            patch("notes.note_generator.requests.post") as mock_post,
+        ):
+            mock_post.return_value = _make_streaming_response("Test response")
 
-                            generator = NoteGenerator(mock_settings)
-                            result = generator._call_ollama("test prompt")
+            generator = NoteGenerator(mock_settings)
+            result = generator._call_ollama("test prompt")
 
-                            assert result == "Test response"
-                            mock_post.assert_called_once()
-                            call_kwargs = mock_post.call_args
-                            assert call_kwargs[1]["timeout"] == 300
-                            payload = call_kwargs[1]["json"]
-                            assert payload["options"]["num_predict"] == 4096
+            assert result == "Test response"
+            mock_post.assert_called_once()
+            call_kwargs = mock_post.call_args
+            assert call_kwargs[1]["timeout"] == 300
+            payload = call_kwargs[1]["json"]
+            assert payload["options"]["num_predict"] == 4096
 
-    def test_call_ollama_connection_error(self, mock_settings):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        with patch(
-                            "requests.post", side_effect=Exception("Connection error")
-                        ):
-                            generator = NoteGenerator(mock_settings)
-
-                            with pytest.raises(Exception, match="Connection error"):
-                                generator._call_ollama("test prompt")
-
-    def test_call_ollama_streams_response(self, mock_settings):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        xml = "<MEETING_NOTES><MEETING_TITLE>Test</MEETING_TITLE></MEETING_NOTES>"
-                        mock_resp = _make_streaming_response(xml)
-
-                        with patch(
-                            "notes.note_generator.requests.post",
-                            return_value=mock_resp,
-                        ):
-                            result = generator._call_ollama("test prompt")
-
-                        assert "MEETING_NOTES" in result
-                        assert "Test" in result
-                        mock_resp.iter_lines.assert_called_once()
-
-    def test_generate_meeting_notes_uses_provided_title(self, mock_settings):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        with patch.object(
-                            generator, "_generate_structured_notes"
-                        ) as mock_structured:
-                            mock_structured.return_value = {
-                                "meeting_title": "Generated Title",
-                                "executive_summary": "Test summary",
-                                "agenda": ["Agenda item 1"],
-                                "action_items": ["Action 1"],
-                                "next_steps": ["Next step 1"],
-                                "decisions": ["Decision 1"],
-                                "open_questions": ["Question 1"],
-                                "discussion_highlights": ["Highlight 1"],
-                            }
-
-                            transcription_data = {
-                                "full_text": "This is a test transcript with sufficient length to pass validation",
-                                "metadata": {
-                                    "title": "Provided Meeting Title",
-                                    "duration": 300,
-                                },
-                            }
-
-                            result = generator._generate_meeting_notes(
-                                transcription_data
-                            )
-
-                            assert result is not None
-                            assert result["meeting_title"] == "Provided Meeting Title"
-
-    def test_generate_meeting_notes_generates_title_when_none_provided(
-        self, mock_settings
+    def test_generate_for_record_writes_notes_and_updates_meta(
+        self, mock_settings, tmp_path
     ):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        with patch.object(
-                            generator, "_generate_structured_notes"
-                        ) as mock_structured:
-                            mock_structured.return_value = {
-                                "meeting_title": "Generated Meeting Title",
-                                "executive_summary": "Test summary",
-                                "agenda": ["Agenda item 1"],
-                                "action_items": ["Action 1"],
-                                "next_steps": ["Next step 1"],
-                                "decisions": ["Decision 1"],
-                                "open_questions": ["Question 1"],
-                                "discussion_highlights": ["Highlight 1"],
-                            }
-
-                            transcription_data = {
-                                "full_text": "This is a test transcript with sufficient length to pass validation",
-                                "metadata": {"duration": 300},
-                            }
-
-                            result = generator._generate_meeting_notes(
-                                transcription_data
-                            )
-
-                            assert result is not None
-                            assert result["meeting_title"] == "Generated Meeting Title"
-
-    def test_generate_meeting_notes_generates_title_when_metadata_missing(
-        self, mock_settings
-    ):
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        with patch.object(
-                            generator, "_generate_structured_notes"
-                        ) as mock_structured:
-                            mock_structured.return_value = {
-                                "meeting_title": "Generated Meeting Title",
-                                "executive_summary": "Test summary",
-                                "agenda": ["Agenda item 1"],
-                                "action_items": ["Action 1"],
-                                "next_steps": ["Next step 1"],
-                                "decisions": ["Decision 1"],
-                                "open_questions": ["Question 1"],
-                                "discussion_highlights": ["Highlight 1"],
-                            }
-
-                            transcription_data = {
-                                "full_text": "This is a test transcript with sufficient length to pass validation"
-                            }
-
-                            result = generator._generate_meeting_notes(
-                                transcription_data
-                            )
-
-                            assert result is not None
-                            assert result["meeting_title"] == "Generated Meeting Title"
-
-    def test_generate_daily_notes_with_filename_override(self, mock_settings):
-        from datetime import datetime
-        from pathlib import Path
-
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator") as mock_aggregator:
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        test_date = datetime(2024, 1, 15)
-                        mock_transcription_file = Path("/test/transcription.json")
-                        mock_aggregator_instance = mock_aggregator.return_value
-                        mock_aggregator_instance.group_transcriptions_by_day.return_value = {
-                            test_date: [mock_transcription_file]
-                        }
-
-                        with patch.object(
-                            generator, "_generate_notes_for_day"
-                        ) as mock_generate_day:
-                            mock_generate_day.return_value = {
-                                "success": True,
-                                "filename": "custom-notes.md",
-                                "path": "/notes/custom-notes.md",
-                                "date": test_date.isoformat(),
-                            }
-
-                            result = generator.generate_daily_notes(
-                                [mock_transcription_file],
-                                force=False,
-                                filename_override="custom-notes",
-                            )
-
-                            mock_generate_day.assert_called_once_with(
-                                test_date,
-                                [mock_transcription_file],
-                                False,
-                                "custom-notes",
-                            )
-
-                            assert result["success"] is True
-                            assert result["filename"] == "custom-notes.md"
-
-    def test_generate_notes_for_day_filename_override_with_extension(
-        self, mock_settings
-    ):
-        from datetime import datetime
-        from pathlib import Path
-
-        mock_settings.directories = Mock()
-        mock_settings.directories.notes = Path("/test/notes")
-
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        test_date = datetime(2024, 1, 15)
-                        mock_transcription_file = Path("/test/transcription.json")
-
-                        with patch("pathlib.Path.exists", return_value=False):
-                            with patch.object(
-                                generator, "_generate_meeting_notes", return_value=None
-                            ):
-                                result = generator._generate_notes_for_day(
-                                    test_date,
-                                    [mock_transcription_file],
-                                    False,
-                                    "custom-notes.md",
-                                )
-
-                                assert result["success"] is False
-
-    def test_generate_notes_for_day_filename_override_without_extension(
-        self, mock_settings
-    ):
-        from datetime import datetime
-        from pathlib import Path
-
-        mock_settings.directories = Mock()
-        mock_settings.directories.notes = Path("/test/notes")
-
-        with patch("notes.note_generator.TemplateEngine"):
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor"):
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        test_date = datetime(2024, 1, 15)
-                        mock_transcription_file = Path("/test/transcription.json")
-
-                        with patch("pathlib.Path.exists", return_value=False):
-                            with patch.object(
-                                generator, "_generate_meeting_notes", return_value=None
-                            ):
-                                result = generator._generate_notes_for_day(
-                                    test_date,
-                                    [mock_transcription_file],
-                                    False,
-                                    "custom-notes",
-                                )
-
-                                assert result["success"] is False
-
-    def test_generated_note_includes_front_matter(self, mock_settings, tmp_path):
-        from datetime import datetime
-        from pathlib import Path
-
-        mock_settings.directories = Mock()
-        mock_settings.directories.notes = tmp_path
-
-        with patch("notes.note_generator.TemplateEngine") as mock_template_engine:
+        with (
+            patch("notes.note_generator.TemplateEngine") as mock_template_engine,
+            patch("notes.note_generator.PopupManager"),
+        ):
             template_instance = mock_template_engine.return_value
-            template_instance.render_daily_notes.return_value = "# Daily Summary\n"
-            template_instance.render_meeting_section.return_value = "Section"
+            template_instance.render_meeting_section.return_value = (
+                "## Project Alpha\n\nBody"
+            )
 
-            with patch("notes.note_generator.DailyAggregator"):
-                with patch("notes.note_generator.JSONCompressor") as mock_compressor:
-                    mock_compressor.return_value.decompress_json.return_value = {
-                        "success": True
-                    }
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(
+                tmp_path,
+                title="Project Alpha",
+                transcript=(
+                    "This is a long-enough transcript to clear the minimum "
+                    "length threshold used by the generator (over 50 chars)."
+                ),
+            )
 
-                    with patch("notes.note_generator.PopupManager"):
-                        generator = NoteGenerator(mock_settings)
-
-                        with patch.object(
-                            generator,
-                            "_generate_meeting_notes",
-                            return_value={"dummy": "data"},
-                        ):
-                            transcription_file = tmp_path / "example.json"
-                            transcription_file.write_text("{}", encoding="utf-8")
-
-                            result = generator._generate_notes_for_day(
-                                datetime(2024, 1, 1), [transcription_file], force=True
-                            )
+            with patch.object(
+                generator,
+                "_generate_structured_notes",
+                return_value={
+                    "meeting_title": "Project Alpha",
+                    "executive_summary": "Summary",
+                    "agenda": [],
+                    "action_items": [],
+                    "next_steps": [],
+                    "decisions": [],
+                    "open_questions": [],
+                    "discussion_highlights": [],
+                },
+            ):
+                result = generator._generate_for_record(record, force=False)
 
         assert result["success"] is True
-        note_path = Path(result["path"])
-        content = note_path.read_text(encoding="utf-8")
+        notes_path = record.dir / "notes.md"
+        assert notes_path.exists()
 
+        content = notes_path.read_text(encoding="utf-8")
         assert content.startswith("---\n")
-        assert "chirp_source: generated" in content.splitlines()
-        assert "readonly: true" in content.splitlines()
-        assert "# Daily Summary" in content
+        assert "chirp_source: generated" in content
+        assert "Project Alpha" in content
+
+        with (record.dir / "meta.toml").open("rb") as fh:
+            meta = tomllib.load(fh)
+        assert meta["whisper_model"] == "large-v3-turbo"
+        assert meta["llm_model"] == "llama3.1:8b"
+        assert "indexed_at" in meta
+
+    def test_generate_for_record_skips_short_transcript(self, mock_settings, tmp_path):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(tmp_path, title="Quick", transcript="hi")
+
+            result = generator._generate_for_record(record, force=False)
+
+        assert result["success"] is False
+        assert "Insufficient" in result["error"]

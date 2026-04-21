@@ -283,10 +283,10 @@ def _generate_suggestion(config: ChirpSettings, time_range: Optional[Any]) -> st
                 "Index appears corrupted. Run 'chirp notes index --force' to rebuild."
             )
 
-        if not config.directories.notes.exists():
+        if not config.directories.notes_root.exists():
             return "No notes directory found. Try running 'chirp process' to create some notes first."
 
-        note_files = list(config.directories.notes.glob("*.md"))
+        note_files = list(config.directories.notes_root.glob("*/notes.md"))
         if not note_files:
             return "No notes found. Try running 'chirp process' to create some notes first."
 
