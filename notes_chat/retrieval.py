@@ -271,24 +271,22 @@ def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
         manifest_file = index_dir / "manifest.json"
 
         if not manifest_file.exists():
-            return "Index not found. Run 'chirp notes index' to build the search index first."
+            return "Index not found. Run 'chirp index' to build the search index first."
 
         try:
             with open(manifest_file) as f:
                 manifest = json.load(f)
                 if not manifest:
-                    return "No files in search index. Run 'chirp notes index' to build the index."
+                    return "No files in search index. Run 'chirp index' to build the index."
         except:
-            return (
-                "Index appears corrupted. Run 'chirp notes index --force' to rebuild."
-            )
+            return "Index appears corrupted. Run 'chirp index --force' to rebuild."
 
         if not config.directories.notes_root.exists():
-            return "No notes directory found. Try running 'chirp process' to create some notes first."
+            return "No notes directory found. Try running 'chirp transcribe' to create some notes first."
 
         note_files = list(config.directories.notes_root.glob("*/notes.md"))
         if not note_files:
-            return "No notes found. Try running 'chirp process' to create some notes first."
+            return "No notes found. Try running 'chirp transcribe' to create some notes first."
 
         latest_note = max(note_files, key=lambda f: f.stat().st_mtime)
         latest_date = datetime.fromtimestamp(latest_note.stat().st_mtime)
