@@ -11,4 +11,9 @@
 
 ## Deferred from: code review of 1.2-command-surface-prune (2026-04-27)
 
-- `ManualNoteManager` / `ManualNoteEditor` are orphans in the active code path after `note` was removed. Tests exercise them in isolation, but no CLI command calls them. Expected to be revived by story 1.3's `notes view` / `notes edit`. [notes/manual_note_manager.py, notes/note_editor.py]
+- `ManualNoteManager` / `ManualNoteEditor` are orphans in the active code path after `note` was removed. Tests exercise them in isolation, but no CLI command calls them. Expected to be revived by story 1.3's `notes view` / `notes edit`. [notes/manual_note_manager.py, notes/note_editor.py] — **resolved by 1.3:** `notes view` / `notes edit` now drive `ManualNoteEditor` via the `notes` sub-app.
+
+## Deferred from: code review of 1.3-notes-sub-app (2026-04-27)
+
+- `_drop_from_index` and `_reindex_after_edit` reach into `IndexManager._remove_from_index`, `_load_manifest`, `_save_manifest`, `_rebuild_bm25` (private API). Pre-existing pattern from the deleted `note` command; expose a public `IndexManager.delete(path)` / `add(path)` and have CLI use those. [chirp/cli.py, notes_chat/index.py]
+- No happy-path test for `notes view` / `notes edit` because they invoke the interactive `ManualNoteEditor` (curses/TTY). Acceptable gap; resolution paths are tested directly via `_resolve_note`. [tests/test_cli_commands.py]

@@ -9,10 +9,31 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
+from typer.core import TyperGroup
 
 from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingError
 from config.settings import ChirpSettings, get_settings
 from utils.file_utils import NoteRecord, list_notes
+
+VISIBLE_COMMAND_ORDER = (
+    "record",
+    "transcribe",
+    "notes",
+    "ask",
+    "search",
+    "init",
+    "about",
+)
+
+
+class OrderedCommandsGroup(TyperGroup):
+    def list_commands(self, ctx):
+        ordered = [name for name in VISIBLE_COMMAND_ORDER if name in self.commands]
+        for name in self.commands:
+            if name not in ordered:
+                ordered.append(name)
+        return ordered
+
 
 app = typer.Typer(
     name="chirp",
@@ -24,6 +45,7 @@ app = typer.Typer(
         "help_option_names": ["-h", "--help"],
         "max_content_width": 120,
     },
+    cls=OrderedCommandsGroup,
 )
 console = Console()
 
@@ -629,17 +651,62 @@ def _run_transcribe_pipeline(
         console.print("[yellow]Pipeline finished with warnings — see above.[/yellow]")
 
 
-@app.command(name="notes", rich_help_panel=MAIN_PANEL)
-def notes_list():
-    """Browse, view, edit notes"""
+notes_app = typer.Typer(help="Browse, view, edit, or delete your notes")
+app.add_typer(notes_app, name="notes", rich_help_panel=MAIN_PANEL)
+
+
+class NoteNotFound(Exception):
+    pass
+
+
+class AmbiguousNoteId(Exception):
+    def __init__(self, matches: list[str]) -> None:
+        super().__init__(f"ambiguous: {len(matches)} matches")
+        self.matches = matches
+
+
+@notes_app.callback(invoke_without_command=True)
+def notes_callback(
+    ctx: typer.Context,
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        help="Filter by tag (comma-separated values are AND-combined).",
+    ),
+):
+    """Browse, view, edit, or delete your notes"""
+    if ctx.invoked_subcommand is not None:
+        if tag is not None:
+            console.print("[red]--tag is only valid when listing notes.[/red]")
+            raise typer.Exit(2)
+        return
+    _list_notes(tag)
+
+
+def _parse_tag_filter(tag: str | None) -> list[str]:
+    if not tag:
+        return []
+    return [piece.strip() for piece in tag.split(",") if piece.strip()]
+
+
+def _list_notes(tag: str | None) -> None:
     settings = get_settings()
-    records = [
+    all_records = [
         record
         for record in list_notes(settings.directories.notes_root)
         if record.notes is not None
     ]
+    tag_filter = _parse_tag_filter(tag)
+    if tag_filter:
+        records = [
+            record
+            for record in all_records
+            if all(t in record.tags for t in tag_filter)
+        ]
+    else:
+        records = all_records
 
-    if not records:
+    if not all_records:
         console.print(
             f"[yellow]No notes found in {settings.directories.notes_root}[/yellow]"
         )
@@ -648,10 +715,29 @@ def notes_list():
         )
         return
 
+    if tag_filter and not records:
+        console.print()
+        tag_label = ", ".join(tag_filter)
+        console.print(
+            f" [bold]Your notes[/bold] [dim]· 0 of {len(all_records)} · "
+            f"tag: {tag_label}[/dim]"
+        )
+        console.print()
+        console.print(f"[yellow]No notes matching tag '{tag_label}'.[/yellow]")
+        return
+
     console.print()
-    console.print(
-        f" [bold]Your notes[/bold] [dim]· {len(records)} total · sorted by date[/dim]"
-    )
+    if tag_filter:
+        tag_label = ", ".join(tag_filter)
+        console.print(
+            f" [bold]Your notes[/bold] [dim]· {len(records)} of "
+            f"{len(all_records)} · tag: {tag_label}[/dim]"
+        )
+    else:
+        console.print(
+            f" [bold]Your notes[/bold] [dim]· {len(records)} total · "
+            "sorted by date[/dim]"
+        )
     console.print()
 
     table = Table(
@@ -660,12 +746,13 @@ def notes_list():
         border_style="dim",
         padding=(0, 1),
     )
-    table.add_column("#", style="dim", no_wrap=True, justify="right")
+    table.add_column("id", style="dim", no_wrap=True)
     table.add_column("title", style="white")
     table.add_column("date", style="cyan", no_wrap=True)
     table.add_column("length", style="dim", justify="right", no_wrap=True)
+    table.add_column("tags", style="dim", no_wrap=True)
 
-    for idx, record in enumerate(reversed(records), start=1):
+    for record in reversed(records):
         title = _resolve_display_title(record)
 
         try:
@@ -680,11 +767,196 @@ def notes_list():
             date_str = "?"
             length_str = "?"
 
-        table.add_row(str(idx), title, date_str, length_str)
+        tag_cell = ", ".join(record.tags) if record.tags else "—"
+        table.add_row(record.slug, title, date_str, length_str, tag_cell)
 
     console.print(table)
     console.print()
-    console.print(" [dim]› chirp ask              · ask a question[/dim]")
+    console.print(" [dim]› chirp notes view <id>      · open a note read-only[/dim]")
+    console.print(" [dim]› chirp notes edit <id>      · edit a note[/dim]")
+    console.print(" [dim]› chirp notes delete <id>    · delete a note[/dim]")
+    console.print(" [dim]› chirp notes --tag meeting  · filter by tag[/dim]")
+
+
+def _resolve_note(records: list[NoteRecord], note_id: str) -> NoteRecord:
+    if not note_id or not note_id.strip():
+        raise NoteNotFound(note_id)
+    exact = [record for record in records if record.slug == note_id]
+    if len(exact) == 1:
+        return exact[0]
+    prefix_matches = [record for record in records if record.slug.startswith(note_id)]
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    if len(prefix_matches) > 1:
+        raise AmbiguousNoteId([record.slug for record in prefix_matches])
+    raise NoteNotFound(note_id)
+
+
+def _load_notes_or_exit() -> list[NoteRecord]:
+    settings = get_settings()
+    records = [
+        record
+        for record in list_notes(settings.directories.notes_root)
+        if record.notes is not None
+    ]
+    if not records:
+        console.print(
+            f"[yellow]No notes found in {settings.directories.notes_root}[/yellow]"
+        )
+        raise typer.Exit(1)
+    return records
+
+
+def _resolve_or_exit(note_id: str) -> NoteRecord:
+    records = _load_notes_or_exit()
+    try:
+        return _resolve_note(records, note_id)
+    except NoteNotFound:
+        console.print(f"[red]✗ no note matching '{note_id}'[/red]")
+        raise typer.Exit(1)
+    except AmbiguousNoteId as exc:
+        console.print(
+            f"[red]✗ '{note_id}' matches {len(exc.matches)} notes — "
+            "be more specific[/red]"
+        )
+        for slug in exc.matches:
+            console.print(f"[dim]  • {slug}[/dim]")
+        raise typer.Exit(1)
+
+
+@notes_app.command("view")
+def notes_view(note_id: str = typer.Argument(..., help="Note id (slug or prefix)")):
+    """Open a note read-only in the terminal editor."""
+    from notes.note_editor import ManualNoteEditor
+
+    record = _resolve_or_exit(note_id)
+    if record.notes is None:
+        console.print(f"[red]✗ note '{record.slug}' has no notes.md[/red]")
+        raise typer.Exit(1)
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        console.print(
+            "[yellow]Interactive editor requires a terminal. "
+            "Please run from an interactive shell.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    title = _resolve_display_title(record)
+    content = record.notes.read_text(encoding="utf-8")
+    editor = ManualNoteEditor(title, content, readonly=True)
+    try:
+        editor.run()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Editor cancelled[/dim]")
+
+
+@notes_app.command("edit")
+def notes_edit(note_id: str = typer.Argument(..., help="Note id (slug or prefix)")):
+    """Edit a note in the terminal editor; saves rewrite notes.md and re-index."""
+    from notes.note_editor import ManualNoteEditor
+
+    settings = get_settings()
+    record = _resolve_or_exit(note_id)
+    if record.notes is None:
+        console.print(f"[red]✗ note '{record.slug}' has no notes.md[/red]")
+        raise typer.Exit(1)
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        console.print(
+            "[yellow]Interactive editor requires a terminal. "
+            "Please run from an interactive shell.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    title = _resolve_display_title(record)
+    content = record.notes.read_text(encoding="utf-8")
+    editor = ManualNoteEditor(title, content)
+    try:
+        result = editor.run()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Editor cancelled[/dim]")
+        raise typer.Exit(1)
+
+    if not result.saved:
+        console.print("[yellow]Changes not saved.[/yellow]")
+        return
+
+    record.notes.write_text(result.content, encoding="utf-8")
+    console.print(f"[green]✅ Updated note: {record.notes}[/green]")
+
+    if settings.notes_chat.auto_index:
+        _reindex_after_edit(settings, record)
+
+
+def _reindex_after_edit(settings: ChirpSettings, record: NoteRecord) -> None:
+    notes_path = record.notes
+    if notes_path is None:
+        return
+    try:
+        from notes_chat.index import IndexManager
+
+        index_manager = IndexManager(settings)
+        if index_manager._add_to_index(notes_path):
+            manifest = index_manager._load_manifest()
+            current_files = index_manager._scan_notes_files()
+            file_path = str(notes_path)
+            if file_path in current_files:
+                manifest[file_path] = current_files[file_path]
+                index_manager._save_manifest(manifest)
+            index_manager._rebuild_bm25()
+            console.print(f"[dim green]✓ Re-indexed {notes_path.name}[/dim green]")
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(
+            f"[dim yellow]⚠️ Auto-indexing failed for "
+            f"{notes_path.name}: {exc}[/dim yellow]"
+        )
+
+
+@notes_app.command("delete")
+def notes_delete(
+    note_id: str = typer.Argument(..., help="Note id (slug or prefix)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+):
+    """Delete a note's entire <slug>/ folder and remove it from the index."""
+    import shutil
+
+    settings = get_settings()
+    record = _resolve_or_exit(note_id)
+    title = _resolve_display_title(record)
+
+    if not yes:
+        confirmed = typer.confirm(
+            f'Delete "{title}"? This removes the entire {record.dir.name}/ folder.',
+            default=False,
+        )
+        if not confirmed:
+            console.print("[yellow]Deletion cancelled.[/yellow]")
+            return
+
+    notes_path = record.notes
+    try:
+        shutil.rmtree(record.dir, ignore_errors=False)
+    except OSError as exc:
+        console.print(f"[red]✗ failed to delete {record.dir}: {exc}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]✅ Deleted {record.dir}[/green]")
+
+    if notes_path is not None:
+        _drop_from_index(settings, notes_path)
+
+
+def _drop_from_index(settings: ChirpSettings, notes_path: Path) -> None:
+    try:
+        from notes_chat.index import IndexManager
+
+        index_manager = IndexManager(settings)
+        index_manager._remove_from_index(str(notes_path))
+        manifest = index_manager._load_manifest()
+        manifest.pop(str(notes_path), None)
+        index_manager._save_manifest(manifest)
+        index_manager._rebuild_bm25()
+    except Exception as exc:  # pragma: no cover - defensive
+        console.print(f"[dim yellow]⚠️ Failed to update index: {exc}[/dim yellow]")
 
 
 def _resolve_display_title(record: NoteRecord) -> str:

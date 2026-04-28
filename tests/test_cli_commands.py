@@ -9,7 +9,13 @@ def _make_settings(tmp_path: Path) -> ChirpSettings:
     return settings
 
 
-def _write_note(tmp_path: Path, slug: str, title: str, body: str) -> Path:
+def _write_note(
+    tmp_path: Path,
+    slug: str,
+    title: str,
+    body: str,
+    tags: list[str] | None = None,
+) -> Path:
     note_dir = tmp_path / slug
     note_dir.mkdir()
     notes_path = note_dir / "notes.md"
@@ -22,7 +28,7 @@ def _write_note(tmp_path: Path, slug: str, title: str, body: str) -> Path:
             {
                 "title": title,
                 "date": "2026-04-20T09:00:00",
-                "tags": [],
+                "tags": tags or [],
             },
             fh,
         )
@@ -30,43 +36,45 @@ def _write_note(tmp_path: Path, slug: str, title: str, body: str) -> Path:
 
 
 class TestListNotes:
-    def test_list_notes_empty_directory(self, tmp_path, monkeypatch, capsys):
-        from chirp.cli import notes_list
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
 
         settings = _make_settings(tmp_path)
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
 
-        notes_list()
+    def test_list_notes_empty_directory(self, tmp_path, monkeypatch):
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "No notes found" in result.stdout
 
-        output = capsys.readouterr().out
-        assert "No notes found" in output
-
-    def test_list_notes_shows_title_from_header(self, tmp_path, monkeypatch, capsys):
-        from chirp.cli import notes_list
-
-        settings = _make_settings(tmp_path)
-        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
+    def test_list_notes_shows_title_from_header(self, tmp_path, monkeypatch):
         _write_note(tmp_path, "team-standup-2026-01-15", "Team Standup", "Content")
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "Team Standup" in result.stdout
 
-        notes_list()
+    def test_list_notes_shows_total_count(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "first-2026-01-15", "First", "Body")
+        _write_note(tmp_path, "second-2026-01-16", "Second", "Body")
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "2 total" in result.stdout
 
-        output = capsys.readouterr().out
-        assert "Team Standup" in output
-
-    def test_list_notes_shows_total_count(self, tmp_path, monkeypatch, capsys):
-        from chirp.cli import notes_list
-
-        settings = _make_settings(tmp_path)
-        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
-        _write_note(tmp_path, "first", "First", "Body")
-        _write_note(tmp_path, "second", "Second", "Body")
-
-        notes_list()
-
-        output = capsys.readouterr().out
-        assert "2 total" in output
+    def test_list_notes_shows_subcommand_hints(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "team-standup-2026-01-15", "Team Standup", "Content")
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "chirp notes view <id>" in result.stdout
+        assert "chirp notes edit <id>" in result.stdout
+        assert "chirp notes delete <id>" in result.stdout
+        assert "chirp notes --tag meeting" in result.stdout
 
 
 class TestTranscribeModelOverride:
@@ -277,3 +285,165 @@ class TestTranscribeRegen:
 
         assert result.exit_code == 0
         assert "No transcripts found" in result.stdout
+
+
+class TestNotesResolveAndTagFilter:
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
+
+    def test_tag_filter_and_semantics(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x", tags=["meeting"])
+        _write_note(tmp_path, "b-2026-04-20", "B", "x", tags=["meeting", "pricing"])
+        _write_note(tmp_path, "c-2026-04-20", "C", "x", tags=["pricing"])
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "--tag", "meeting"])
+        assert result.exit_code == 0
+        assert "2 of 3" in result.stdout
+        assert "tag: meeting" in result.stdout
+
+        result = runner.invoke(app, ["notes", "--tag", "meeting,pricing"])
+        assert result.exit_code == 0
+        assert "1 of 3" in result.stdout
+
+        result = runner.invoke(app, ["notes", "--tag", "nope"])
+        assert result.exit_code == 0
+        assert "No notes matching tag 'nope'" in result.stdout
+
+    def test_tag_with_subcommand_rejected(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "--tag", "meeting", "view", "a"])
+        assert result.exit_code == 2
+        assert "--tag is only valid when listing notes" in result.stdout
+
+    def test_unknown_id(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "view", "missing"])
+        assert result.exit_code == 1
+        assert "no note matching 'missing'" in result.stdout
+
+    def test_ambiguous_prefix(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "standup-monday-2026-04-20", "M", "x")
+        _write_note(tmp_path, "standup-tuesday-2026-04-21", "T", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "view", "standup"])
+        assert result.exit_code == 1
+        assert "matches 2 notes" in result.stdout
+
+    def test_resolve_full_id(self, tmp_path, monkeypatch):
+        from chirp.cli import _resolve_note
+        from utils.file_utils import list_notes
+
+        _write_note(tmp_path, "alpha-2026-04-20", "Alpha", "x")
+        _write_note(tmp_path, "beta-2026-04-21", "Beta", "x")
+        records = [r for r in list_notes(tmp_path) if r.notes is not None]
+
+        record = _resolve_note(records, "alpha-2026-04-20")
+        assert record.slug == "alpha-2026-04-20"
+
+    def test_resolve_unique_prefix(self, tmp_path, monkeypatch):
+        from chirp.cli import _resolve_note
+        from utils.file_utils import list_notes
+
+        _write_note(tmp_path, "alpha-2026-04-20", "Alpha", "x")
+        _write_note(tmp_path, "beta-2026-04-21", "Beta", "x")
+        records = [r for r in list_notes(tmp_path) if r.notes is not None]
+
+        record = _resolve_note(records, "alpha")
+        assert record.slug == "alpha-2026-04-20"
+
+
+class TestNotesDelete:
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        settings = _make_settings(tmp_path)
+        settings.notes_chat.auto_index = False
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
+
+    def test_delete_with_yes_flag(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "doomed-2026-04-20", "Doomed", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        captured = {}
+        monkeypatch.setattr(
+            "chirp.cli._drop_from_index",
+            lambda settings, path: captured.setdefault("dropped", str(path)),
+        )
+
+        result = runner.invoke(app, ["notes", "delete", "doomed", "--yes"])
+        assert result.exit_code == 0
+        assert "Deleted" in result.stdout
+        assert not (tmp_path / "doomed-2026-04-20").exists()
+        assert "doomed-2026-04-20/notes.md" in captured.get("dropped", "")
+
+    def test_delete_aborts_on_no(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "safe-2026-04-20", "Safe", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+        monkeypatch.setattr("chirp.cli._drop_from_index", lambda *args: None)
+
+        result = runner.invoke(app, ["notes", "delete", "safe"], input="n\n")
+        assert result.exit_code == 0
+        assert "Deletion cancelled" in result.stdout
+        assert (tmp_path / "safe-2026-04-20").exists()
+
+
+class TestNotesReviewPatches:
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        settings = _make_settings(tmp_path)
+        settings.notes_chat.auto_index = False
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
+
+    def test_empty_tags_render_as_em_dash(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "untagged-2026-04-20", "Untagged", "x", tags=[])
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "—" in result.stdout
+
+    def test_empty_note_id_reports_not_found(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "alpha-2026-04-20", "Alpha", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "view", ""])
+        assert result.exit_code == 1
+        assert "no note matching" in result.stdout
+        assert "matches" not in result.stdout
+
+    def test_delete_handles_rmtree_error(self, tmp_path, monkeypatch):
+        import shutil
+
+        _write_note(tmp_path, "doomed-2026-04-20", "Doomed", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        def boom(path, ignore_errors=False):
+            raise PermissionError("simulated permission denied")
+
+        monkeypatch.setattr(shutil, "rmtree", boom)
+
+        result = runner.invoke(app, ["notes", "delete", "doomed", "--yes"])
+        assert result.exit_code == 1
+        # Rich wraps long lines so flatten whitespace before asserting.
+        flat = " ".join(result.stdout.split())
+        assert "failed to delete" in flat
+        assert "simulated permission denied" in flat
