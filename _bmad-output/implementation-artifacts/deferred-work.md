@@ -23,3 +23,9 @@
 - `IndexManager` private-method reach-around continues in stage 4 (`_add_to_index`, `_load_manifest`, `_save_manifest`, `_rebuild_bm25`). Same root cause flagged in 1.3 — fix once, fix in both call sites. [transcriber/batch_processor.py:_stage_index]
 - `WhisperTranscriber._read_audio_metadata` is a private call from stage 1. Promote it (or extract `utils/audio_meta.py`) so callers don't depend on Whisper internals. [transcriber/batch_processor.py:_stage_load_audio]
 - No KeyboardInterrupt handling in `run_queue` — Ctrl-C mid-batch skips the popup notification and the `done · N ok · M failed` summary. Acceptable for now; revisit if users complain. [transcriber/batch_processor.py:run_queue]
+
+## Deferred from: code review of 1.5-init-polish (2026-04-27)
+
+- No test for the "garbage input retries" branch in `_prompt_blackhole_routing`. Feed `["x", "s"]` to assert the loop prints `please type o or s` then exits cleanly. [chirp/init_flow.py:_prompt_blackhole_routing]
+- `_ollama_models` is called in both `verify` (Phase 1) and `keep_or_pick` (Phase 3) — two redundant `requests.get` calls per healthy `init` run. Cache the list in Phase 1 and pass it down. [chirp/init_flow.py]
+- Path display in `_print_path_summary` uses absolute paths (`/Users/<you>/.chirp/…`) where the wireframe shows `~/.chirp/…`. Cosmetic; revisit when polishing the finalize panel. [chirp/init_flow.py:_path_line]

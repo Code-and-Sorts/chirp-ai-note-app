@@ -22,8 +22,13 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
+import tomllib
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
+import tomli_w
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -33,6 +38,7 @@ from rich.progress import (
     TextColumn,
     TimeRemainingColumn,
 )
+from rich.text import Text
 
 from config.settings import ChirpSettings
 
@@ -322,15 +328,47 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
             return False
 
     if any(s.name == "BlackHole 2ch" and not s.installed for s in statuses):
-        console.print()
-        console.print(
-            " [yellow bold]![/yellow bold] BlackHole needs a one-time audio routing step:"
-        )
-        console.print("   open [bold]Audio MIDI Setup[/bold] and create a")
-        console.print("   [bold]Multi-Output Device[/bold] = Speakers + BlackHole 2ch")
-        if _confirm(console, "open Audio MIDI Setup now?", default=True):
-            _run(["open", "-a", "Audio MIDI Setup"])
+        _prompt_blackhole_routing(console)
     return True
+
+
+def _prompt_blackhole_routing(console: Console) -> None:
+    """Phase 2 BlackHole routing prompt — macOS only.
+
+    Renders the wireframe block and offers `[o]` to open Audio MIDI Setup
+    or `[s]` to skip.
+    """
+    if platform.system() != "Darwin":
+        return
+
+    console.print()
+    console.print(
+        " [yellow bold]![/yellow bold] BlackHole needs a one-time audio routing step:"
+    )
+    console.print("   open [bold]Audio MIDI Setup[/bold] and create a")
+    console.print("   [bold]Multi-Output Device[/bold] = Speakers + BlackHole 2ch")
+    console.print()
+    console.print("   [dim](chirp can open it for you)[/dim]")
+
+    while True:
+        prompt = Text()
+        prompt.append("   ")
+        prompt.append("›", style="green")
+        prompt.append(" [o] open Audio MIDI Setup   [s] skip, I'll do it ")
+        try:
+            answer = console.input(prompt).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            return
+        if answer in ("o", "open"):
+            _run(["open", "-a", "Audio MIDI Setup"])
+            return
+        if answer in ("s", "skip"):
+            console.print(
+                "   [dim](skipped — run `chirp devices` later to verify routing)[/dim]"
+            )
+            return
+        console.print("   [dim]please type o or s[/dim]")
 
 
 def pick_models(console: Console) -> tuple[str, str]:
@@ -376,13 +414,52 @@ def _pick(console: Console, title: str, options: list[ModelOption]) -> str:
     return choice
 
 
+def keep_or_pick(console: Console, settings: ChirpSettings) -> tuple[str, str, bool]:
+    """Phase 3 — show "keep these or pick new?" when current models are valid.
+
+    Returns ``(chat_tag, embed_tag, models_changed)``. ``models_changed`` is
+    False when the user kept the existing models and Phase 4 should leave
+    ``models.*`` in ``config.toml`` untouched.
+    """
+    current_chat = settings.models.llm
+    current_embed = settings.notes_chat.emb_model
+    available = _ollama_models()
+    current_present = (
+        bool(current_chat)
+        and bool(current_embed)
+        and _model_installed(current_chat, available)
+        and _model_installed(current_embed, available)
+    )
+
+    if current_present:
+        console.print()
+        console.print(f" [bold]current models:[/bold] {current_chat}, {current_embed}")
+        try:
+            answer = (
+                console.input(
+                    "   [bold]keep these, or pick new?[/bold] [dim][K/p][/dim] "
+                )
+                .strip()
+                .lower()
+            )
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            return current_chat, current_embed, False
+        if answer in ("", "k", "keep"):
+            return current_chat, current_embed, False
+
+    chat, embed = pick_models(console)
+    return chat, embed, True
+
+
 def pull_and_finalize(
     console: Console,
     settings: ChirpSettings,
     chat_tag: str,
     embed_tag: str,
+    models_changed: bool = True,
 ) -> None:
-    """Phase 4 — pull the picked models, save config, init chroma."""
+    """Phase 4 — pull the picked models, merge config.toml, ensure dirs."""
     installed = _ollama_models()
     to_pull = [
         tag for tag in (chat_tag, embed_tag) if not _model_installed(tag, installed)
@@ -395,27 +472,134 @@ def pull_and_finalize(
     else:
         console.print(" [green]models already present.[/green]")
 
+    config_path = ChirpSettings.get_config_path()
+    chroma_dir = settings.notes_chat.index_dir / "chroma"
+    notes_root = settings.directories.notes_root
+
+    config_existed = config_path.exists()
+    chroma_existed = chroma_dir.exists()
+    notes_existed = notes_root.exists()
+
     settings.models.llm = chat_tag
     settings.notes_chat.emb_model = embed_tag
-    config_path = ChirpSettings.get_config_path()
-    settings.save_to_file(config_path)
-    settings.ensure_directories_exist()
 
-    console.print()
-    console.print(f" [green]✓[/green] saved config to [bold]{config_path}[/bold]")
-    console.print(
-        f" [green]✓[/green] chromadb directory ready at [bold]{settings.notes_chat.index_dir / 'chroma'}[/bold] "
-        "[dim](collection is created on first index)[/dim]"
+    config_written = False
+    if models_changed or not config_existed:
+        _merge_config(config_path, chat_tag, embed_tag, console=console)
+        config_written = True
+
+    chroma_dir.mkdir(parents=True, exist_ok=True)
+    notes_root.mkdir(parents=True, exist_ok=True)
+
+    _print_path_summary(
+        console,
+        config_path=config_path,
+        config_changed=config_written,
+        chroma_dir=chroma_dir,
+        chroma_was_new=not chroma_existed,
+        notes_root=notes_root,
+        notes_was_new=not notes_existed,
     )
-    console.print(
-        f" [green]✓[/green] notes root: [bold]{settings.directories.notes_root}[/bold]"
-    )
+
     console.print()
     console.print(" [bold]your nest is ready.[/bold] try:")
     console.print("   [dim]$[/dim] chirp record")
     console.print(
         '   [dim]$[/dim] chirp ask [yellow]"what did I decide last week?"[/yellow]'
     )
+
+
+def _merge_config(
+    config_path: Path,
+    chat_tag: str,
+    embed_tag: str,
+    console: Console | None = None,
+) -> None:
+    """Merge models.* fields into config.toml without dropping user keys.
+
+    On a corrupt file we copy the original aside as ``config.toml.bak-<ts>``
+    and warn loudly before writing a fresh config — never silently clobber
+    hand-edited keys.
+    """
+    existing: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            with config_path.open("rb") as fh:
+                existing = dict(tomllib.load(fh))
+        except Exception as exc:
+            backup = _backup_unparsable_config(config_path)
+            if console is not None:
+                console.print(
+                    f"[yellow]⚠ {config_path.name} could not be parsed "
+                    f"({exc}); backed up to {backup} and writing a fresh "
+                    "config from defaults. Re-add any custom keys from the "
+                    "backup.[/yellow]"
+                )
+            existing = {}
+
+    existing.setdefault("models", {})["llm"] = chat_tag
+    existing.setdefault("notes_chat", {})["emb_model"] = embed_tag
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with config_path.open("wb") as fh:
+        tomli_w.dump(existing, fh)
+
+
+def _backup_unparsable_config(config_path: Path) -> Path:
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    backup = config_path.with_name(f"{config_path.name}.bak-{timestamp}")
+    config_path.rename(backup)
+    return backup
+
+
+def _print_path_summary(
+    console: Console,
+    *,
+    config_path: Path,
+    config_changed: bool,
+    chroma_dir: Path,
+    chroma_was_new: bool,
+    notes_root: Path,
+    notes_was_new: bool,
+) -> None:
+    console.print()
+    console.print(
+        _path_line(
+            "saved config to",
+            config_path,
+            created_or_changed=config_changed,
+        )
+    )
+    console.print(
+        _path_line(
+            "initialized chromadb at",
+            chroma_dir,
+            created_or_changed=chroma_was_new,
+        )
+    )
+    console.print(
+        _path_line(
+            "notes dir:",
+            notes_root,
+            created_or_changed=notes_was_new,
+        )
+    )
+
+
+def _path_line(
+    label: str,
+    path: Path,
+    *,
+    created_or_changed: bool,
+) -> Text:
+    line = Text(" ")
+    if created_or_changed:
+        line.append("✓", style="green")
+    else:
+        line.append("·", style="dim")
+    line.append(f" {label} ")
+    line.append(str(path), style="bold")
+    return line
 
 
 def _pull_model(console: Console, tag: str) -> None:
@@ -480,7 +664,7 @@ def run_init(
     """Top-level entry — orchestrates the four phases. Returns exit code."""
     if switch_model:
         chat, embed = pick_models(console)
-        pull_and_finalize(console, settings, chat, embed)
+        pull_and_finalize(console, settings, chat, embed, models_changed=True)
         return 0
 
     statuses = verify(settings, console)
@@ -498,6 +682,10 @@ def run_init(
             return 1
         if not install_missing(console, statuses):
             return 1
+    else:
+        console.print(
+            " [dim]phase 2 · everything's already installed — skipping.[/dim]"
+        )
 
     ollama = _ollama_installed()
     if not ollama.installed or "running" not in ollama.detail:
@@ -506,6 +694,6 @@ def run_init(
         )
         return 1
 
-    chat, embed = pick_models(console)
-    pull_and_finalize(console, settings, chat, embed)
+    chat, embed, models_changed = keep_or_pick(console, settings)
+    pull_and_finalize(console, settings, chat, embed, models_changed=models_changed)
     return 0
