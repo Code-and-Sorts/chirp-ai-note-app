@@ -8,3 +8,7 @@
 - ~~Unicode/punctuation-only titles collapse to bare `note` base before the date suffix~~ — addressed 2026-04-27: `_kebab_case` now NFKD-folds to ASCII so accented titles (e.g. `Café résumé` → `cafe-resume`) survive; truly non-alphanumeric titles still fall back to `note` and rely on the collision counter. [utils/file_utils.py:_kebab_case]
 - Missing end-to-end integration test from spec's Testing section: record→transcribe→generate asserting `audio.wav`, `transcript.txt`, `notes.md`, `meta.toml` and `whisper_model`/`llm_model`/`indexed_at` keys. [tests/]
 - AC-3 partial: `notes_chat.index_dir` default is `~/.chirp`, and the chroma dir resolves as `index_dir/chroma`. Functionally correct but the spec wording suggests `index_dir` should itself point at `~/.chirp/chroma/`. Consider renaming `index_dir` to `chirp_home` or moving the `chroma/` suffix into the default. [config/settings.py]
+
+## Deferred from: code review of 1.2-command-surface-prune (2026-04-27)
+
+- `ManualNoteManager` / `ManualNoteEditor` are orphans in the active code path after `note` was removed. Tests exercise them in isolation, but no CLI command calls them. Expected to be revived by story 1.3's `notes view` / `notes edit`. [notes/manual_note_manager.py, notes/note_editor.py]

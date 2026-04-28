@@ -10,7 +10,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from chirp.exceptions import *
+from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingError
 from config.settings import ChirpSettings, get_settings
 from utils.file_utils import NoteRecord, list_notes
 
@@ -330,11 +330,35 @@ def transcribe(
         "--no-index",
         help="Skip chromadb indexing (single-recording mode only).",
     ),
+    regen: bool = typer.Option(
+        False,
+        "--regen",
+        help="Regenerate notes from existing transcripts; skip audio transcription. "
+        "Useful after switching LLMs.",
+    ),
 ):
     """Turn audio into text + summary"""
     from transcriber.batch_processor import BatchProcessor
 
     settings = get_settings()
+
+    if regen:
+        if note_id is not None:
+            console.print(
+                "[red]--regen processes all transcribed records; do not pass an index.[/red]"
+            )
+            raise typer.Exit(2)
+        if no_notes:
+            console.print("[red]--regen and --no-notes are mutually exclusive.[/red]")
+            raise typer.Exit(2)
+        if force:
+            console.print(
+                "[red]--regen and --force are mutually exclusive (--force re-transcribes; "
+                "--regen reuses existing transcripts).[/red]"
+            )
+            raise typer.Exit(2)
+        _run_regen_pipeline(settings, input_dir=input_dir)
+        return
 
     if note_id is not None:
         _run_transcribe_pipeline(
@@ -412,15 +436,46 @@ def transcribe(
         console.print(
             f"[green]✅ Successfully transcribed {success_count}/{processed_count} notes[/green]"
         )
-        if not no_notes:
-            console.print(
-                "[dim]Run 'chirp generate' to turn transcripts into notes.[/dim]"
-            )
 
     if skipped_count > 0 and not force:
         console.print(
             f"[yellow]⏭️  Skipped {skipped_count} note(s) - already transcribed (use --force to re-transcribe)[/yellow]"
         )
+
+
+def _run_regen_pipeline(settings, input_dir: Path | None) -> None:
+    from notes.note_generator import NoteGenerator
+
+    notes_root = input_dir or settings.directories.notes_root
+    records = [
+        record for record in list_notes(notes_root) if record.transcript is not None
+    ]
+
+    if not records:
+        console.print(
+            f"[yellow]No transcripts found in {notes_root}. "
+            "Run `chirp transcribe` first.[/yellow]"
+        )
+        return
+
+    note_generator = NoteGenerator(settings)
+    console.print(
+        f"[bold blue]🧠 Regenerating notes for {len(records)} record(s)...[/bold blue]"
+    )
+    result = note_generator.generate_for_records(records, force=True)
+
+    sub_results = result.get("results", [])
+    success_count = sum(1 for r in sub_results if r.get("success"))
+    if success_count:
+        console.print(
+            f"[green]✅ Regenerated notes for {success_count}/{len(sub_results)} record(s)[/green]"
+        )
+    if success_count < len(sub_results):
+        failed = [r for r in sub_results if not r.get("success")]
+        for failure in failed:
+            slug = failure.get("slug", "<unknown>")
+            error = failure.get("error", "unknown error")
+            console.print(f"[red]  ✗ {slug}: {error}[/red]")
 
 
 def _print_missing_recording(settings, records, note_id: int) -> None:
@@ -629,7 +684,6 @@ def notes_list():
 
     console.print(table)
     console.print()
-    console.print(" [dim]› chirp note [NAME]      · open a note by name[/dim]")
     console.print(" [dim]› chirp ask              · ask a question[/dim]")
 
 

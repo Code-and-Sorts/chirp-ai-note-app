@@ -56,6 +56,7 @@
     "pyproject",
     "pytest",
     "pyupgrade",
+    "regen",
     "ruff",
     "transcriber",
     "typer",

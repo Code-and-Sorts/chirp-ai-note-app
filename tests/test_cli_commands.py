@@ -167,3 +167,113 @@ class TestTranscribeModelOverride:
 
         assert result.exit_code == 0
         assert captured_args.get("model_override") is None
+
+
+class TestTranscribeRegen:
+    def _seed_record_with_transcript(self, tmp_path: Path, slug: str) -> None:
+        note_dir = tmp_path / slug
+        note_dir.mkdir()
+        (note_dir / "audio.wav").write_bytes(b"\x00" * 100)
+        (note_dir / "transcript.txt").write_text("hello world", encoding="utf-8")
+
+        import tomli_w
+
+        with (note_dir / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {
+                    "title": slug,
+                    "date": "2026-04-20T09:00:00",
+                    "tags": [],
+                },
+                fh,
+            )
+
+    def test_regen_calls_note_generator_with_force_true(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        self._seed_record_with_transcript(tmp_path, "first-2026-04-20")
+        self._seed_record_with_transcript(tmp_path, "second-2026-04-20")
+
+        captured = {}
+
+        class FakeNoteGenerator:
+            def __init__(self, s):
+                captured["settings"] = s
+
+            def generate_for_records(self, records, force=False):
+                captured["records"] = records
+                captured["force"] = force
+                return {
+                    "success": True,
+                    "results": [{"success": True, "slug": r.slug} for r in records],
+                }
+
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        monkeypatch.setattr("notes.note_generator.NoteGenerator", FakeNoteGenerator)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen"])
+
+        assert result.exit_code == 0
+        assert captured.get("force") is True
+        assert len(captured.get("records", [])) == 2
+        assert "Regenerated notes for 2/2" in result.stdout
+
+    def test_regen_with_note_id_rejected(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "1"])
+
+        assert result.exit_code == 2
+        assert "do not pass an index" in result.stdout
+
+    def test_regen_with_force_rejected(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "--force"])
+
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.stdout
+
+    def test_regen_with_no_notes_rejected(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "--no-notes"])
+
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.stdout
+
+    def test_regen_when_no_transcripts(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen"])
+
+        assert result.exit_code == 0
+        assert "No transcripts found" in result.stdout

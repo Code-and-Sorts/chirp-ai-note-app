@@ -119,6 +119,8 @@ def _info_lines(
     lines.append(Text(f"   • {notes_count} notes at {notes_root}", style="dim"))
     lines.append(Text(f"   • llm:   {_model_label(chat_model)}", style="dim"))
     lines.append(Text(f"   • index: {_model_label(embed_model)}", style="dim"))
+    if not chat_model or not embed_model:
+        lines.append(Text("   • run `chirp init` to set up models", style="dim"))
     credit = Text()
     credit.append("   • made with ", style="dim")
     credit.append("♥", style="red")
@@ -132,7 +134,7 @@ def _info_lines(
 def _model_label(value: str | None) -> str:
     if value:
         return value
-    return "<not configured — run chirp init>"
+    return "<not set>"
 
 
 def run_about(
