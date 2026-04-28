@@ -5,7 +5,6 @@ import typer
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -323,34 +322,18 @@ def _run_live_transcription(
 
 @app.command(rich_help_panel=MAIN_PANEL)
 def transcribe(
-    note_id: int | None = typer.Argument(
+    n: int | None = typer.Argument(
         None,
-        help="Index of a recording to process (newest-first by creation time).",
-    ),
-    input_dir: Path | None = typer.Option(
-        None, "--input", "-i", help="Input directory for audio files"
+        help="Optional cap: process only the N oldest untranscribed notes.",
     ),
     force: bool = typer.Option(
-        False, "--force", "-f", help="Re-transcribe already processed files"
-    ),
-    stream: bool = typer.Option(
-        True, "--stream/--no-stream", help="Stream transcription as it processes"
+        False, "--force", "-f", help="Re-run all stages on already-transcribed notes."
     ),
     model: str | None = typer.Option(
         None,
         "--model",
         "-m",
-        help="Whisper model to use (e.g. tiny, base, small, medium, large-v3)",
-    ),
-    no_notes: bool = typer.Option(
-        False,
-        "--no-notes",
-        help="Skip notes-generation (single-recording mode only).",
-    ),
-    no_index: bool = typer.Option(
-        False,
-        "--no-index",
-        help="Skip chromadb indexing (single-recording mode only).",
+        help="Whisper model override (e.g. tiny, base, small, medium, large-v3).",
     ),
     regen: bool = typer.Option(
         False,
@@ -365,13 +348,10 @@ def transcribe(
     settings = get_settings()
 
     if regen:
-        if note_id is not None:
+        if n is not None:
             console.print(
-                "[red]--regen processes all transcribed records; do not pass an index.[/red]"
+                "[red]--regen processes all transcribed records; do not pass N.[/red]"
             )
-            raise typer.Exit(2)
-        if no_notes:
-            console.print("[red]--regen and --no-notes are mutually exclusive.[/red]")
             raise typer.Exit(2)
         if force:
             console.print(
@@ -379,96 +359,24 @@ def transcribe(
                 "--regen reuses existing transcripts).[/red]"
             )
             raise typer.Exit(2)
-        _run_regen_pipeline(settings, input_dir=input_dir)
+        _run_regen_pipeline(settings)
         return
 
-    if note_id is not None:
-        _run_transcribe_pipeline(
-            settings, note_id, model=model, do_notes=not no_notes, do_index=not no_index
-        )
-        return
-
-    if no_notes or no_index:
-        console.print(
-            "[red]--no-notes / --no-index are only valid when a recording index is provided "
-            "(e.g. `chirp transcribe 1`).[/red]"
-        )
+    if n is not None and n < 1:
+        console.print("[red]N must be a positive integer.[/red]")
         raise typer.Exit(2)
-
-    notes_root = input_dir or settings.directories.notes_root
-    records = [record for record in list_notes(notes_root) if record.audio is not None]
-
-    if not records:
-        console.print(f"[yellow]No audio files found in {notes_root}[/yellow]")
-        return
 
     if model:
         console.print(f"[cyan]Using Whisper model: {model}[/cyan]")
 
     processor = BatchProcessor(settings, model_override=model)
-
-    segment_callback = None
-    if stream:
-        from rich.console import Group
-        from rich.live import Live
-        from rich.text import Text
-
-        streaming_text = Text()
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-        )
-        task = progress.add_task("Transcribing audio files...", total=len(records))
-
-        def on_segment(segment):
-            text = segment.get("text", "").strip()
-            if text:
-                streaming_text.append(text + " ", style="cyan")
-
-        segment_callback = on_segment
-
-        with Live(
-            Group(streaming_text, progress), console=console, refresh_per_second=4
-        ):
-            results = processor.process_records(
-                records,
-                force=force,
-                progress_callback=lambda: progress.update(task, advance=1),
-                on_segment=segment_callback,
-            )
-    else:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Transcribing audio files...", total=len(records))
-
-            results = processor.process_records(
-                records,
-                force=force,
-                progress_callback=lambda: progress.update(task, advance=1),
-            )
-
-    success_count = sum(1 for r in results if r["success"])
-    processed_count = len(results)
-    skipped_count = len(records) - processed_count
-
-    if processed_count > 0:
-        console.print(
-            f"[green]✅ Successfully transcribed {success_count}/{processed_count} notes[/green]"
-        )
-
-    if skipped_count > 0 and not force:
-        console.print(
-            f"[yellow]⏭️  Skipped {skipped_count} note(s) - already transcribed (use --force to re-transcribe)[/yellow]"
-        )
+    processor.run_queue(n=n, force=force, console=console)
 
 
-def _run_regen_pipeline(settings, input_dir: Path | None) -> None:
+def _run_regen_pipeline(settings) -> None:
     from notes.note_generator import NoteGenerator
 
-    notes_root = input_dir or settings.directories.notes_root
+    notes_root = settings.directories.notes_root
     records = [
         record for record in list_notes(notes_root) if record.transcript is not None
     ]
@@ -498,157 +406,6 @@ def _run_regen_pipeline(settings, input_dir: Path | None) -> None:
             slug = failure.get("slug", "<unknown>")
             error = failure.get("error", "unknown error")
             console.print(f"[red]  ✗ {slug}: {error}[/red]")
-
-
-def _print_missing_recording(settings, records, note_id: int) -> None:
-    notes_root = settings.directories.notes_root
-    if not records:
-        console.print(
-            f"[red]No recording at index {note_id}. No recordings in {notes_root}.[/red]"
-        )
-        return
-    preview_limit = 3
-    console.print(
-        f"[red]No recording at index {note_id}. Valid indices are 1-{len(records)} "
-        f"(newest first, from {notes_root}):[/red]"
-    )
-    for idx, record in enumerate(records[:preview_limit], start=1):
-        console.print(f"[dim]  {idx}. {record.slug}[/dim]")
-    if len(records) > preview_limit:
-        console.print(f"[dim]  ... and {len(records) - preview_limit} more[/dim]")
-
-
-def _run_transcribe_pipeline(
-    settings,
-    note_id: int,
-    model: str | None,
-    do_notes: bool,
-    do_index: bool,
-) -> None:
-    """Single-recording 4-step pipeline matching A6:
-    transcribe (whisper) → generate notes (qwen · notes-mode) → index → save.
-    """
-    from rich.console import Group
-    from rich.live import Live
-    from rich.text import Text
-
-    from transcriber.batch_processor import BatchProcessor
-
-    records = [
-        record
-        for record in list_notes(settings.directories.notes_root)
-        if record.audio is not None
-    ]
-    records_newest_first = list(reversed(records))
-    if note_id < 1 or note_id > len(records_newest_first):
-        _print_missing_recording(settings, records_newest_first, note_id)
-        raise typer.Exit(1)
-
-    target_record = records_newest_first[note_id - 1]
-    assert target_record.audio is not None, "filtered list guarantees audio is present"
-    audio_path: Path = target_record.audio
-
-    steps = [
-        ("loaded audio", "pending"),
-        ("detected language", "pending"),
-        ("transcribe (whisper)", "pending"),
-        ("generate notes (qwen · notes-mode)", "pending" if do_notes else "skip"),
-        ("index to chromadb", "pending" if do_index else "skip"),
-        ("save", "pending"),
-    ]
-
-    streaming_text = Text()
-
-    def render() -> Group:
-        status_lines: list[Text] = []
-        for label, state in steps:
-            if state == "done":
-                icon = Text("✓ ", style="green")
-            elif state == "running":
-                icon = Text("⠙ ", style="yellow")
-            elif state == "skip":
-                icon = Text("— ", style="dim")
-            else:
-                icon = Text("○ ", style="dim")
-            line = Text()
-            line.append(icon)
-            line.append(label)
-            status_lines.append(line)
-        header = Text()
-        header.append(audio_path.stem, style="bold white")
-        header.append(f"  · {audio_path.name}", style="dim")
-        preview = Text("\n  notes-mode output (streaming):\n", style="dim")
-        return Group(header, Text(""), *status_lines, preview, streaming_text)
-
-    def set_state(idx: int, state: str) -> None:
-        label, _ = steps[idx]
-        steps[idx] = (label, state)
-
-    with Live(render(), console=console, refresh_per_second=10) as live:
-        try:
-            size_kb = audio_path.stat().st_size / 1024
-            steps[0] = (f"loaded audio · {size_kb:.1f} KB", "done")
-            live.update(render())
-
-            set_state(1, "running")
-            live.update(render())
-            set_state(1, "done")
-
-            set_state(2, "running")
-            live.update(render())
-
-            def on_segment(segment):
-                text = segment.get("text", "").strip()
-                if text:
-                    streaming_text.append(text + " ", style="cyan")
-                    live.update(render())
-
-            processor = BatchProcessor(settings, model_override=model)
-            results = processor.process_records(
-                [target_record], force=False, on_segment=on_segment
-            )
-            set_state(2, "done")
-            live.update(render())
-
-            if do_notes:
-                set_state(3, "running")
-                live.update(render())
-                from notes.note_generator import NoteGenerator
-
-                refreshed_records = [
-                    record
-                    for record in list_notes(settings.directories.notes_root)
-                    if record.slug == target_record.slug and record.transcript
-                ]
-                if refreshed_records:
-                    NoteGenerator(settings).generate_for_records(
-                        refreshed_records, force=True
-                    )
-                    set_state(3, "done")
-                else:
-                    set_state(3, "skip")
-                live.update(render())
-
-            if do_index and settings.notes_chat.auto_index:
-                set_state(4, "running")
-                live.update(render())
-                from notes_chat.config import get_notes_config
-                from notes_chat.index import build_index
-
-                build_index(get_notes_config())
-                set_state(4, "done")
-                live.update(render())
-
-            set_state(5, "done")
-            live.update(render())
-        except Exception as exc:
-            console.print(f"[red]❌ Pipeline failed: {exc}[/red]")
-            raise typer.Exit(1)
-
-    if any(r.get("success") for r in results):
-        console.print("[green]✅ Pipeline complete.[/green]")
-    else:
-        console.print("[yellow]Pipeline finished with warnings — see above.[/yellow]")
 
 
 notes_app = typer.Typer(help="Browse, view, edit, or delete your notes")

@@ -17,3 +17,9 @@
 
 - `_drop_from_index` and `_reindex_after_edit` reach into `IndexManager._remove_from_index`, `_load_manifest`, `_save_manifest`, `_rebuild_bm25` (private API). Pre-existing pattern from the deleted `note` command; expose a public `IndexManager.delete(path)` / `add(path)` and have CLI use those. [chirp/cli.py, notes_chat/index.py]
 - No happy-path test for `notes view` / `notes edit` because they invoke the interactive `ManualNoteEditor` (curses/TTY). Acceptable gap; resolution paths are tested directly via `_resolve_note`. [tests/test_cli_commands.py]
+
+## Deferred from: code review of 1.4-transcribe-queue-checklist (2026-04-27)
+
+- `IndexManager` private-method reach-around continues in stage 4 (`_add_to_index`, `_load_manifest`, `_save_manifest`, `_rebuild_bm25`). Same root cause flagged in 1.3 — fix once, fix in both call sites. [transcriber/batch_processor.py:_stage_index]
+- `WhisperTranscriber._read_audio_metadata` is a private call from stage 1. Promote it (or extract `utils/audio_meta.py`) so callers don't depend on Whisper internals. [transcriber/batch_processor.py:_stage_load_audio]
+- No KeyboardInterrupt handling in `run_queue` — Ctrl-C mid-batch skips the popup notification and the `done · N ok · M failed` summary. Acceptable for now; revisit if users complain. [transcriber/batch_processor.py:run_queue]

@@ -77,7 +77,7 @@ class TestListNotes:
         assert "chirp notes --tag meeting" in result.stdout
 
 
-class TestTranscribeModelOverride:
+class TestTranscribeCli:
     def _seed_note_with_audio(self, tmp_path: Path) -> None:
         note_dir = tmp_path / "sample-2026-04-20"
         note_dir.mkdir()
@@ -95,35 +95,32 @@ class TestTranscribeModelOverride:
                 fh,
             )
 
+    def _fake_processor(self, captured: dict):
+        class FakeBatchProcessor:
+            def __init__(self, s, model_override=None):
+                captured["settings"] = s
+                captured["model_override"] = model_override
+
+            def run_queue(self, n=None, force=False, console=None):
+                captured["n"] = n
+                captured["force"] = force
+                return {"ok": 1, "failed": 0, "total": 1}
+
+        return FakeBatchProcessor
+
     def test_model_override_passed_to_batch_processor(self, tmp_path, monkeypatch):
         import sys
         from unittest.mock import MagicMock
 
         settings = _make_settings(tmp_path)
-
         self._seed_note_with_audio(tmp_path)
-
-        captured_args = {}
-
-        class FakeBatchProcessor:
-            def __init__(self, s, model_override=None):
-                captured_args["settings"] = s
-                captured_args["model_override"] = model_override
-
-            def process_records(
-                self,
-                records,
-                force=False,
-                progress_callback=None,
-                on_segment=None,
-            ):
-                return [{"success": True}]
+        captured: dict = {}
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
         monkeypatch.setitem(sys.modules, "faster_whisper", MagicMock())
         monkeypatch.setattr(
             "transcriber.batch_processor.BatchProcessor",
-            FakeBatchProcessor,
+            self._fake_processor(captured),
         )
 
         from typer.testing import CliRunner
@@ -134,36 +131,23 @@ class TestTranscribeModelOverride:
         result = runner.invoke(chirp.cli.app, ["transcribe", "--model", "small"])
 
         assert result.exit_code == 0
-        assert captured_args.get("model_override") == "small"
+        assert captured["model_override"] == "small"
+        assert captured["n"] is None
+        assert captured["force"] is False
 
-    def test_transcribe_without_model_override(self, tmp_path, monkeypatch):
+    def test_n_and_force_passed_through(self, tmp_path, monkeypatch):
         import sys
         from unittest.mock import MagicMock
 
         settings = _make_settings(tmp_path)
-
         self._seed_note_with_audio(tmp_path)
-
-        captured_args = {}
-
-        class FakeBatchProcessor:
-            def __init__(self, s, model_override=None):
-                captured_args["model_override"] = model_override
-
-            def process_records(
-                self,
-                records,
-                force=False,
-                progress_callback=None,
-                on_segment=None,
-            ):
-                return [{"success": True}]
+        captured: dict = {}
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
         monkeypatch.setitem(sys.modules, "faster_whisper", MagicMock())
         monkeypatch.setattr(
             "transcriber.batch_processor.BatchProcessor",
-            FakeBatchProcessor,
+            self._fake_processor(captured),
         )
 
         from typer.testing import CliRunner
@@ -171,10 +155,37 @@ class TestTranscribeModelOverride:
         import chirp.cli
 
         runner = CliRunner()
-        result = runner.invoke(chirp.cli.app, ["transcribe"])
+        result = runner.invoke(chirp.cli.app, ["transcribe", "2", "--force"])
 
         assert result.exit_code == 0
-        assert captured_args.get("model_override") is None
+        assert captured["n"] == 2
+        assert captured["force"] is True
+
+    def test_n_must_be_positive(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "0"])
+        assert result.exit_code == 2
+        assert "must be a positive integer" in result.stdout
+
+    def test_no_stream_flag_removed(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--no-stream"])
+        assert result.exit_code != 0
+        assert "no such option" in result.stdout.lower() or result.exit_code == 2
 
 
 class TestTranscribeRegen:
@@ -230,7 +241,7 @@ class TestTranscribeRegen:
         assert len(captured.get("records", [])) == 2
         assert "Regenerated notes for 2/2" in result.stdout
 
-    def test_regen_with_note_id_rejected(self, tmp_path, monkeypatch):
+    def test_regen_with_n_rejected(self, tmp_path, monkeypatch):
         settings = _make_settings(tmp_path)
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
 
@@ -242,7 +253,7 @@ class TestTranscribeRegen:
         result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "1"])
 
         assert result.exit_code == 2
-        assert "do not pass an index" in result.stdout
+        assert "do not pass N" in result.stdout
 
     def test_regen_with_force_rejected(self, tmp_path, monkeypatch):
         settings = _make_settings(tmp_path)
@@ -254,20 +265,6 @@ class TestTranscribeRegen:
 
         runner = CliRunner()
         result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "--force"])
-
-        assert result.exit_code == 2
-        assert "mutually exclusive" in result.stdout
-
-    def test_regen_with_no_notes_rejected(self, tmp_path, monkeypatch):
-        settings = _make_settings(tmp_path)
-        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
-        from typer.testing import CliRunner
-
-        import chirp.cli
-
-        runner = CliRunner()
-        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "--no-notes"])
 
         assert result.exit_code == 2
         assert "mutually exclusive" in result.stdout
