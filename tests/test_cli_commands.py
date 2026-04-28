@@ -1,5 +1,4 @@
 from pathlib import Path
-from unittest.mock import patch
 
 from config.settings import ChirpSettings
 
@@ -68,31 +67,6 @@ class TestListNotes:
 
         output = capsys.readouterr().out
         assert "2 total" in output
-
-
-class TestVersion:
-    def test_version_installed(self, capsys):
-        from chirp.cli import version
-
-        with patch("importlib.metadata.version", return_value="1.2.3"):
-            version()
-
-        output = capsys.readouterr().out
-        assert "1.2.3" in output
-
-    def test_version_not_installed(self, capsys):
-        from importlib.metadata import PackageNotFoundError
-
-        from chirp.cli import version
-
-        with patch(
-            "importlib.metadata.version",
-            side_effect=PackageNotFoundError("chirp-notes-ai"),
-        ):
-            version()
-
-        output = capsys.readouterr().out
-        assert "dev" in output
 
 
 class TestTranscribeModelOverride:

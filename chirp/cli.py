@@ -17,6 +17,7 @@ from utils.file_utils import NoteRecord, list_notes
 app = typer.Typer(
     name="chirp",
     help="Chirp · AI notes for your terminal.",
+    epilog="run `chirp COMMAND --help` for details",
     rich_markup_mode="rich",
     add_completion=False,
     context_settings={
@@ -27,94 +28,6 @@ app = typer.Typer(
 console = Console()
 
 MAIN_PANEL = "Commands"
-SETUP_PANEL = "Setup"
-INFO_PANEL = "Info"
-
-RECORDING_PANEL = MAIN_PANEL
-CHAT_PANEL = MAIN_PANEL
-PROCESSING_PANEL = MAIN_PANEL
-
-
-def _test_ollama_connection(settings):
-    """Test if Ollama is running and accessible"""
-    try:
-        import requests
-
-        response = requests.get(f"{settings.models.ollama_url}/api/version", timeout=5)
-        return response.status_code == 200
-    except Exception:
-        return False
-
-
-def _test_llm_model_available(settings):
-    """Test if the configured LLM model is available in Ollama"""
-    try:
-        import requests
-
-        response = requests.get(f"{settings.models.ollama_url}/api/tags", timeout=5)
-        if response.status_code == 200:
-            models = response.json().get("models", [])
-            available_models = [model["name"] for model in models]
-            return settings.models.llm in available_models
-        return False
-    except Exception:
-        return False
-
-
-def _test_embedding_model_available(settings):
-    """Test if the configured embedding model is available in Ollama"""
-    try:
-        import requests
-
-        response = requests.get(f"{settings.models.ollama_url}/api/tags", timeout=5)
-        if response.status_code == 200:
-            models = response.json().get("models", [])
-            available_models = [model["name"] for model in models]
-
-            if settings.notes_chat.emb_model in available_models:
-                return True
-
-            if f"{settings.notes_chat.emb_model}:latest" in available_models:
-                return True
-
-            model_base = settings.notes_chat.emb_model.split(":")[0]
-            for model in available_models:
-                if model.startswith(f"{model_base}:"):
-                    return True
-
-            return False
-        return False
-    except Exception:
-        return False
-
-
-def _test_notes_index(settings):
-    """Test if notes index exists and is accessible"""
-    try:
-        index_dir = settings.notes_chat.index_dir
-        manifest_file = index_dir / "manifest.json"
-        chroma_dir = index_dir / "chroma"
-        return manifest_file.exists() and chroma_dir.exists()
-    except Exception:
-        return False
-
-
-def _test_chroma_db(settings):
-    """Test if ChromaDB is working for notes search"""
-    try:
-        import chromadb
-        from chromadb.config import Settings as ChromaSettings
-
-        index_dir = settings.notes_chat.index_dir
-        client = chromadb.PersistentClient(
-            path=str(index_dir / "chroma"),
-            settings=ChromaSettings(allow_reset=True),
-        )
-        client.get_or_create_collection(name="notes")
-        return True
-    except Exception:
-        return False
-
 
 METER_WIDTH = 20
 
@@ -386,205 +299,6 @@ def _run_live_transcription(
     )
 
 
-@app.command(name="notes", rich_help_panel=MAIN_PANEL)
-def notes_list():
-    """Browse your notes"""
-    settings = get_settings()
-    records = [
-        record
-        for record in list_notes(settings.directories.notes_root)
-        if record.notes is not None
-    ]
-
-    if not records:
-        console.print(
-            f"[yellow]No notes found in {settings.directories.notes_root}[/yellow]"
-        )
-        console.print(
-            "[dim]Run 'chirp transcribe' to create notes from recordings[/dim]"
-        )
-        return
-
-    console.print()
-    console.print(
-        f" [bold]Your notes[/bold] [dim]· {len(records)} total · sorted by date[/dim]"
-    )
-    console.print()
-
-    table = Table(
-        show_header=True,
-        header_style="yellow bold",
-        border_style="dim",
-        padding=(0, 1),
-    )
-    table.add_column("#", style="dim", no_wrap=True, justify="right")
-    table.add_column("title", style="white")
-    table.add_column("date", style="cyan", no_wrap=True)
-    table.add_column("length", style="dim", justify="right", no_wrap=True)
-
-    for idx, record in enumerate(reversed(records), start=1):
-        title = _resolve_display_title(record)
-
-        try:
-            stat = record.notes.stat() if record.notes else None
-        except OSError:
-            stat = None
-
-        if stat is not None:
-            date_str = record.created_at.strftime("%b %d").lower()
-            length_str = f"{stat.st_size / 1024:.1f} KB"
-        else:
-            date_str = "?"
-            length_str = "?"
-
-        table.add_row(str(idx), title, date_str, length_str)
-
-    console.print(table)
-    console.print()
-    console.print(" [dim]› chirp note [NAME]      · open a note by name[/dim]")
-    console.print(" [dim]› chirp ask              · ask a question[/dim]")
-
-
-def _resolve_display_title(record: NoteRecord) -> str:
-    if record.title:
-        return record.title
-    if record.notes is None:
-        return record.slug
-    try:
-        with record.notes.open(encoding="utf-8") as fh:
-            for raw in fh:
-                stripped = raw.strip()
-                if stripped.startswith("# "):
-                    return stripped[2:].strip()
-    except OSError:
-        pass
-    return record.slug
-
-
-@app.command(rich_help_panel=MAIN_PANEL)
-def search():
-    """Keyword search through your notes"""
-    try:
-        settings = get_settings()
-        from notes_chat.search import LiveSearchSession
-
-        session = LiveSearchSession(settings)
-        session.start()
-
-    except KeyboardInterrupt:
-        console.print("\n[dim]Search cancelled[/dim]")
-    except Exception as e:
-        console.print(f"[red]❌ Error during search: {str(e)}[/red]")
-        raise typer.Exit(1)
-
-
-@app.command(name="note", rich_help_panel=MAIN_PANEL)
-def note(
-    name: str | None = typer.Argument(
-        None,
-        metavar="[NAME]",
-        help="Optional name for the note (defaults to note-YYYY-MM-DD)",
-    ),
-):
-    """Create or edit a single note in the terminal editor."""
-    from notes.manual_note_manager import ManualNoteManager
-    from notes.note_editor import ManualNoteEditor
-
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        console.print(
-            "[yellow]Interactive notes editor requires a terminal. Please run from an interactive shell.[/yellow]"
-        )
-        raise typer.Exit(1)
-
-    settings = get_settings()
-    manager = ManualNoteManager(settings)
-
-    try:
-        context = manager.prepare_note(name)
-    except Exception as exc:  # pragma: no cover - defensive
-        console.print(f"[red]❌ Failed to prepare note: {exc}[/red]")
-        raise typer.Exit(1)
-
-    editor = ManualNoteEditor(context.title, context.content)
-
-    try:
-        result = editor.run()
-    except KeyboardInterrupt:
-        console.print("\n[dim]Editor cancelled[/dim]")
-        raise typer.Exit(1)
-    except Exception as exc:  # pragma: no cover - defensive
-        console.print(f"[red]❌ Editor error: {exc}[/red]")
-        raise typer.Exit(1)
-
-    if not result.saved:
-        if context.is_new:
-            console.print("[yellow]Note discarded (not saved).[/yellow]")
-        else:
-            console.print("[yellow]Changes not saved.[/yellow]")
-        raise typer.Exit(0)
-
-    try:
-        context.path.write_text(result.content, encoding="utf-8")
-    except Exception as exc:  # pragma: no cover - defensive
-        console.print(f"[red]❌ Failed to write note: {exc}[/red]")
-        raise typer.Exit(1)
-
-    if context.is_new:
-        console.print(f"[green]✅ Created note: {context.path}[/green]")
-    else:
-        console.print(f"[green]✅ Updated note: {context.path}[/green]")
-
-    try:
-        if settings.notes_chat.auto_index:
-            from notes_chat.index import IndexManager
-
-            index_manager = IndexManager(settings)
-            success = index_manager._add_to_index(context.path)
-
-            if success:
-                manifest = index_manager._load_manifest()
-                current_files = index_manager._scan_notes_files()
-
-                file_path = str(context.path)
-                if file_path in current_files:
-                    manifest[file_path] = current_files[file_path]
-                    index_manager._save_manifest(manifest)
-
-                index_manager._rebuild_bm25()
-                console.print(
-                    f"[dim green]✓ Auto-indexed {context.path.name}[/dim green]"
-                )
-    except Exception as e:  # pragma: no cover - defensive
-        console.print(
-            f"[dim yellow]⚠️ Auto-indexing failed for {context.path.name}: {e}[/dim yellow]"
-        )
-
-
-@app.command(rich_help_panel=MAIN_PANEL)
-def ask(
-    question: str | None = typer.Option(
-        None,
-        "--question",
-        "-q",
-        help="Question to ask about your meetings (omit for interactive chat)",
-    ),
-    when: str | None = typer.Option(None, "--when", help="Time range filter"),
-    sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
-    markdown: bool = typer.Option(
-        True,
-        "--markdown/--no-markdown",
-        help="Render answers as markdown (code blocks, bullets, bold)",
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show prompt without calling LLM"
-    ),
-):
-    """Chat with your notes"""
-    from notes_chat.cli import ask
-
-    ask(question, when, sources, dry_run, markdown=markdown)
-
-
 @app.command(rich_help_panel=MAIN_PANEL)
 def transcribe(
     note_id: int | None = typer.Argument(
@@ -617,7 +331,7 @@ def transcribe(
         help="Skip chromadb indexing (single-recording mode only).",
     ),
 ):
-    """Turn audio into text + AI notes (pipeline)"""
+    """Turn audio into text + summary"""
     from transcriber.batch_processor import BatchProcessor
 
     settings = get_settings()
@@ -860,69 +574,158 @@ def _run_transcribe_pipeline(
         console.print("[yellow]Pipeline finished with warnings — see above.[/yellow]")
 
 
-@app.command(rich_help_panel=SETUP_PANEL)
-def generate(
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Regenerate notes even if they exist"
-    ),
-):
-    """Generate meeting notes from transcriptions"""
-    from notes.note_generator import NoteGenerator
-
+@app.command(name="notes", rich_help_panel=MAIN_PANEL)
+def notes_list():
+    """Browse, view, edit notes"""
     settings = get_settings()
-
     records = [
         record
         for record in list_notes(settings.directories.notes_root)
-        if record.transcript is not None
+        if record.notes is not None
     ]
 
     if not records:
         console.print(
-            f"[yellow]No transcripts found in {settings.directories.notes_root}[/yellow]"
+            f"[yellow]No notes found in {settings.directories.notes_root}[/yellow]"
         )
-        console.print("[dim]Run 'chirp transcribe' first[/dim]")
+        console.print(
+            "[dim]Run 'chirp transcribe' to create notes from recordings[/dim]"
+        )
         return
 
-    pending = [record for record in records if force or record.notes is None]
-    if not pending:
-        console.print("[green]All transcripts already have notes[/green]")
-        return
+    console.print()
+    console.print(
+        f" [bold]Your notes[/bold] [dim]· {len(records)} total · sorted by date[/dim]"
+    )
+    console.print()
 
-    note_generator = NoteGenerator(settings)
+    table = Table(
+        show_header=True,
+        header_style="yellow bold",
+        border_style="dim",
+        padding=(0, 1),
+    )
+    table.add_column("#", style="dim", no_wrap=True, justify="right")
+    table.add_column("title", style="white")
+    table.add_column("date", style="cyan", no_wrap=True)
+    table.add_column("length", style="dim", justify="right", no_wrap=True)
 
-    console.print("[bold blue]🧠 Generating notes with AI...[/bold blue]")
-    result = note_generator.generate_for_records(pending, force=force)
+    for idx, record in enumerate(reversed(records), start=1):
+        title = _resolve_display_title(record)
 
-    if result["success"]:
-        console.print(f"[green]✅ Notes generated: {result['filename']}[/green]")
-    else:
-        console.print(f"[red]❌ Failed to generate notes: {result['error']}[/red]")
+        try:
+            stat = record.notes.stat() if record.notes else None
+        except OSError:
+            stat = None
+
+        if stat is not None:
+            date_str = record.created_at.strftime("%b %d").lower()
+            length_str = f"{stat.st_size / 1024:.1f} KB"
+        else:
+            date_str = "?"
+            length_str = "?"
+
+        table.add_row(str(idx), title, date_str, length_str)
+
+    console.print(table)
+    console.print()
+    console.print(" [dim]› chirp note [NAME]      · open a note by name[/dim]")
+    console.print(" [dim]› chirp ask              · ask a question[/dim]")
 
 
-@app.command(name="transcribe-and-generate", rich_help_panel=SETUP_PANEL)
-def transcribe_and_generate(
-    input_dir: Path | None = typer.Option(
-        None, "--input", "-i", help="Input directory for audio files"
+def _resolve_display_title(record: NoteRecord) -> str:
+    if record.title:
+        return record.title
+    if record.notes is None:
+        return record.slug
+    try:
+        with record.notes.open(encoding="utf-8") as fh:
+            for raw in fh:
+                stripped = raw.strip()
+                if stripped.startswith("# "):
+                    return stripped[2:].strip()
+    except OSError:
+        pass
+    return record.slug
+
+
+@app.command(rich_help_panel=MAIN_PANEL)
+def ask(
+    question: str | None = typer.Option(
+        None,
+        "--question",
+        "-q",
+        help="Question to ask about your meetings (omit for interactive chat)",
     ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Process all files, including already processed ones",
+    when: str | None = typer.Option(None, "--when", help="Time range filter"),
+    sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
+    markdown: bool = typer.Option(
+        True,
+        "--markdown/--no-markdown",
+        help="Render answers as markdown (code blocks, bullets, bold)",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show prompt without calling LLM"
     ),
 ):
-    """Process audio files (transcribe + generate notes)"""
-    get_settings()
+    """Chat with your notes"""
+    from notes_chat.cli import ask
 
+    ask(question, when, sources, dry_run, markdown=markdown)
+
+
+@app.command(rich_help_panel=MAIN_PANEL)
+def search():
+    """Keyword search"""
     try:
-        transcribe(input_dir=input_dir, force=force)
-        generate(force=force)
+        settings = get_settings()
+        from notes_chat.search import LiveSearchSession
+
+        session = LiveSearchSession(settings)
+        session.start()
+
+    except KeyboardInterrupt:
+        console.print("\n[dim]Search cancelled[/dim]")
     except Exception as e:
-        console.print(f"[red]Error in process command: {e}[/red]")
+        console.print(f"[red]❌ Error during search: {str(e)}[/red]")
+        raise typer.Exit(1)
 
 
-@app.command(rich_help_panel=SETUP_PANEL)
+@app.command(rich_help_panel=MAIN_PANEL)
+def init(
+    recheck: bool = typer.Option(
+        False, "--recheck", help="Only run the verify phase — don't install"
+    ),
+    switch_model: bool = typer.Option(
+        False, "--switch-model", help="Skip to the model-picker phase"
+    ),
+):
+    """First-run setup & model picker"""
+    from chirp.init_flow import run_init
+
+    settings = get_settings()
+    code = run_init(settings, console, recheck=recheck, switch_model=switch_model)
+    if code != 0:
+        raise typer.Exit(code)
+
+
+if __name__ == "__main__":
+    app()
+
+
+@app.command(rich_help_panel=MAIN_PANEL)
+def about():
+    """Show the bird 🐦"""
+    from chirp.about import run_about
+
+    settings = get_settings()
+    try:
+        run_about(console, settings)
+    except KeyboardInterrupt:
+        console.print()
+
+
+@app.command(hidden=True)
 def index(
     force: bool = typer.Option(False, "--force", help="Force full rebuild of index"),
 ):
@@ -932,34 +735,7 @@ def index(
     index(force)
 
 
-@app.command(rich_help_panel=INFO_PANEL)
-def stats():
-    """Show Chirp statistics"""
-    settings = get_settings()
-
-    table = Table(title="🐣 Chirp Statistics", show_header=True)
-    table.add_column("Category", style="cyan")
-    table.add_column("Value", style="green")
-
-    records = list_notes(settings.directories.notes_root)
-    audio_count = sum(1 for record in records if record.audio is not None)
-    transcript_count = sum(1 for record in records if record.transcript is not None)
-    notes_count = sum(1 for record in records if record.notes is not None)
-
-    table.add_row("Notes", str(len(records)))
-    table.add_row("With Audio", str(audio_count))
-    table.add_row("With Transcript", str(transcript_count))
-    table.add_row("With Notes", str(notes_count))
-    table.add_row("Notes Root", str(settings.directories.notes_root))
-    table.add_row("Whisper Model", settings.models.whisper)
-    table.add_row("LLM Model", settings.models.llm)
-    table.add_row("Embedding Model", settings.notes_chat.emb_model)
-    table.add_row("Ollama URL", settings.models.ollama_url)
-
-    console.print(table)
-
-
-@app.command(rich_help_panel=SETUP_PANEL)
+@app.command(hidden=True)
 def config(
     list_config: bool = typer.Option(
         False, "--list", "-l", help="List current configuration"
@@ -1038,7 +814,7 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         console.print("[green]✅ Configuration updated[/green]")
 
 
-@app.command(rich_help_panel=INFO_PANEL)
+@app.command(hidden=True)
 def devices():
     """List available audio devices"""
     from recorder.device_manager import DeviceManager
@@ -1113,244 +889,4 @@ def devices():
         console.print("[red]❌ No suitable input device found[/red]")
         console.print("Install BlackHole from: https://existential.audio/blackhole/")
         console.print("Or create an Aggregate Device in Audio MIDI Setup")
-    console.print("[dim]Run 'chirp setup' for audio configuration guide[/dim]")
-
-
-@app.command(rich_help_panel=SETUP_PANEL)
-def setup():
-    """Step-by-step guide to configure audio for meeting recording"""
-    from recorder.device_manager import DeviceManager
-
-    device_manager = DeviceManager()
-
-    console.print(
-        Panel(
-            "[bold]Audio Setup Guide[/bold]\n\n"
-            "Chirp records system audio (e.g. Teams or Zoom calls) using\n"
-            "BlackHole and a Multi-Output Device on macOS.",
-            title="🐣 Chirp Setup",
-        )
-    )
-
-    # Step 1: BlackHole
-    console.print()
-    has_blackhole = device_manager.check_blackhole_available()
-    if has_blackhole:
-        console.print("[green]Step 1: BlackHole ✅ Installed[/green]")
-    else:
-        console.print("[red]Step 1: Install BlackHole[/red]")
-        console.print("  Download from: https://existential.audio/blackhole/")
-        console.print(
-            "  BlackHole is a virtual audio driver that captures system audio."
-        )
-        console.print()
-        console.print(
-            "[yellow]Install BlackHole and re-run 'chirp setup' to continue.[/yellow]"
-        )
-        return
-
-    # Step 2: Multi-Output Device
-    console.print()
-    console.print('[bold]Step 2: Create a Multi-Output Device ("Chirp Output")[/bold]')
-    console.print()
-    console.print(
-        "  This routes system audio to both your speakers AND BlackHole,\n"
-        "  so you can still hear audio while Chirp records it."
-    )
-    console.print()
-    console.print("  1. Open [bold]Audio MIDI Setup[/bold] (/Applications/Utilities/)")
-    console.print(
-        "  2. Click [bold]+[/bold] at bottom left → Create Multi-Output Device"
-    )
-    console.print(
-        "  3. Check your [bold]speakers/headphones[/bold] (so you can still hear)"
-    )
-    console.print("  4. Check [bold]BlackHole 2ch[/bold]")
-    console.print("  5. Rename it to [bold]Chirp Output[/bold] (double-click the name)")
-
-    # Step 3: Aggregate Device
-    console.print()
-    console.print('[bold]Step 3: Create an Aggregate Device ("Chirp Input")[/bold]')
-    console.print()
-    console.print(
-        "  This combines your microphone AND BlackHole into a single input,\n"
-        "  so Chirp captures both your voice and system audio (e.g. remote\n"
-        "  participants on a call)."
-    )
-    console.print()
-    console.print(
-        "  1. In [bold]Audio MIDI Setup[/bold], click [bold]+[/bold] → Create Aggregate Device"
-    )
-    console.print("  2. Check [bold]BlackHole 2ch[/bold]")
-    console.print(
-        "  3. Check your [bold]microphone[/bold] (e.g. Built-in, USB mic, etc.)"
-    )
-    console.print("  4. Rename it to [bold]Chirp Input[/bold] (double-click the name)")
-
-    # Step 4: Set system audio
-    console.print()
-    console.print("[bold]Step 4: Set your system audio[/bold]")
-    console.print()
-    console.print(
-        "  Go to [bold]System Settings → Sound[/bold]:\n"
-        "  • [bold]Output[/bold] → select [bold]Chirp Output[/bold]\n"
-        "  • [bold]Input[/bold]  → select [bold]Chirp Input[/bold]"
-    )
-
-    # Step 5: Done
-    console.print()
-    console.print("[bold]Step 5: Record![/bold]")
-    console.print()
-    console.print("  [bold]chirp record[/bold]")
-    console.print()
-    console.print(
-        "  Chirp records from your system default input device.\n"
-        "  Use 'chirp devices' to verify your setup (marked with ▶ and ◀)."
-    )
-
-    # Summary
-    console.print()
-    console.print(
-        Panel(
-            "[bold]How it works:[/bold]\n\n"
-            "[cyan]Your voice[/cyan]    → Chirp Input (aggregate) → [bold]Chirp recording[/bold]\n"
-            "[cyan]System audio[/cyan] → Chirp Output → Speakers (you hear it)\n"
-            "                              → BlackHole → Chirp Input → [bold]Chirp recording[/bold]\n\n"
-            "[bold]System settings:[/bold]\n"
-            "  • [yellow]Output[/yellow] → [bold]Chirp Output[/bold] "
-            "(Multi-Output Device)\n"
-            "  • [yellow]Input[/yellow]  → [bold]Chirp Input[/bold] "
-            "(Aggregate Device)",
-            title="Summary",
-        )
-    )
-
-
-@app.command(rich_help_panel=SETUP_PANEL)
-def test():
-    """Test Chirp dependencies and configuration"""
-    from recorder.device_manager import DeviceManager
-
-    settings = get_settings()
-
-    external_tests = []
-    device_manager = DeviceManager()
-    external_tests.append(("PyAudio", device_manager.test_pyaudio()))
-    external_tests.append(("BlackHole", device_manager.check_blackhole_available()))
-
-    try:
-        from faster_whisper import WhisperModel  # noqa: F401
-
-        external_tests.append(("Faster Whisper", True))
-    except ImportError:
-        external_tests.append(("Faster Whisper", False))
-
-    ollama_connected = _test_ollama_connection(settings)
-    external_tests.append(("Ollama", ollama_connected))
-
-    chroma_working = _test_chroma_db(settings)
-    external_tests.append(("ChromaDB", chroma_working))
-
-    config_tests = []
-    settings.ensure_directories_exist()
-    config_tests.append(("Directories", True))
-
-    if ollama_connected:
-        llm_available = _test_llm_model_available(settings)
-        config_tests.append(("LLM Model Available", llm_available))
-
-        embedding_available = _test_embedding_model_available(settings)
-        config_tests.append(("Embedding Model Available", embedding_available))
-    else:
-        config_tests.append(("LLM Model Available", False))
-        config_tests.append(("Embedding Model Available", False))
-
-    notes_index_built = _test_notes_index(settings)
-    config_tests.append(("Notes Index", notes_index_built))
-
-    external_table = Table(title="🔧 External Dependencies")
-    external_table.add_column("Component", style="cyan")
-    external_table.add_column("Status", style="bold")
-
-    external_passed = True
-    for name, passed in external_tests:
-        status = "[green]✅ PASS[/green]" if passed else "[red]❌ FAIL[/red]"
-        external_table.add_row(name, status)
-        if not passed:
-            external_passed = False
-
-    console.print(external_table)
-
-    config_table = Table(title="⚙️ Configuration & Setup")
-    config_table.add_column("Component", style="cyan")
-    config_table.add_column("Status", style="bold")
-
-    config_passed = True
-    for name, passed in config_tests:
-        status = "[green]✅ PASS[/green]" if passed else "[red]❌ FAIL[/red]"
-        config_table.add_row(name, status)
-        if not passed:
-            config_passed = False
-
-    console.print(config_table)
-
-    if external_passed and config_passed:
-        console.print("\n[green]🎉 All tests passed! Chirp is ready to use.[/green]")
-    else:
-        if not external_passed:
-            console.print(
-                "\n[red]⚠️  External dependencies missing. Install or run required software.[/red]"
-            )
-        if not config_passed:
-            console.print(
-                "\n[yellow]⚠️  Configuration issues. Run setup commands to fix.[/yellow]"
-            )
-        console.print("[dim]Run 'chirp --help' for setup commands[/dim]")
-
-
-@app.command(rich_help_panel=INFO_PANEL)
-def version():
-    """Show the installed Chirp version"""
-    from importlib.metadata import PackageNotFoundError
-    from importlib.metadata import version as pkg_version
-
-    try:
-        ver = pkg_version("chirp-notes-ai")
-    except PackageNotFoundError:
-        ver = "dev (not installed as package)"
-
-    console.print(f"[bold]chirp[/bold] {ver}")
-
-
-@app.command(rich_help_panel=INFO_PANEL)
-def about():
-    """Show the animated Chirp logo + version info"""
-    from chirp.about import run_about
-
-    settings = get_settings()
-    try:
-        run_about(console, settings)
-    except KeyboardInterrupt:
-        console.print()
-
-
-@app.command(rich_help_panel=SETUP_PANEL)
-def init(
-    recheck: bool = typer.Option(
-        False, "--recheck", help="Only run the verify phase — don't install"
-    ),
-    switch_model: bool = typer.Option(
-        False, "--switch-model", help="Skip to the model-picker phase"
-    ),
-):
-    """First-run setup & model picker"""
-    from chirp.init_flow import run_init
-
-    settings = get_settings()
-    code = run_init(settings, console, recheck=recheck, switch_model=switch_model)
-    if code != 0:
-        raise typer.Exit(code)
-
-
-if __name__ == "__main__":
-    app()
+    console.print("[dim]Run 'chirp init' for first-run setup.[/dim]")

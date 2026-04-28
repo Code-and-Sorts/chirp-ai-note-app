@@ -117,8 +117,8 @@ def _info_lines(
     lines.append(Text(f"   {TAGLINE}", style="dim"))
     lines.append(Text(""))
     lines.append(Text(f"   • {notes_count} notes at {notes_root}", style="dim"))
-    lines.append(Text(f"   • chat:  {chat_model}", style="dim"))
-    lines.append(Text(f"   • embed: {embed_model}", style="dim"))
+    lines.append(Text(f"   • llm:   {_model_label(chat_model)}", style="dim"))
+    lines.append(Text(f"   • index: {_model_label(embed_model)}", style="dim"))
     credit = Text()
     credit.append("   • made with ", style="dim")
     credit.append("♥", style="red")
@@ -127,6 +127,12 @@ def _info_lines(
     lines.append(Text(f"   • {REPO}", style="dim"))
     lines.append(Text(""))
     return lines
+
+
+def _model_label(value: str | None) -> str:
+    if value:
+        return value
+    return "<not configured — run chirp init>"
 
 
 def run_about(
