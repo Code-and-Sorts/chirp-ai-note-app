@@ -41,6 +41,7 @@ class LiveTranscriptionSession:
         title: str | None = None,
         duration_minutes: int | None = None,
         debug: bool = False,
+        tags: list[str] | None = None,
     ):
         self.settings = settings
         self.device_manager = device_manager
@@ -48,6 +49,7 @@ class LiveTranscriptionSession:
         self.title = title
         self.duration_minutes = duration_minutes
         self.debug = debug
+        self.tags: list[str] = list(tags or [])
 
         self.stop_event = threading.Event()
         self.frame_queue: queue.Queue = queue.Queue(maxsize=500)
@@ -288,7 +290,7 @@ class LiveTranscriptionSession:
             "title": title,
             "date": datetime.now().isoformat(),
             "mic": "default",
-            "tags": [],
+            "tags": list(self.tags),
         }
         meta_path = note_dir / META_FILENAME
         with meta_path.open("wb") as fh:

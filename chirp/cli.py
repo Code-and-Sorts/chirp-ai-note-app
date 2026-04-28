@@ -1,8 +1,9 @@
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
-from rich.console import Console
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
 from rich.spinner import Spinner
@@ -50,10 +51,6 @@ console = Console()
 
 MAIN_PANEL = "Commands"
 
-METER_WIDTH = 20
-
-recording_spinner = Spinner("dots", style="bold green")
-
 
 def _prompt_title() -> str:
     console.print()
@@ -74,7 +71,8 @@ def _prompt_timeframe() -> int | None:
 
     console.print()
     console.print(
-        " [yellow bold]timeframe[/yellow bold] [dim](optional · press ⏎ to skip)[/dim]"
+        " [yellow bold]timeframe[/yellow bold] "
+        "[dim](optional · e.g. 30s / 5m / 1h · press ⏎ to skip)[/dim]"
     )
     try:
         value = console.input(" [green]›[/green] ").strip()
@@ -86,55 +84,111 @@ def _prompt_timeframe() -> int | None:
     return parse_timeframe(value)
 
 
-def _print_record_header(
-    title: str | None,
-    duration_minutes: int | None,
-    device_manager,
-) -> None:
-    duration_str = f"{duration_minutes:02d}:00" if duration_minutes else "∞"
+def _prompt_tags() -> list[str]:
+    console.print()
+    console.print(
+        " [yellow bold]tags[/yellow bold] "
+        "[dim](optional · comma-separated · e.g. meeting, pricing)[/dim]"
+    )
+    try:
+        value = console.input(" [green]›[/green] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return []
+    return _parse_tag_input(value)
+
+
+def _parse_tag_input(value: str) -> list[str]:
+    if not value:
+        return []
+    return [piece.strip() for piece in value.split(",") if piece.strip()]
+
+
+def _resolve_mic_name(device_manager) -> str:
     try:
         default_idx = device_manager.get_default_input_device()
         devices_info = device_manager.list_devices()
-        mic_name = next(
+        return next(
             (d["name"] for d in devices_info if d["index"] == default_idx),
             "default",
         )
     except Exception:
-        mic_name = "default"
-    line = Text()
-    line.append(" ● ", style="red bold")
-    line.append("REC", style="bold white")
-    line.append("  ·  00:00:00")
-    if duration_minutes:
-        line.append(f" / {duration_str}")
-    line.append(f"  ·  mic: {mic_name}", style="dim")
-    if title:
-        console.print(Text(f" [{title}]", style="cyan"))
-    console.print(line)
+        return "default"
 
 
-def _render_audio_meter(level: float) -> Table:
-    filled = int(level * METER_WIDTH)
+WAVEFORM_GLYPHS = "▁▂▄▅▇█"
+WAVEFORM_WIDTH = 28
+
+
+def _render_waveform_box(level: float) -> RenderableType:
     bar = Text()
-    for i in range(METER_WIDTH):
-        if i < filled:
-            if i < METER_WIDTH * 0.6:
-                bar.append("━", style="green")
-            elif i < METER_WIDTH * 0.85:
-                bar.append("━", style="yellow")
-            else:
-                bar.append("━", style="red")
+    if level > 0:
+        glyph_idx = min(int(level * len(WAVEFORM_GLYPHS)), len(WAVEFORM_GLYPHS) - 1)
+        active_glyph = WAVEFORM_GLYPHS[glyph_idx]
+        cells = int(level * WAVEFORM_WIDTH)
+    else:
+        active_glyph = "▁"
+        cells = 0
+    for i in range(WAVEFORM_WIDTH):
+        if i < cells:
+            bar.append(active_glyph, style="cyan")
         else:
-            bar.append("━", style="dim")
+            bar.append("▁", style="dim")
+    return Panel(bar, title="waveform", title_align="left", border_style="dim")
 
-    label = Text()
-    label.append(" Recording  ", style="bold green")
 
-    suffix = Text("  (ESC or Ctrl+C to stop)", style="dim")
+def _format_elapsed(seconds: float) -> str:
+    total = int(max(seconds, 0))
+    minutes, secs = divmod(total, 60)
+    return f"{minutes:02d}:{secs:02d}"
 
-    row = Table.grid(padding=0)
-    row.add_row(recording_spinner, label, bar, suffix)
-    return row
+
+@dataclass
+class _RecordViewState:
+    title: str | None
+    cap_minutes: int | None
+    mic_name: str
+    elapsed_seconds: float = 0.0
+    level: float = 0.0
+    paused: bool = False
+    stopped_by_cap: bool = False
+
+
+def _render_record_view(state: _RecordViewState) -> RenderableType:
+    lines: list[RenderableType] = []
+    if state.title:
+        lines.append(Text(f" [{state.title}]", style="cyan"))
+
+    header = Text()
+    header.append(" ● ", style="red bold")
+    header.append("REC", style="bold white")
+    header.append("  ·  ")
+    header.append(_format_elapsed(state.elapsed_seconds))
+    if state.cap_minutes:
+        header.append(f" / {state.cap_minutes:02d}:00")
+    header.append(f"  ·  mic: {state.mic_name}", style="dim")
+    lines.append(header)
+
+    lines.append(Text(""))
+    lines.append(_render_waveform_box(state.level))
+
+    status: RenderableType
+    if state.stopped_by_cap:
+        status = Text(" ■ stopped", style="dim")
+    elif state.paused:
+        status = Text(" ⏸ paused", style="yellow")
+    else:
+        status = Spinner("dots", text=Text(" listening...", style="cyan"))
+    lines.append(status)
+
+    lines.append(Text(""))
+    lines.append(
+        Text(
+            " [space] pause   [q / ^C] stop & save   [x] discard",
+            style="dim",
+        )
+    )
+    return Group(*lines)
 
 
 @app.command(rich_help_panel=MAIN_PANEL)
@@ -153,6 +207,11 @@ def record(
         "--timeframe",
         help="Timeframe like 30s / 5m / 1h (auto-stops when reached)",
     ),
+    tags: list[str] = typer.Option(
+        None,
+        "--tag",
+        help="Tag to attach to the note (repeatable). Skips the tags prompt.",
+    ),
     live_transcribe: bool = typer.Option(
         False,
         "--live-transcribe/--no-live-transcribe",
@@ -166,6 +225,9 @@ def record(
     ),
 ):
     """Capture audio to a new note"""
+    import shutil
+    from datetime import datetime
+
     from recorder.audio_recorder import AudioRecorder
     from recorder.device_manager import DeviceManager
     from utils.time_utils import parse_timeframe
@@ -189,20 +251,29 @@ def record(
             console.print(f"[red]❌ {exc}[/red]")
             raise typer.Exit(1)
 
+    resolved_tags: list[str] = list(tags) if tags else []
+    if not resolved_tags and is_tty:
+        resolved_tags = _prompt_tags()
+
     if live_transcribe:
         _run_live_transcription(
-            settings, device_manager, title, duration, debug_live=debug_live
+            settings,
+            device_manager,
+            title,
+            duration,
+            debug_live=debug_live,
+            tags=resolved_tags,
         )
         return
 
     recorder = AudioRecorder(settings, device_manager)
-
-    console.print(" [dim]──────────────────────────────────────────[/dim]")
-    console.print()
-    _print_record_header(title, duration, device_manager)
-    console.print()
-
-    from utils.time_utils import format_duration, get_recording_duration
+    mic_name = _resolve_mic_name(device_manager)
+    state = _RecordViewState(
+        title=title,
+        cap_minutes=duration,
+        mic_name=mic_name,
+    )
+    control = {"discard": False}
 
     try:
         use_cbreak = sys.stdin.isatty() and hasattr(sys.stdin, "fileno")
@@ -217,23 +288,39 @@ def record(
             old_settings = termios.tcgetattr(fd)
             tty.setcbreak(fd)
 
-        def _check_key_and_update(level: float):
-            if use_cbreak:
-                if select.select([sys.stdin], [], [], 0)[0]:
-                    ch = sys.stdin.read(1)
-                    if ch == "\x1b" or ch == "\x03":
-                        recorder.stop_recording()
-                        return
-            live.update(_render_audio_meter(level))
+        def _on_tick(level: float):
+            if use_cbreak and select.select([sys.stdin], [], [], 0)[0]:
+                ch = sys.stdin.read(1)
+                if ch in ("\x1b", "\x03", "q"):
+                    recorder.stop_recording()
+                elif ch == " ":
+                    if recorder.is_paused:
+                        recorder.resume()
+                        state.paused = False
+                    else:
+                        recorder.pause()
+                        state.paused = True
+                elif ch == "x":
+                    control["discard"] = True
+                    recorder.stop_recording()
+            state.level = level
+            if recorder.start_time:
+                state.elapsed_seconds = (
+                    datetime.now() - recorder.start_time
+                ).total_seconds()
+            live.update(_render_record_view(state))
 
         try:
             with Live(
-                _render_audio_meter(0.0), console=console, refresh_per_second=10
+                _render_record_view(state),
+                console=console,
+                refresh_per_second=10,
             ) as live:
-                filename = recorder.start_recording(
+                recorder.start_recording(
                     duration_minutes=duration,
                     title=title,
-                    level_callback=_check_key_and_update,
+                    level_callback=_on_tick,
+                    tags=resolved_tags,
                 )
         finally:
             if old_settings is not None:
@@ -241,23 +328,22 @@ def record(
 
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-        if recorder.start_time:
-            actual_duration = get_recording_duration(recorder.start_time)
-            duration_str = format_duration(actual_duration)
-            console.print(f"[green]✅ Recording saved: {filename}[/green]")
-            console.print(f"[dim]Actual duration: {duration_str}[/dim]")
-        else:
-            console.print(f"[green]✅ Recording saved: {filename}[/green]")
+        note_dir = recorder.note_dir
+        if control["discard"]:
+            if note_dir and note_dir.exists():
+                shutil.rmtree(note_dir, ignore_errors=True)
+            console.print("[yellow]discarded.[/yellow]")
+            return
 
-        console.print(" [dim][space] pause  [q / ^C] stop & save  [x] discard[/dim]")
-        console.print("[dim]Use 'chirp transcribe' to process this recording[/dim]")
+        if note_dir is None:
+            console.print("[yellow]nothing to save.[/yellow]")
+            return
+
+        console.print(f"[green]✅ saved to {note_dir}[/green]")
+        console.print(" [dim]› chirp transcribe    · turn this into notes[/dim]")
 
     except KeyboardInterrupt:
         console.print("[yellow]Recording stopped by user[/yellow]")
-        if recorder.start_time:
-            actual_duration = get_recording_duration(recorder.start_time)
-            duration_str = format_duration(actual_duration)
-            console.print(f"[dim]Final recording duration: {duration_str}[/dim]")
     except AudioDeviceError as e:
         console.print(f"[red]❌ Audio device error: {str(e)}[/red]")
         console.print("[dim]Try 'chirp devices' to see available audio devices[/dim]")
@@ -281,6 +367,7 @@ def _run_live_transcription(
     title: str | None,
     duration: int | None,
     debug_live: bool = False,
+    tags: list[str] | None = None,
 ):
     from recorder.live_session import LiveSessionResult, LiveTranscriptionSession
 
@@ -296,6 +383,7 @@ def _run_live_transcription(
         title=title,
         duration_minutes=duration,
         debug=debug_live,
+        tags=list(tags or []),
     )
 
     try:

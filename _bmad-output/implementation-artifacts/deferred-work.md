@@ -29,3 +29,9 @@
 - No test for the "garbage input retries" branch in `_prompt_blackhole_routing`. Feed `["x", "s"]` to assert the loop prints `please type o or s` then exits cleanly. [chirp/init_flow.py:_prompt_blackhole_routing]
 - `_ollama_models` is called in both `verify` (Phase 1) and `keep_or_pick` (Phase 3) — two redundant `requests.get` calls per healthy `init` run. Cache the list in Phase 1 and pass it down. [chirp/init_flow.py]
 - Path display in `_print_path_summary` uses absolute paths (`/Users/<you>/.chirp/…`) where the wireframe shows `~/.chirp/…`. Cosmetic; revisit when polishing the finalize panel. [chirp/init_flow.py:_path_line]
+
+## Deferred from: code review of 1.6-record-verify (2026-04-27)
+
+- AC-11 integration test "discard leaves no `<slug>/` folder" not added — requires non-trivial PyAudio mocking to exercise the `x`-key + recorder path end-to-end. The discard rendering branch is unit-tested via `_RecordViewState`. [tests/test_record_view.py, tests/test_cli_commands.py]
+- `stopped_by_cap` rendering branch never set — when the timer fires the `Live` loop exits before any tick can render `■ stopped`. Either remove the dead branch or have the timer flip the flag through one final tick. [chirp/cli.py:_render_record_view]
+- Discard path writes `audio.wav` to disk and immediately `rmtree`s the slug folder. Wasteful but correct. Adding a "skip save" signal to `AudioRecorder` is invasive; defer until a real user complains. [chirp/cli.py:record, recorder/audio_recorder.py]

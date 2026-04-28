@@ -190,3 +190,39 @@ class TestAudioRecorder:
 
         created_dirs = list(tmp_path.iterdir())
         assert created_dirs == [], "empty note dir should have been cleaned up"
+
+
+class TestAudioRecorderPause:
+    def test_pause_skips_frames_in_callback(self, tmp_path):
+        from unittest.mock import Mock, patch
+
+        settings = Mock()
+        settings.directories = Mock()
+        settings.directories.notes_root = tmp_path
+        settings.audio = Mock()
+        settings.audio.sample_rate = 16000
+        settings.audio.channels = 2
+        settings.audio.chunk_size = 1024
+        settings.monitoring = Mock()
+        settings.monitoring.max_recording_hours = 8
+
+        with patch("recorder.audio_recorder.pyaudio.PyAudio"):
+            recorder = AudioRecorder(settings, Mock())
+
+        recorder.is_recording = True
+        recorder.frames = []
+
+        # Two zero samples = 4 bytes of silence.
+        sample = bytes([0, 0, 0, 0])
+        recorder._audio_callback(sample, 2, None, None)
+        assert len(recorder.frames) == 1
+
+        recorder.pause()
+        assert recorder.is_paused is True
+        recorder._audio_callback(sample, 2, None, None)
+        assert len(recorder.frames) == 1, "paused callback should not append"
+
+        recorder.resume()
+        assert recorder.is_paused is False
+        recorder._audio_callback(sample, 2, None, None)
+        assert len(recorder.frames) == 2

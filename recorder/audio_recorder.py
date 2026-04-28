@@ -42,6 +42,7 @@ class AudioRecorder:
         self._output_channels: int = 1
         self.note_dir: Path | None = None
         self.slug: str | None = None
+        self._paused: bool = False
 
     def __del__(self):
         if self.audio:
@@ -87,6 +88,7 @@ class AudioRecorder:
         self._output_channels = output_channels
         self.frames = []
         self.is_recording = True
+        self._paused = False
         self.start_time = recorded_date
         self.title = effective_title
         self.note_dir = note_dir
@@ -164,6 +166,16 @@ class AudioRecorder:
     def stop_recording(self):
         self.is_recording = False
 
+    def pause(self) -> None:
+        self._paused = True
+
+    def resume(self) -> None:
+        self._paused = False
+
+    @property
+    def is_paused(self) -> bool:
+        return getattr(self, "_paused", False)
+
     def _audio_callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
             if not in_data:
@@ -179,7 +191,8 @@ class AudioRecorder:
                     self.current_level = 0.0
                     return (None, pyaudio.paContinue)
 
-                self.frames.append(sanitized)
+                if not self.is_paused:
+                    self.frames.append(sanitized)
 
                 samples = array.array("h")
                 samples.frombytes(sanitized)
