@@ -214,3 +214,8 @@ def record(...):
 - **Test changes** can be verified with the existing test suite
 - Consider **platform differences** (macOS, Linux, Windows) for audio features
 - Remember the **PyPI package name** is `chirp-notes-ai` but CLI is `chirp`
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->

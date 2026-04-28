@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import tomllib
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -51,7 +52,9 @@ def slugify(title: str, note_date: date, notes_root: Path | None = None) -> str:
 
 
 def _kebab_case(value: str) -> str:
-    lowered = value.strip().lower()
+    decomposed = unicodedata.normalize("NFKD", value)
+    ascii_folded = decomposed.encode("ascii", "ignore").decode("ascii")
+    lowered = ascii_folded.strip().lower()
     cleaned = re.sub(r"[^a-z0-9]+", "-", lowered)
     return cleaned.strip("-")
 
@@ -60,8 +63,13 @@ def list_notes(notes_root: Path) -> list[NoteRecord]:
     if not notes_root.exists():
         return []
 
+    try:
+        entries = list(notes_root.iterdir())
+    except (PermissionError, NotADirectoryError, OSError):
+        return []
+
     records: list[NoteRecord] = []
-    for entry in notes_root.iterdir():
+    for entry in entries:
         if not entry.is_dir():
             continue
         if entry.name.startswith("."):

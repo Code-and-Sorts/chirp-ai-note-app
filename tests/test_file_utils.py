@@ -47,10 +47,24 @@ class TestSlugify:
     def test_fallback_for_empty_title(self):
         assert slugify("   ", date(2026, 4, 20)) == "note-2026-04-20"
 
+    def test_punctuation_only_falls_back_to_note(self):
+        assert slugify("!!!", date(2026, 4, 20)) == "note-2026-04-20"
+
+    def test_ascii_folds_accented_characters(self):
+        assert slugify("Café résumé", date(2026, 4, 20)) == "cafe-resume-2026-04-20"
+
+    def test_unicode_only_title_falls_back_to_note(self):
+        assert slugify("💯💯💯", date(2026, 4, 20)) == "note-2026-04-20"
+
 
 class TestListNotes:
     def test_returns_empty_when_root_missing(self, tmp_path):
         assert list_notes(tmp_path / "missing") == []
+
+    def test_returns_empty_when_root_is_a_file(self, tmp_path):
+        bogus = tmp_path / "not-a-dir"
+        bogus.write_text("oops")
+        assert list_notes(bogus) == []
 
     def test_returns_records_sorted_by_created_at(self, tmp_path):
         first_dir = tmp_path / "first-2026-04-20"
