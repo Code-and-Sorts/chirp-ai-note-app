@@ -1,5 +1,6 @@
 import sys
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import typer
@@ -120,20 +121,14 @@ WAVEFORM_GLYPHS = "▁▂▄▅▇█"
 WAVEFORM_WIDTH = 28
 
 
-def _render_waveform_box(level: float) -> RenderableType:
+def _render_waveform_box(levels: "deque[float]") -> RenderableType:
     bar = Text()
-    if level > 0:
-        glyph_idx = min(int(level * len(WAVEFORM_GLYPHS)), len(WAVEFORM_GLYPHS) - 1)
-        active_glyph = WAVEFORM_GLYPHS[glyph_idx]
-        cells = int(level * WAVEFORM_WIDTH)
-    else:
-        active_glyph = "▁"
-        cells = 0
-    for i in range(WAVEFORM_WIDTH):
-        if i < cells:
-            bar.append(active_glyph, style="cyan")
-        else:
+    for slot in levels:
+        if slot <= 0:
             bar.append("▁", style="dim")
+            continue
+        glyph_idx = min(int(slot * len(WAVEFORM_GLYPHS)), len(WAVEFORM_GLYPHS) - 1)
+        bar.append(WAVEFORM_GLYPHS[glyph_idx], style="cyan")
     return Panel(bar, title="waveform", title_align="left", border_style="dim")
 
 
@@ -143,15 +138,27 @@ def _format_elapsed(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def _new_level_buffer() -> "deque[float]":
+    return deque([0.0] * WAVEFORM_WIDTH, maxlen=WAVEFORM_WIDTH)
+
+
+def _new_listening_spinner() -> Spinner:
+    return Spinner("dots", text=Text(" listening...", style="cyan"))
+
+
 @dataclass
 class _RecordViewState:
     title: str | None
     cap_minutes: int | None
     mic_name: str
     elapsed_seconds: float = 0.0
-    level: float = 0.0
     paused: bool = False
     stopped_by_cap: bool = False
+    levels: "deque[float]" = field(default_factory=_new_level_buffer)
+    listening_spinner: Spinner = field(default_factory=_new_listening_spinner)
+
+    def push_level(self, level: float) -> None:
+        self.levels.append(level)
 
 
 def _render_record_view(state: _RecordViewState) -> RenderableType:
@@ -170,7 +177,7 @@ def _render_record_view(state: _RecordViewState) -> RenderableType:
     lines.append(header)
 
     lines.append(Text(""))
-    lines.append(_render_waveform_box(state.level))
+    lines.append(_render_waveform_box(state.levels))
 
     status: RenderableType
     if state.stopped_by_cap:
@@ -178,7 +185,7 @@ def _render_record_view(state: _RecordViewState) -> RenderableType:
     elif state.paused:
         status = Text(" ⏸ paused", style="yellow")
     else:
-        status = Spinner("dots", text=Text(" listening...", style="cyan"))
+        status = state.listening_spinner
     lines.append(status)
 
     lines.append(Text(""))
@@ -303,7 +310,7 @@ def record(
                 elif ch == "x":
                     control["discard"] = True
                     recorder.stop_recording()
-            state.level = level
+            state.push_level(level)
             if recorder.start_time:
                 state.elapsed_seconds = (
                     datetime.now() - recorder.start_time

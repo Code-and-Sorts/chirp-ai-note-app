@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
-from rich.console import Console, Group, RenderableType
+from rich.console import Console, RenderableType
 from rich.live import Live
+from rich.spinner import Spinner
+from rich.table import Table
 from rich.text import Text
 
 from config.settings import ChirpSettings
@@ -27,8 +29,8 @@ from utils.popup_manager import PopupManager
 
 class Stage(Enum):
     LOAD_AUDIO = ("loaded audio", 0)
-    TRANSCRIBE = ("transcribe (whisper)", 1)
-    GENERATE_NOTES = ("generate notes (qwen · notes-mode)", 2)
+    TRANSCRIBE = ("transcribe", 1)
+    GENERATE_NOTES = ("generate notes", 2)
     INDEX = ("index to chromadb", 3)
     SAVE = ("save", 4)
 
@@ -58,6 +60,7 @@ class ChecklistView:
         self.statuses: dict[Stage, StageStatus] = {
             stage: StageStatus() for stage in Stage
         }
+        self._running_spinner = Spinner("dots", style="yellow")
 
     def start(self, stage: Stage) -> None:
         self.statuses[stage] = StageStatus(StageState.RUNNING)
@@ -69,34 +72,36 @@ class ChecklistView:
         self.statuses[stage] = StageStatus(StageState.FAILED, error)
 
     def render(self) -> RenderableType:
-        lines: list[Text] = []
+        body = Table.grid(padding=(0, 0))
+        body.add_column(no_wrap=True, width=2)
+        body.add_column(no_wrap=False)
         if self.header:
-            lines.append(Text(self.header, style="bold white"))
-            lines.append(Text(""))
+            body.add_row(Text(""), Text(self.header, style="bold white"))
+            body.add_row(Text(""), Text(""))
         for stage in Stage:
-            lines.append(self._render_stage_line(stage))
-        return Group(*lines)
+            icon, label = self._render_stage_row(stage)
+            body.add_row(icon, label)
+        return body
 
-    def _render_stage_line(self, stage: Stage) -> Text:
+    def _render_stage_row(self, stage: Stage) -> tuple[RenderableType, Text]:
         status = self.statuses[stage]
-        line = Text()
         if status.state is StageState.DONE:
-            line.append("✓ ", style="green")
-            line.append(stage.label)
+            icon: RenderableType = Text("✓ ", style="green")
+            label = Text(stage.label)
             if status.detail:
-                line.append(f" · {status.detail}", style="dim")
+                label.append(f" · {status.detail}", style="dim")
         elif status.state is StageState.RUNNING:
-            line.append("⠙ ", style="yellow")
-            line.append(stage.label, style="cyan")
+            icon = self._running_spinner
+            label = Text(stage.label, style="cyan")
         elif status.state is StageState.FAILED:
-            line.append("✗ ", style="red bold")
-            line.append(stage.label, style="red")
+            icon = Text("✗ ", style="red bold")
+            label = Text(stage.label, style="red")
             if status.detail:
-                line.append(f" · {status.detail}", style="red")
+                label.append(f" · {status.detail}", style="red")
         else:
-            line.append("○ ", style="dim")
-            line.append(stage.label, style="dim")
-        return line
+            icon = Text("○ ", style="dim")
+            label = Text(stage.label, style="dim")
+        return icon, label
 
 
 def _format_duration(seconds: float) -> str:
@@ -107,6 +112,40 @@ def _format_duration(seconds: float) -> str:
 
 def _format_size_mb(path: Path) -> str:
     return f"{path.stat().st_size / (1024 * 1024):.1f} MB"
+
+
+def _audio_duration_seconds(transcriber: WhisperTranscriber, audio: Path) -> float:
+    """Resolve clip duration in seconds.
+
+    Prefers the `duration_s` field in `meta.toml` (written by the recorder
+    after the file is finalized). Falls back to reading the WAV header so
+    notes created before that field existed still report a real length.
+    """
+    metadata = transcriber._read_audio_metadata(audio)
+    if metadata:
+        for key in ("duration_s", "duration"):
+            value = metadata.get(key)
+            if value is None:
+                continue
+            try:
+                seconds = float(value)
+            except (TypeError, ValueError):
+                continue
+            if seconds > 0:
+                return seconds
+
+    try:
+        import wave
+
+        with wave.open(str(audio), "rb") as fh:
+            frames = fh.getnframes()
+            rate = fh.getframerate()
+            if rate > 0:
+                return frames / float(rate)
+    except Exception:
+        pass
+
+    return 0.0
 
 
 @dataclass
@@ -226,8 +265,7 @@ class BatchProcessor:
         audio = ctx.record.audio
         if audio is None or not audio.exists():
             raise FileNotFoundError(f"audio missing for {ctx.record.slug}")
-        metadata = self.transcriber._read_audio_metadata(audio)
-        ctx.duration_seconds = float(metadata.get("duration", 0.0)) if metadata else 0.0
+        ctx.duration_seconds = _audio_duration_seconds(self.transcriber, audio)
         ctx.view.done(
             Stage.LOAD_AUDIO,
             f"{_format_duration(ctx.duration_seconds)} · {_format_size_mb(audio)}",
@@ -237,11 +275,15 @@ class BatchProcessor:
         audio = ctx.record.audio
         assert audio is not None
         transcript_path = ctx.record.dir / TRANSCRIPT_FILENAME
+        whisper_model = self.settings.models.whisper
 
         if _has_transcript(ctx.record):
             existing = transcript_path.read_text(encoding="utf-8")
             ctx.transcript_words = len(existing.split())
-            ctx.view.done(Stage.TRANSCRIBE, f"{ctx.transcript_words} words · resumed")
+            ctx.view.done(
+                Stage.TRANSCRIBE,
+                f"{whisper_model} · {ctx.transcript_words} words · resumed",
+            )
             return
 
         result = self.transcriber.transcribe_file(audio)
@@ -250,7 +292,10 @@ class BatchProcessor:
         full_text = result.get("full_text", "") or ""
         transcript_path.write_text(full_text, encoding="utf-8")
         ctx.transcript_words = len(full_text.split())
-        ctx.view.done(Stage.TRANSCRIBE, f"{ctx.transcript_words} words")
+        ctx.view.done(
+            Stage.TRANSCRIBE,
+            f"{whisper_model} · {ctx.transcript_words} words",
+        )
 
     def _stage_generate_notes(self, ctx: _PipelineContext) -> None:
         from notes.note_generator import NoteGenerator
@@ -258,12 +303,16 @@ class BatchProcessor:
         refreshed = _reload_record(self.settings, ctx.record.slug)
         if refreshed is None or refreshed.transcript is None:
             raise RuntimeError("transcript not found after stage 2")
-        result = NoteGenerator(self.settings).generate_for_records(
-            [refreshed], force=True
-        )
+        # Silence NoteGenerator's chunk-counter prints; they break Live's
+        # in-place rendering and make the title appear multiple times in
+        # scrollback.
+        quiet_console = Console(quiet=True)
+        result = NoteGenerator(
+            self.settings, console=quiet_console
+        ).generate_for_records([refreshed], force=True)
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "note generation failed")
-        ctx.view.done(Stage.GENERATE_NOTES)
+        ctx.view.done(Stage.GENERATE_NOTES, self.settings.models.llm)
 
     def _stage_index(self, ctx: _PipelineContext) -> None:
         if not self.settings.notes_chat.auto_index:

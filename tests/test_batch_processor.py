@@ -75,7 +75,7 @@ class TestChecklistView:
         assert "hello" in output
         assert "loaded audio" in output
         assert "00:42" in output
-        assert "transcribe (whisper)" in output
+        assert "transcribe" in output
 
 
 class TestSelectQueue:

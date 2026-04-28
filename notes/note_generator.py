@@ -134,11 +134,11 @@ Always produce notes using the canonical tags below. Never invent content.
 
 
 class NoteGenerator:
-    def __init__(self, settings: ChirpSettings):
+    def __init__(self, settings: ChirpSettings, console: Console | None = None) -> None:
         self.settings = settings
         self.template_engine = TemplateEngine(settings)
         self.popup_manager = PopupManager()
-        self.console = Console()
+        self.console = console if console is not None else Console()
 
     def generate_for_records(
         self,

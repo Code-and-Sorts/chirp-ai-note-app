@@ -77,12 +77,36 @@ class TestRecordView:
 
     def test_waveform_box_chrome_present(self):
         # Chrome border characters from the Panel renderer.
+        from collections import deque
+
+        from chirp.cli import WAVEFORM_WIDTH
+
+        levels = deque([0.5] * WAVEFORM_WIDTH, maxlen=WAVEFORM_WIDTH)
         buf = StringIO()
         Console(file=buf, force_terminal=False, width=80).print(
-            _render_waveform_box(0.5)
+            _render_waveform_box(levels)
         )
         out = buf.getvalue()
         assert "waveform" in out
+
+    def test_waveform_glyphs_reflect_per_slot_levels(self):
+        from collections import deque
+
+        from chirp.cli import WAVEFORM_GLYPHS, WAVEFORM_WIDTH
+
+        # Half of the buffer silent, the other half loud — verify both
+        # extremes appear in the output.
+        levels = deque(
+            [0.0] * (WAVEFORM_WIDTH // 2) + [0.95] * (WAVEFORM_WIDTH // 2),
+            maxlen=WAVEFORM_WIDTH,
+        )
+        buf = StringIO()
+        Console(file=buf, force_terminal=False, width=80).print(
+            _render_waveform_box(levels)
+        )
+        out = buf.getvalue()
+        assert "▁" in out
+        assert WAVEFORM_GLYPHS[-1] in out
 
 
 class TestRecordTagFlag:
