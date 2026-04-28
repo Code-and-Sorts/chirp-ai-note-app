@@ -60,7 +60,7 @@ def retrieve_context(
         merged_chunks = _merge_and_dedupe(chroma_results, bm25_results)
 
         context, sources, retrieved_ids = _build_context(
-            merged_chunks, config.notes_chat.ctx_char_budget
+            merged_chunks, config.notes_chat.ctx_char_budget, config
         )
 
         if not context.strip():
@@ -188,14 +188,15 @@ def _merge_and_dedupe(
 
 
 def _build_context(
-    chunks: list[tuple[str, float, dict[str, Any]]], char_budget: int
+    chunks: list[tuple[str, float, dict[str, Any]]],
+    char_budget: int,
+    config: ChirpSettings | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """Build context string with round-robin truncation."""
     if not chunks:
         return "", [], []
 
     context_parts = []
-    sources = []
     retrieved_ids = []
 
     chunks_to_include = []
@@ -222,26 +223,102 @@ def _build_context(
                 chunks_to_include.append((chunk_id, full_content, data))
             break
 
-    seen_sources = set()
-    for chunk_id, content, data in chunks_to_include:
+    note_index = _build_note_index(config) if config is not None else {}
+
+    sources = format_sources(chunks_to_include, note_index)
+    for chunk_id, content, _data in chunks_to_include:
         context_parts.append(content)
         retrieved_ids.append(chunk_id)
 
-        if "metadata" in data:
-            path = data["metadata"].get("path", "Unknown")
-            title = data["metadata"].get("title", "Unknown")
-            source_text = f"{title} ({Path(path).name})"
-            if source_text not in seen_sources:
-                seen_sources.add(source_text)
-                sources.append(source_text)
-        else:
-            source_text = f"Document {chunk_id}"
-            if source_text not in seen_sources:
-                seen_sources.add(source_text)
-                sources.append(source_text)
-
     context = "\n".join(context_parts)
     return context, sources, retrieved_ids
+
+
+def _build_note_index(config: ChirpSettings) -> dict[str, int]:
+    """Map slug → 1-based newest-first index, matching ``chirp notes``."""
+    from utils.file_utils import list_notes
+
+    notes_root = config.directories.notes_root
+    records = [r for r in list_notes(notes_root) if r.notes is not None]
+    return {record.slug: idx for idx, record in enumerate(reversed(records), start=1)}
+
+
+def format_sources(
+    chunks_to_include: list[tuple[str, str, dict[str, Any]]],
+    note_index: dict[str, int],
+) -> list[str]:
+    """Format `sources:` line entries as ``note #N (mm:ss)``.
+
+    - `#N` matches the index `chirp notes` prints (newest-first, 1-based).
+    - `(mm:ss)` is appended only when the chunk metadata carries a
+      timestamp (``start_ms``, ``start_seconds``, or ``timestamp_ms``).
+    - Chunks from the same note collapse into one entry, keeping the
+      earliest timestamp.
+    """
+    by_slug: dict[str, dict[str, Any]] = {}
+    fallback_order: list[str] = []
+    for chunk_id, _content, data in chunks_to_include:
+        slug = _slug_from_chunk(data) or chunk_id
+        timestamp = _timestamp_seconds_from_chunk(data)
+        entry = by_slug.get(slug)
+        if entry is None:
+            entry = {"slug": slug, "timestamp": timestamp}
+            by_slug[slug] = entry
+            fallback_order.append(slug)
+        elif timestamp is not None:
+            current = entry.get("timestamp")
+            if current is None or timestamp < current:
+                entry["timestamp"] = timestamp
+
+    sources: list[str] = []
+    for slug in fallback_order:
+        entry = by_slug[slug]
+        index = note_index.get(slug)
+        if index is None:
+            label = slug
+        else:
+            label = f"note #{index}"
+        timestamp = entry.get("timestamp")
+        if timestamp is not None:
+            label = f"{label} ({_format_mm_ss(timestamp)})"
+        sources.append(label)
+    return sources
+
+
+def _slug_from_chunk(data: dict[str, Any]) -> str | None:
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    if not metadata:
+        return None
+    path = metadata.get("path")
+    if not path:
+        return None
+    return Path(path).parent.name or None
+
+
+def _timestamp_seconds_from_chunk(data: dict[str, Any]) -> float | None:
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    if not metadata:
+        return None
+    if (value := metadata.get("start_seconds")) is not None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    for key in ("start_ms", "timestamp_ms"):
+        value = metadata.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value) / 1000.0
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _format_mm_ss(seconds: float) -> str:
+    total = int(max(seconds, 0))
+    minutes, secs = divmod(total, 60)
+    return f"{minutes:02d}:{secs:02d}"
 
 
 def _create_chunk_header(data: dict[str, Any]) -> str:

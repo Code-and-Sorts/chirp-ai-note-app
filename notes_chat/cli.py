@@ -150,9 +150,8 @@ def ask(
             console.print(answer)
 
         if sources and context_result.get("sources"):
-            console.print("\n[dim]📚 Sources:[/dim]")
-            for source in context_result["sources"]:
-                console.print(f"[dim]  • {source}[/dim]")
+            joined = ", ".join(context_result["sources"])
+            console.print(f"\n[dim]sources: {joined}[/dim]")
 
     except Exception as e:
         console.print(f"[red]❌ Query failed: {e}[/red]")

@@ -35,3 +35,8 @@
 - AC-11 integration test "discard leaves no `<slug>/` folder" not added — requires non-trivial PyAudio mocking to exercise the `x`-key + recorder path end-to-end. The discard rendering branch is unit-tested via `_RecordViewState`. [tests/test_record_view.py, tests/test_cli_commands.py]
 - `stopped_by_cap` rendering branch never set — when the timer fires the `Live` loop exits before any tick can render `■ stopped`. Either remove the dead branch or have the timer flip the flag through one final tick. [chirp/cli.py:_render_record_view]
 - Discard path writes `audio.wav` to disk and immediately `rmtree`s the slug folder. Wasteful but correct. Adding a "skip save" signal to `AudioRecorder` is invasive; defer until a real user complains. [chirp/cli.py:record, recorder/audio_recorder.py]
+
+## Deferred from: code review of 1.7-ask-verify (2026-04-28)
+
+- Banner test exercises the format string in isolation, not the `InteractiveChatSession.start()` code path. `start()` calls `prompt_toolkit.PromptSession.prompt()` which expects a real TTY; defer an end-to-end banner test until a `prompt_toolkit` session stub is in place. [tests/test_ask_sources.py]
+- `_build_note_index` rebuilds the slug→index map on every retrieval call (`list_notes` + `meta.toml` reads per query). Acceptable at typical scale (10–100 notes); revisit if profiling flags it. [notes_chat/retrieval.py]
