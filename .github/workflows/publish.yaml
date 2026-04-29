@@ -15,7 +15,7 @@ on:
         default: false
   release:
     types:
-      - created
+      - published
 
 jobs:
   build-and-test:
