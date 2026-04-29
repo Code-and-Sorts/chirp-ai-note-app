@@ -1,5 +1,3 @@
-from typing import Optional
-
 import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -16,7 +14,7 @@ def index(
 ):
     """Build or rebuild the notes search index."""
     config = get_notes_config()
-    console.print("[blue]🔍 Building notes index...[/blue]")
+    console.print("[blue]Building notes index…[/blue]")
 
     if force:
         console.print("[yellow]--force specified, rebuilding entire index[/yellow]")
@@ -44,28 +42,32 @@ def index(
 
         if result.get("success"):
             console.print(
-                f"[green]✅ Index built successfully: {result.get('files_processed', 0)} files processed[/green]"
+                f"[green]Index built successfully: {result.get('files_processed', 0)} files processed[/green]"
             )
         else:
             console.print(
-                f"[red]❌ Index build failed: {result.get('error', 'Unknown error')}[/red]"
+                f"[red]Index build failed: {result.get('error', 'Unknown error')}[/red]"
             )
             raise typer.Exit(1)
 
     except Exception as e:
-        console.print(f"[red]❌ Index build failed: {e}[/red]")
+        console.print(f"[red]Index build failed: {e}[/red]")
         raise typer.Exit(1)
 
 
 @app.command()
 def ask(
-    question: Optional[str] = typer.Option(
+    question: str | None = typer.Argument(
+        None,
+        help="Question to ask about your meetings (omit for interactive chat).",
+    ),
+    question_option: str | None = typer.Option(
         None,
         "--question",
         "-q",
-        help="Question to ask about your meetings (omit for interactive chat)",
+        help="Same as the positional argument; kept for backwards compatibility.",
     ),
-    when: Optional[str] = typer.Option(
+    when: str | None = typer.Option(
         None,
         "--when",
         help="Time range filter (e.g., 'last week', 'on:2025-01-15', '2025-01-01:2025-01-31')",
@@ -76,14 +78,22 @@ def ask(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would be sent to LLM without calling it"
     ),
+    markdown: bool = typer.Option(
+        True,
+        "--markdown/--no-markdown",
+        help="Render answers as markdown (code blocks, bullets, bold).",
+    ),
 ):
     """Ask questions about your meeting notes. Run without a question for interactive chat."""
     config = get_notes_config()
 
     if question is None:
+        question = question_option
+
+    if question is None:
         from notes_chat.interactive import InteractiveChatSession
 
-        session = InteractiveChatSession(config)
+        session = InteractiveChatSession(config, markdown=markdown)
         session.start()
         return
 
@@ -92,30 +102,28 @@ def ask(
         from notes_chat.prompting import generate_answer
         from notes_chat.retrieval import retrieve_context
 
-        console.print(f"[blue]🤔 Searching for: {question}[/blue]")
+        console.print(f"[dim]searching for: {question}[/dim]")
 
         context_result = retrieve_context(config, question, when_filter=when)
 
         if not context_result.get("success"):
             error = context_result.get("error", "Unknown error")
             if "no documents found" in error.lower():
-                console.print("[yellow]📭 No relevant documents found.[/yellow]")
+                console.print("[yellow]No relevant documents found.[/yellow]")
                 if context_result.get("suggestion"):
-                    console.print(f"[dim]💡 Try: {context_result['suggestion']}[/dim]")
+                    console.print(f"[dim]try: {context_result['suggestion']}[/dim]")
                 raise typer.Exit(2)
             else:
-                console.print(f"[red]❌ Context retrieval failed: {error}[/red]")
+                console.print(f"[red]Context retrieval failed: {error}[/red]")
                 if context_result.get("suggestion"):
-                    console.print(f"[dim]💡 {context_result['suggestion']}[/dim]")
+                    console.print(f"[dim]{context_result['suggestion']}[/dim]")
                 raise typer.Exit(1)
 
         context = context_result["context"]
         retrieved_ids = context_result["retrieved_ids"]
 
         if dry_run:
-            console.print(
-                "[yellow]🧪 Dry run mode - showing context and prompt:[/yellow]"
-            )
+            console.print("[yellow]dry run — showing context and prompt:[/yellow]")
             console.print(f"[dim]Context length: {len(context)} characters[/dim]")
             console.print(f"[dim]Retrieved chunks: {len(retrieved_ids)}[/dim]")
             console.print("\n[bold]Context:[/bold]")
@@ -124,30 +132,34 @@ def ask(
 
         cached_answer = get_cached_answer(question, retrieved_ids)
         if cached_answer:
-            console.print("[dim]📋 Using cached answer[/dim]")
+            console.print("[dim]using cached answer[/dim]")
             answer = cached_answer
         else:
             answer_result = generate_answer(config, question, context)
 
             if not answer_result.get("success"):
                 console.print(
-                    f"[red]❌ Answer generation failed: {answer_result.get('error', 'Unknown error')}[/red]"
+                    f"[red]Answer generation failed: {answer_result.get('error', 'Unknown error')}[/red]"
                 )
                 raise typer.Exit(1)
 
             answer = answer_result["answer"]
             cache_answer(question, retrieved_ids, answer)
 
-        console.print("\n[bold green]💬 Answer:[/bold green]")
-        console.print(answer)
+        console.print("\n[magenta bold]chirp ›[/magenta bold]")
+        if markdown:
+            from rich.markdown import Markdown
+
+            console.print(Markdown(answer))
+        else:
+            console.print(answer)
 
         if sources and context_result.get("sources"):
-            console.print("\n[dim]📚 Sources:[/dim]")
-            for source in context_result["sources"]:
-                console.print(f"[dim]  • {source}[/dim]")
+            joined = ", ".join(context_result["sources"])
+            console.print(f"\n[dim]sources: {joined}[/dim]")
 
     except Exception as e:
-        console.print(f"[red]❌ Query failed: {e}[/red]")
+        console.print(f"[red]Query failed: {e}[/red]")
         raise typer.Exit(1)
 
 

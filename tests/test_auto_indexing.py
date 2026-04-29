@@ -8,10 +8,12 @@ class TestAutoIndexing:
     def test_auto_index_enabled_success(self, tmp_path):
         settings = ChirpSettings()
         settings.notes_chat.auto_index = True
-        settings.directories.notes = tmp_path
+        settings.directories.notes_root = tmp_path
 
         generator = NoteGenerator(settings)
-        notes_path = tmp_path / "test_note.md"
+        note_dir = tmp_path / "sample-2026-04-20"
+        note_dir.mkdir()
+        notes_path = note_dir / "notes.md"
         notes_path.write_text("# Test Note\nContent")
 
         with patch("notes_chat.index.IndexManager") as mock_manager_class:
@@ -32,10 +34,10 @@ class TestAutoIndexing:
     def test_auto_index_disabled(self, tmp_path):
         settings = ChirpSettings()
         settings.notes_chat.auto_index = False
-        settings.directories.notes = tmp_path
+        settings.directories.notes_root = tmp_path
 
         generator = NoteGenerator(settings)
-        notes_path = tmp_path / "test_note.md"
+        notes_path = tmp_path / "sample" / "notes.md"
 
         with patch("notes_chat.index.IndexManager") as mock_manager_class:
             generator._auto_index_note(notes_path)
@@ -45,10 +47,10 @@ class TestAutoIndexing:
     def test_auto_index_graceful_failure(self, tmp_path):
         settings = ChirpSettings()
         settings.notes_chat.auto_index = True
-        settings.directories.notes = tmp_path
+        settings.directories.notes_root = tmp_path
 
         generator = NoteGenerator(settings)
-        notes_path = tmp_path / "test_note.md"
+        notes_path = tmp_path / "sample" / "notes.md"
 
         with patch("notes_chat.index.IndexManager") as mock_manager_class:
             mock_manager_class.side_effect = Exception("Ollama not available")
@@ -58,10 +60,10 @@ class TestAutoIndexing:
     def test_auto_index_add_failure(self, tmp_path):
         settings = ChirpSettings()
         settings.notes_chat.auto_index = True
-        settings.directories.notes = tmp_path
+        settings.directories.notes_root = tmp_path
 
         generator = NoteGenerator(settings)
-        notes_path = tmp_path / "test_note.md"
+        notes_path = tmp_path / "sample" / "notes.md"
 
         with patch("notes_chat.index.IndexManager") as mock_manager_class:
             mock_manager = Mock()

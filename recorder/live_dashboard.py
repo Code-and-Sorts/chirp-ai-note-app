@@ -123,9 +123,7 @@ class LiveDashboard:
     def run(self):
         layout = self._render_layout()
         with self._raw_mode():
-            keyboard_thread = threading.Thread(
-                target=self._keyboard_loop, daemon=True
-            )
+            keyboard_thread = threading.Thread(target=self._keyboard_loop, daemon=True)
             if self._keyboard_enabled:
                 keyboard_thread.start()
 
@@ -286,7 +284,7 @@ class LiveDashboard:
         level_bar = self._render_level_bar(self._latest_level)
 
         language = self._language or "Detecting…"
-        speech_state = "🟢 Speaking" if self._vad_triggered else "⚫ Silent"
+        speech_state = "Speaking" if self._vad_triggered else "Silent"
 
         table.add_row("Status ", speech_state)
         table.add_row("Duration ", self._format_elapsed(elapsed))

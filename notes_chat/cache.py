@@ -1,11 +1,10 @@
 import hashlib
 import json
-from typing import Optional
 
 from notes_chat.config import get_notes_config
 
 
-def get_cached_answer(question: str, retrieved_ids: list[str]) -> Optional[str]:
+def get_cached_answer(question: str, retrieved_ids: list[str]) -> str | None:
     """Get cached answer if available."""
     try:
         config = get_notes_config()

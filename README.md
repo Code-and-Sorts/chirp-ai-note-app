@@ -37,7 +37,7 @@ pip install chirp-notes-ai
 
 ### Audio
 
-BlackHole routes system audio into Chirp. Run `chirp setup` for a step-by-step guide, or set it up manually:
+BlackHole routes system audio into Chirp. Run `chirp init` for a guided walkthrough, or set it up manually:
 
 1. Install BlackHole: `brew install blackhole-2ch`
 2. Open **Audio MIDI Setup** → create a Multi-Output Device ("Chirp Output") with your speakers + BlackHole

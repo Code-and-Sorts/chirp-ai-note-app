@@ -1,9 +1,10 @@
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import chromadb
 import requests
@@ -20,7 +21,7 @@ class IndexManager:
     def __init__(self, config: ChirpSettings):
         self.config = config
         self.settings = config.notes_chat
-        self.notes_dir = config.directories.notes
+        self.notes_root = config.directories.notes_root
 
         self.chroma_client = chromadb.PersistentClient(
             path=str(self.settings.index_dir / "chroma"),
@@ -36,7 +37,7 @@ class IndexManager:
     def build_index(
         self,
         force: bool = False,
-        progress_callback: Optional[Callable] = None,
+        progress_callback: Callable | None = None,
     ) -> dict[str, Any]:
         """Build or update the search index."""
         try:
@@ -116,12 +117,12 @@ class IndexManager:
             self.bm25_file.unlink()
 
     def _scan_notes_files(self) -> dict[str, dict[str, Any]]:
-        """Scan notes directory and return file signatures."""
+        """Scan per-note directories and return file signatures."""
         files: dict[str, dict[str, Any]] = {}
-        if not self.notes_dir.exists():
+        if not self.notes_root.exists():
             return files
 
-        for note_file in self.notes_dir.glob("*.md"):
+        for note_file in self.notes_root.glob("*/notes.md"):
             stat = note_file.stat()
             files[str(note_file)] = {
                 "mtime": stat.st_mtime,
@@ -168,7 +169,7 @@ class IndexManager:
 
             if not embeddings:
                 console.print(
-                    f"[yellow]⚠️ Failed to get embeddings for {file_path.name}[/yellow]"
+                    f"[yellow]Failed to get embeddings for {file_path.name}[/yellow]"
                 )
                 return False
 
@@ -182,7 +183,7 @@ class IndexManager:
             return True
 
         except Exception as e:
-            console.print(f"[red]❌ Failed to index {file_path.name}: {e}[/red]")
+            console.print(f"[red]Failed to index {file_path.name}: {e}[/red]")
             return False
 
     def _remove_from_index(self, file_path: str):
@@ -193,10 +194,10 @@ class IndexManager:
                 self.collection.delete(ids=results["ids"])
         except Exception as e:
             console.print(
-                f"[yellow]⚠️ Failed to remove {Path(file_path).name}: {e}[/yellow]"
+                f"[yellow]Failed to remove {Path(file_path).name}: {e}[/yellow]"
             )
 
-    def _extract_metadata(self, file_path: Path, content: str) -> Optional[NoteMeta]:
+    def _extract_metadata(self, file_path: Path, content: str) -> NoteMeta | None:
         """Extract metadata from a notes file."""
         try:
             title_match = re.search(r"^# (.+)$", content, re.MULTILINE)
@@ -233,7 +234,7 @@ class IndexManager:
 
         except Exception as e:
             console.print(
-                f"[yellow]⚠️ Failed to extract metadata from {file_path.name}: {e}[/yellow]"
+                f"[yellow]Failed to extract metadata from {file_path.name}: {e}[/yellow]"
             )
             return None
 
@@ -317,7 +318,7 @@ class IndexManager:
 
         return chunks
 
-    def _get_embeddings(self, texts: list[str]) -> Optional[list[list[float]]]:
+    def _get_embeddings(self, texts: list[str]) -> list[list[float]] | None:
         """Get embeddings from Ollama."""
         try:
             embeddings = []
@@ -338,7 +339,7 @@ class IndexManager:
             return embeddings
 
         except Exception as e:
-            console.print(f"[red]❌ Failed to get embeddings: {e}[/red]")
+            console.print(f"[red]Failed to get embeddings: {e}[/red]")
             return None
 
     def _chunk_to_metadata(self, chunk: Chunk) -> dict[str, Any]:
@@ -359,13 +360,13 @@ class IndexManager:
 
             rebuild_bm25_index(self.collection, self.bm25_file)
         except Exception as e:
-            console.print(f"[yellow]⚠️ Failed to rebuild BM25 index: {e}[/yellow]")
+            console.print(f"[yellow]Failed to rebuild BM25 index: {e}[/yellow]")
 
 
 def build_index(
     config: ChirpSettings,
     force: bool = False,
-    progress_callback: Optional[Callable] = None,
+    progress_callback: Callable | None = None,
 ) -> dict[str, Any]:
     """Build the notes search index."""
     manager = IndexManager(config)

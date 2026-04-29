@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -113,9 +112,7 @@ class TestWhisperTranscriber:
                     mock_torch.cuda.is_available.return_value = False
                     with patch("platform.system", return_value="Linux"):
                         with patch("platform.processor", return_value="Intel"):
-                            with patch.dict(
-                                "sys.modules", {"torch": mock_torch}
-                            ):
+                            with patch.dict("sys.modules", {"torch": mock_torch}):
                                 device = transcriber._get_optimal_device()
                                 assert device == "cpu"
 
@@ -233,15 +230,19 @@ class TestWhisperTranscriber:
     def test_transcribe_file_includes_enhanced_metadata(
         self, tmp_path, mock_settings, mock_whisper_model
     ):
-        audio_path = tmp_path / "20250101_120000_sample.wav"
+        import tomli_w
+
+        note_dir = tmp_path / "strategy-sync-2025-01-01"
+        note_dir.mkdir()
+        audio_path = note_dir / "audio.wav"
         audio_path.write_bytes(b"fake audio data")
 
         metadata_content = {
             "title": "Strategy Sync",
-            "recorded_at": "2025-01-01T12:00:00",
+            "date": "2025-01-01T12:00:00",
         }
-        metadata_file = audio_path.with_suffix(f"{audio_path.suffix}.meta")
-        metadata_file.write_text(json.dumps(metadata_content), encoding="utf-8")
+        with (note_dir / "meta.toml").open("wb") as fh:
+            tomli_w.dump(metadata_content, fh)
 
         with patch("transcriber.whisper_transcriber.WhisperModel") as mock_model_cls:
             mock_model_cls.return_value = mock_whisper_model
@@ -260,7 +261,6 @@ class TestWhisperTranscriber:
 
         metadata = result["metadata"]
 
-        assert metadata["recording_id"] == "20250101_120000"
         assert metadata["meeting_name"] == "Strategy Sync"
         assert metadata["title"] == "Strategy Sync"
         assert metadata["duration"] == pytest.approx(5.0)
@@ -357,25 +357,27 @@ class TestWhisperTranscriber:
 
             assert info["loaded"] is False
 
-    def test_read_audio_metadata_file_exists(self, mock_settings):
+    def test_read_audio_metadata_file_exists(self, tmp_path, mock_settings):
+        import tomli_w
+
         with patch("transcriber.whisper_transcriber.WhisperModel"):
             transcriber = WhisperTranscriber(mock_settings)
 
-            test_audio_file = Path("test_audio.wav")
+            note_dir = tmp_path / "test-2025-09-17"
+            note_dir.mkdir()
+            audio_path = note_dir / "audio.wav"
+            audio_path.write_bytes(b"")
             test_metadata = {
                 "title": "Test Meeting Title",
-                "recorded_at": "2025-09-17T14:30:00",
-                "channels": 2,
-                "sample_rate": 16000,
+                "date": "2025-09-17T14:30:00",
             }
+            with (note_dir / "meta.toml").open("wb") as fh:
+                tomli_w.dump(test_metadata, fh)
 
-            with patch("builtins.open", create=True):
-                with patch("json.load", return_value=test_metadata):
-                    with patch.object(Path, "exists", return_value=True):
-                        result = transcriber._read_audio_metadata(test_audio_file)
+            result = transcriber._read_audio_metadata(audio_path)
 
-                        assert result == test_metadata
-                        assert result["title"] == "Test Meeting Title"
+            assert result == test_metadata
+            assert result["title"] == "Test Meeting Title"
 
     def test_read_audio_metadata_file_not_exists(self, mock_settings):
         with patch("transcriber.whisper_transcriber.WhisperModel"):

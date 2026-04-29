@@ -185,7 +185,7 @@ class TestRetrievalMerge:
         assert merged[1][1] == 0.95  # chroma1
 
     def test_chunk_header_creation(self):
-        """Test creation of chunk headers."""
+        """Headers carry date + filename; sources fall back to slug when no config."""
         chunks = [
             (
                 "chunk1",
@@ -193,7 +193,7 @@ class TestRetrievalMerge:
                 {
                     "content": "content",
                     "metadata": {
-                        "path": "/path/to/meetings_2025_01_15.md",
+                        "path": "/path/to/team-meeting-2025-01-15/notes.md",
                         "date": "2025-01-15T10:30:00",
                         "title": "Team Meeting",
                     },
@@ -203,5 +203,6 @@ class TestRetrievalMerge:
 
         context, sources, retrieved_ids = _build_context(chunks, 1000)
 
-        assert "2025-01-15 · meetings_2025_01_15.md" in context
-        assert "Team Meeting (meetings_2025_01_15.md)" in sources[0]
+        assert "2025-01-15 · notes.md" in context
+        # No `config` was provided so the slug is the fallback label.
+        assert sources[0] == "team-meeting-2025-01-15"

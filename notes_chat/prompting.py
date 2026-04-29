@@ -100,21 +100,6 @@ def generate_answer(
         if not answer:
             return {"success": False, "error": "Empty response from LLM"}
 
-        no_info_patterns = [
-            "i don't have enough information",
-            "not enough information",
-            "cannot answer",
-            "unable to answer",
-            "insufficient information",
-        ]
-
-        if any(pattern in answer.lower() for pattern in no_info_patterns):
-            return {
-                "success": False,
-                "error": "No relevant information found in the context",
-                "answer": answer,
-            }
-
         return {"success": True, "answer": answer}
 
     except requests.exceptions.ConnectionError:

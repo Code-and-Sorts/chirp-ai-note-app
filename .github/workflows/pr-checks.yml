@@ -10,7 +10,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality-checks:
+    if: github.event.pull_request.draft == false
+    runs-on: macos-latest
+    steps:
+      - name: ⤵️ Checkout code
+        uses: actions/checkout@v6
+
+      - name: 🔎 Run quality checks (format, lint, spell, type, validate)
+        uses: ./.github/actions/quality-checks
+        with:
+          python-version: '3.11'
+
   build-and-test:
+    needs: quality-checks
     if: github.event.pull_request.draft == false
     uses: ./.github/workflows/shared-build-and-test.yaml
     with:

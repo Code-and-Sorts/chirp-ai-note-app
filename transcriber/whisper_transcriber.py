@@ -1,14 +1,16 @@
 import logging
 import platform
+import tomllib
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from faster_whisper import WhisperModel
 
 from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
-from utils.file_utils import get_file_size_mb
+from utils.file_utils import META_FILENAME, get_file_size_mb
 from utils.time_utils import derive_recording_id, parse_timestamp_from_filename
 
 
@@ -76,7 +78,7 @@ class WhisperTranscriber:
         recording_datetime = self._get_recording_datetime(
             audio_file_path, audio_metadata
         )
-        recording_id = derive_recording_id(audio_file_path)
+        recording_id = derive_recording_id(audio_file_path, recording_datetime)
         meeting_name = self._get_meeting_name(audio_metadata)
         device = self._get_optimal_device()
         compute_type = self._get_compute_type()
@@ -253,7 +255,9 @@ class WhisperTranscriber:
                         "segments": [],
                         "metadata": {
                             "schema_version": 2,
-                            "recording_id": derive_recording_id(audio_file),
+                            "recording_id": derive_recording_id(
+                                audio_file, recording_datetime
+                            ),
                             "recording_filename": audio_file.name,
                             "recording_path": str(audio_file.resolve()),
                             "meeting_name": self._get_meeting_name(audio_metadata),
@@ -280,15 +284,13 @@ class WhisperTranscriber:
             "loaded": self.model is not None,
         }
 
-    def _read_audio_metadata(self, audio_file_path: Path) -> Optional[dict]:
-        import json
+    def _read_audio_metadata(self, audio_file_path: Path) -> dict | None:
+        meta_path = audio_file_path.parent / META_FILENAME
 
-        metadata_file = audio_file_path.with_suffix(f"{audio_file_path.suffix}.meta")
-
-        if metadata_file.exists():
+        if meta_path.exists():
             try:
-                with open(metadata_file, encoding="utf-8") as f:
-                    data = json.load(f)
+                with meta_path.open("rb") as fh:
+                    data = tomllib.load(fh)
                     return dict(data) if isinstance(data, dict) else None
             except Exception:
                 pass
@@ -296,12 +298,14 @@ class WhisperTranscriber:
         return None
 
     def _get_recording_datetime(
-        self, audio_file_path: Path, audio_metadata: Optional[dict]
+        self, audio_file_path: Path, audio_metadata: dict | None
     ) -> datetime:
         if audio_metadata:
-            recorded_at = audio_metadata.get("recorded_at")
-            if isinstance(recorded_at, str) and recorded_at.strip():
-                cleaned = recorded_at.strip().replace("Z", "+00:00")
+            date_value = audio_metadata.get("date") or audio_metadata.get("recorded_at")
+            if isinstance(date_value, datetime):
+                return date_value
+            if isinstance(date_value, str) and date_value.strip():
+                cleaned = date_value.strip().replace("Z", "+00:00")
                 try:
                     return datetime.fromisoformat(cleaned)
                 except ValueError:
@@ -316,7 +320,7 @@ class WhisperTranscriber:
         except (OSError, ValueError):
             return datetime.now()
 
-    def _get_meeting_name(self, audio_metadata: Optional[dict]) -> str:
+    def _get_meeting_name(self, audio_metadata: dict | None) -> str:
         if audio_metadata:
             title = audio_metadata.get("title")
             if isinstance(title, str) and title.strip():

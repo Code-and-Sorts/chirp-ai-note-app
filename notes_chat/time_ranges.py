@@ -1,6 +1,5 @@
 import re
 from datetime import datetime, timedelta
-from typing import Optional
 
 from dateutil import tz
 
@@ -17,7 +16,7 @@ WEEKDAY_NAMES = {
 }
 
 
-def parse_time_range(query: str, when_arg: Optional[str] = None) -> Optional[TimeRange]:
+def parse_time_range(query: str, when_arg: str | None = None) -> TimeRange | None:
     now = datetime.now(tz.tzlocal())
 
     if when_arg:
@@ -26,7 +25,7 @@ def parse_time_range(query: str, when_arg: Optional[str] = None) -> Optional[Tim
     return _parse_from_query(query, now)
 
 
-def _parse_when_arg(when_arg: str, now: datetime) -> Optional[TimeRange]:
+def _parse_when_arg(when_arg: str, now: datetime) -> TimeRange | None:
     when_arg = when_arg.lower().strip()
 
     if when_arg.startswith("on:"):
@@ -59,7 +58,7 @@ def _parse_when_arg(when_arg: str, now: datetime) -> Optional[TimeRange]:
     return _parse_keyword_range(when_arg, now)
 
 
-def _parse_from_query(query: str, now: datetime) -> Optional[TimeRange]:
+def _parse_from_query(query: str, now: datetime) -> TimeRange | None:
     query_lower = query.lower()
 
     patterns_and_keywords = [
@@ -79,7 +78,7 @@ def _parse_from_query(query: str, now: datetime) -> Optional[TimeRange]:
     return None
 
 
-def _parse_keyword_range(keyword: str, now: datetime) -> Optional[TimeRange]:
+def _parse_keyword_range(keyword: str, now: datetime) -> TimeRange | None:
     keyword = keyword.lower().strip()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 

@@ -2,18 +2,24 @@ import array
 import logging
 import math
 import threading
+import tomllib
 import wave
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from threading import Timer
-from typing import Callable, Optional
 
 import pyaudio
+import tomli_w
 
 from config.settings import ChirpSettings
 from recorder.device_manager import DeviceManager
 from recorder.meeting_monitor import MeetingMonitor
-from utils.file_utils import generate_audio_filename
+from utils.file_utils import (
+    AUDIO_FILENAME,
+    META_FILENAME,
+    slugify,
+)
 from utils.time_utils import get_recording_duration
 
 logger = logging.getLogger(__name__)
@@ -27,13 +33,16 @@ class AudioRecorder:
         self.is_recording = False
         self.frames: list[bytes] = []
         self.stream = None
-        self.recording_thread: Optional[Timer] = None
-        self.monitor: Optional[MeetingMonitor] = None
-        self.start_time: Optional[datetime] = None
-        self.title: Optional[str] = None
+        self.recording_thread: Timer | None = None
+        self.monitor: MeetingMonitor | None = None
+        self.start_time: datetime | None = None
+        self.title: str | None = None
         self.current_level: float = 0.0
         self._record_channels: int = 1
         self._output_channels: int = 1
+        self.note_dir: Path | None = None
+        self.slug: str | None = None
+        self._paused: bool = False
 
     def __del__(self):
         if self.audio:
@@ -41,9 +50,10 @@ class AudioRecorder:
 
     def start_recording(
         self,
-        duration_minutes: Optional[int] = None,
-        title: Optional[str] = None,
-        level_callback: Optional[Callable[[float], None]] = None,
+        duration_minutes: int | None = None,
+        title: str | None = None,
+        level_callback: Callable[[float], None] | None = None,
+        tags: list[str] | None = None,
     ) -> str:
         if self.is_recording:
             raise RuntimeError("Recording already in progress")
@@ -56,10 +66,17 @@ class AudioRecorder:
         if not device_info or device_info["maxInputChannels"] == 0:
             raise RuntimeError("Selected device has no input channels")
 
-        self.settings.directories.raw_audio.mkdir(parents=True, exist_ok=True)
+        notes_root = self.settings.directories.notes_root
+        notes_root.mkdir(parents=True, exist_ok=True)
 
-        filename = generate_audio_filename(title, self.settings.audio.format)
-        file_path = self.settings.directories.raw_audio / filename
+        effective_title = title or "untitled"
+        recorded_date = datetime.now()
+        slug = slugify(effective_title, recorded_date.date(), notes_root)
+        note_dir = notes_root / slug
+        note_dir.mkdir(parents=True, exist_ok=True)
+        audio_path = note_dir / AUDIO_FILENAME
+
+        mic_name = self._resolve_mic_name(device_index)
 
         record_channels = int(device_info["maxInputChannels"])
         output_channels = min(self.settings.audio.channels, record_channels)
@@ -71,8 +88,19 @@ class AudioRecorder:
         self._output_channels = output_channels
         self.frames = []
         self.is_recording = True
-        self.start_time = datetime.now()
-        self.title = title
+        self._paused = False
+        self.start_time = recorded_date
+        self.title = effective_title
+        self.note_dir = note_dir
+        self.slug = slug
+
+        self._write_initial_meta(
+            note_dir=note_dir,
+            title=effective_title,
+            recorded_at=recorded_date,
+            mic=mic_name,
+            tags=list(tags or []),
+        )
 
         self.stream = self.audio.open(
             format=pyaudio.paInt16,
@@ -117,18 +145,36 @@ class AudioRecorder:
         finally:
             self._cleanup_recording()
 
+        if not self.frames:
+            import shutil
+
+            shutil.rmtree(note_dir, ignore_errors=True)
+            raise RuntimeError("No audio data recorded")
+
         self._save_recording(
-            file_path,
+            audio_path,
             self._record_channels,
             self._output_channels,
             sample_rate,
-            self.title,
         )
 
-        return filename
+        duration_s = get_recording_duration(self.start_time) if self.start_time else 0.0
+        self._update_meta_duration(note_dir, duration_s)
+
+        return slug
 
     def stop_recording(self):
         self.is_recording = False
+
+    def pause(self) -> None:
+        self._paused = True
+
+    def resume(self) -> None:
+        self._paused = False
+
+    @property
+    def is_paused(self) -> bool:
+        return getattr(self, "_paused", False)
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
@@ -145,7 +191,8 @@ class AudioRecorder:
                     self.current_level = 0.0
                     return (None, pyaudio.paContinue)
 
-                self.frames.append(sanitized)
+                if not self.is_paused:
+                    self.frames.append(sanitized)
 
                 samples = array.array("h")
                 samples.frombytes(sanitized)
@@ -178,7 +225,6 @@ class AudioRecorder:
         record_channels: int,
         output_channels: int,
         sample_rate: int,
-        title: Optional[str] = None,
     ):
         if not self.frames:
             raise RuntimeError("No audio data recorded")
@@ -196,18 +242,39 @@ class AudioRecorder:
             wave_file.setframerate(sample_rate)
             wave_file.writeframes(raw_data)
 
-        if title:
-            import json
+    def _write_initial_meta(
+        self,
+        note_dir: Path,
+        title: str,
+        recorded_at: datetime,
+        mic: str,
+        tags: list[str],
+    ) -> None:
+        meta = {
+            "title": title,
+            "date": recorded_at.isoformat(),
+            "mic": mic,
+            "tags": tags,
+        }
+        _write_meta(note_dir / META_FILENAME, meta)
 
-            metadata_file = file_path.with_suffix(f"{file_path.suffix}.meta")
-            metadata = {
-                "title": title,
-                "recorded_at": self.start_time.isoformat() if self.start_time else None,
-                "channels": output_channels,
-                "sample_rate": sample_rate,
-            }
-            with open(metadata_file, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, indent=2)
+    def _update_meta_duration(self, note_dir: Path, duration_s: float) -> None:
+        meta_path = note_dir / META_FILENAME
+        meta = _read_meta(meta_path)
+        meta["duration_s"] = float(duration_s)
+        _write_meta(meta_path, meta)
+
+    def _resolve_mic_name(self, device_index: int) -> str:
+        try:
+            devices = self.device_manager.list_devices()
+            for device in devices:
+                if device["index"] == device_index:
+                    name = device.get("name")
+                    if isinstance(name, str):
+                        return name
+        except Exception:
+            pass
+        return "default"
 
     @staticmethod
     def _mixdown_channels(
@@ -256,3 +323,19 @@ class AudioRecorder:
             "duration": get_recording_duration(self.start_time),
             "start_time": self.start_time,
         }
+
+
+def _read_meta(meta_path: Path) -> dict:
+    if not meta_path.exists():
+        return {}
+    try:
+        with meta_path.open("rb") as fh:
+            return tomllib.load(fh)
+    except Exception:
+        return {}
+
+
+def _write_meta(meta_path: Path, meta: dict) -> None:
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    with meta_path.open("wb") as fh:
+        tomli_w.dump(meta, fh)

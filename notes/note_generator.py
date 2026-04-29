@@ -1,18 +1,18 @@
+import tomllib
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import requests
+import tomli_w
 from rich.console import Console
 
 from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
-from notes.daily_aggregator import DailyAggregator
 from notes.template_engine import TemplateEngine
-from transcriber.compression import JSONCompressor
+from utils.file_utils import META_FILENAME, NOTES_FILENAME, NoteRecord, list_notes
 from utils.popup_manager import PopupManager
-from utils.time_utils import get_daily_note_filename
 
 SYSTEM_PROMPT = """You are Chirp, the user's meeting note co-pilot.
 Your sole purpose is to transform raw meeting transcripts into structured meeting notes.
@@ -134,209 +134,151 @@ Always produce notes using the canonical tags below. Never invent content.
 
 
 class NoteGenerator:
-    def __init__(self, settings: ChirpSettings):
+    def __init__(self, settings: ChirpSettings, console: Console | None = None) -> None:
         self.settings = settings
         self.template_engine = TemplateEngine(settings)
-        self.daily_aggregator = DailyAggregator(settings)
-        self.compressor = JSONCompressor()
         self.popup_manager = PopupManager()
-        self.console = Console()
+        self.console = console if console is not None else Console()
 
-    def generate_daily_notes(
+    def generate_for_records(
         self,
-        transcription_files: list[Path],
+        records: list[NoteRecord],
         force: bool = False,
-        filename_override: Optional[str] = None,
     ) -> dict[str, Any]:
-        try:
-            daily_groups = self.daily_aggregator.group_transcriptions_by_day(
-                transcription_files
-            )
+        results = []
+        for record in records:
+            result = self._generate_for_record(record, force)
+            results.append(result)
 
-            results = []
+        newly_generated = [r for r in results if r["success"] and "message" not in r]
+        successful = [r for r in results if r["success"]]
+        if newly_generated:
+            latest = newly_generated[-1]
+            self.popup_manager.show_notes_generated(latest["filename"])
+            return {**latest, "results": results}
+        if successful:
+            return {**successful[-1], "results": results}
 
-            for date, files in daily_groups.items():
-                result = self._generate_notes_for_day(
-                    date, files, force, filename_override
-                )
-                results.append(result)
+        return {
+            "success": False,
+            "error": "Failed to generate notes for any record",
+            "results": results,
+        }
 
-            successful_results = [r for r in results if r["success"]]
-
-            if successful_results:
-                latest_result = max(successful_results, key=lambda x: x["date"])
-                self.popup_manager.show_notes_generated(latest_result["filename"])
-                return latest_result
-            else:
-                return {
-                    "success": False,
-                    "error": "Failed to generate notes for any day",
-                    "results": results,
-                }
-
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def _generate_notes_for_day(
+    def generate_from_notes_root(
         self,
-        date: datetime,
-        transcription_files: list[Path],
-        force: bool,
-        filename_override: Optional[str] = None,
+        notes_root: Path | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
-        if filename_override:
-            notes_filename = (
-                filename_override
-                if filename_override.endswith(".md")
-                else f"{filename_override}.md"
-            )
-        else:
-            notes_filename = get_daily_note_filename(date)
-        notes_path = self.settings.directories.notes / notes_filename
+        resolved_root = notes_root or self.settings.directories.notes_root
+        records = list_notes(resolved_root)
+        candidates = [
+            record
+            for record in records
+            if record.transcript is not None and (force or record.notes is None)
+        ]
+        if not candidates:
+            return {
+                "success": False,
+                "error": "No transcripts ready for notes generation",
+                "results": [],
+            }
+        return self.generate_for_records(candidates, force=force)
+
+    def _generate_for_record(self, record: NoteRecord, force: bool) -> dict[str, Any]:
+        notes_path = record.dir / NOTES_FILENAME
 
         if notes_path.exists() and not force:
             return {
                 "success": True,
-                "filename": notes_filename,
+                "slug": record.slug,
+                "filename": notes_path.name,
                 "path": str(notes_path),
-                "date": date.isoformat(),
                 "message": "Notes already exist (use --force to regenerate)",
             }
 
-        try:
-            meeting_sections = []
-            total_duration = 0.0
-            skipped_files = []
-
-            for transcription_file in transcription_files:
-                transcription_data = self.compressor.decompress_json(transcription_file)
-                metadata = transcription_data.get("metadata", {})
-                recording_label = (
-                    metadata.get("recording_id")
-                    or metadata.get("meeting_name")
-                    or transcription_file.parent.name
-                    or transcription_file.stem
-                )
-
-                if not transcription_data.get("success", False):
-                    skipped_files.append((recording_label, "Failed transcription"))
-                    continue
-
-                meeting_notes = self._generate_meeting_notes(transcription_data)
-                if meeting_notes:
-                    meeting_section = self.template_engine.render_meeting_section(
-                        meeting_notes
-                    )
-                    meeting_sections.append(meeting_section)
-
-                    duration = metadata.get(
-                        "recording_length_seconds", metadata.get("duration", 0)
-                    )
-                    try:
-                        total_duration += float(duration)
-                    except (TypeError, ValueError):
-                        pass
-                else:
-                    transcript_text = transcription_data.get("full_text", "").strip()
-                    reason = (
-                        "Insufficient content (< 50 characters)"
-                        if len(transcript_text) < 50
-                        else "Failed to generate notes"
-                    )
-                    skipped_files.append((recording_label, reason))
-
-            if skipped_files:
-                self.console.print(
-                    f"[yellow]⚠️  Skipped {len(skipped_files)} transcription(s):[/yellow]"
-                )
-                for filename, reason in skipped_files:
-                    self.console.print(f"[dim]   • {filename}: {reason}[/dim]")
-
-            if not meeting_sections:
-                return {
-                    "success": False,
-                    "error": "No valid transcriptions found for this day",
-                    "date": date.isoformat(),
-                }
-
-            daily_notes = self.template_engine.render_daily_notes(
-                date, meeting_sections, len(meeting_sections), total_duration
-            )
-
-            note_content = self._format_generated_note(daily_notes, date)
-
-            self.settings.directories.notes.mkdir(parents=True, exist_ok=True)
-
-            with open(notes_path, "w", encoding="utf-8") as f:
-                f.write(note_content)
-
-            self._auto_index_note(notes_path)
-
+        if record.transcript is None:
             return {
-                "success": True,
-                "filename": notes_filename,
-                "path": str(notes_path),
-                "date": date.isoformat(),
-                "meeting_count": len(meeting_sections),
-                "total_duration": total_duration,
+                "success": False,
+                "slug": record.slug,
+                "error": "No transcript available for this record",
             }
 
-        except Exception as e:
-            return {"success": False, "error": str(e), "date": date.isoformat()}
-
-    def _generate_meeting_notes(
-        self, transcription_data: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
-        transcript_text = transcription_data.get("full_text", "").strip()
-
-        if not transcript_text or len(transcript_text) < 50:
-            return None
-
-        try:
-            metadata = transcription_data.get("metadata", {})
-            provided_title = metadata.get("title")
-
-            structured_notes = self._generate_structured_notes(
-                transcript_text, provided_title
-            )
-
-            if not structured_notes:
-                return None
-
-            meeting_title = (
-                provided_title
-                if provided_title
-                else structured_notes.get("meeting_title", DEFAULT_MEETING_NAME)
-            )
-
-            meeting_notes = {
-                "meeting_title": meeting_title,
-                "executive_summary": structured_notes.get(
-                    "executive_summary", "No summary available"
-                ),
-                "agenda": structured_notes.get("agenda", []),
-                "action_items": structured_notes.get("action_items", []),
-                "next_steps": structured_notes.get("next_steps", []),
-                "decisions": structured_notes.get("decisions", []),
-                "open_questions": structured_notes.get("open_questions", []),
-                "discussion_highlights": structured_notes.get(
-                    "discussion_highlights", []
-                ),
-                "metadata": transcription_data.get("metadata", {}),
+        transcript_text = record.transcript.read_text(encoding="utf-8").strip()
+        if len(transcript_text) < 50:
+            return {
+                "success": False,
+                "slug": record.slug,
+                "error": "Insufficient transcript content (< 50 characters)",
             }
 
-            return meeting_notes
+        provided_title = record.title
+        structured_notes = self._generate_structured_notes(
+            transcript_text, provided_title
+        )
+        if not structured_notes:
+            return {
+                "success": False,
+                "slug": record.slug,
+                "error": "Failed to generate structured notes",
+            }
 
-        except Exception:
-            return None
+        meeting_title = (
+            provided_title
+            if provided_title
+            else structured_notes.get("meeting_title", DEFAULT_MEETING_NAME)
+        )
+        meeting_notes = {
+            "meeting_title": meeting_title,
+            "executive_summary": structured_notes.get(
+                "executive_summary", "No summary available"
+            ),
+            "agenda": structured_notes.get("agenda", []),
+            "action_items": structured_notes.get("action_items", []),
+            "next_steps": structured_notes.get("next_steps", []),
+            "decisions": structured_notes.get("decisions", []),
+            "open_questions": structured_notes.get("open_questions", []),
+            "discussion_highlights": structured_notes.get("discussion_highlights", []),
+            "metadata": {"date": record.created_at.isoformat()},
+        }
+
+        body = self.template_engine.render_meeting_section(meeting_notes)
+        content = self._format_generated_note(body, record.created_at)
+
+        notes_path.write_text(content, encoding="utf-8")
+        self._update_meta(record.dir)
+        self._auto_index_note(notes_path)
+
+        return {
+            "success": True,
+            "slug": record.slug,
+            "filename": notes_path.name,
+            "path": str(notes_path),
+        }
+
+    def _update_meta(self, note_dir: Path) -> None:
+        meta_path = note_dir / META_FILENAME
+        meta: dict[str, Any] = {}
+        if meta_path.exists():
+            try:
+                with meta_path.open("rb") as fh:
+                    meta = dict(tomllib.load(fh))
+            except Exception:
+                meta = {}
+
+        meta["whisper_model"] = self.settings.models.whisper
+        meta["llm_model"] = self.settings.models.llm
+        meta["indexed_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
+
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        with meta_path.open("wb") as fh:
+            tomli_w.dump(meta, fh)
 
     def _format_generated_note(self, body: str, note_date: datetime) -> str:
         metadata = {
             "chirp_source": "generated",
             "readonly": True,
-            "generated_at": datetime.now(timezone.utc)
-            .replace(microsecond=0)
-            .isoformat(),
+            "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
             "note_date": note_date.date().isoformat(),
         }
         cleaned_body = self._strip_front_matter(body)
@@ -382,11 +324,14 @@ class NoteGenerator:
         return str(value)
 
     def _generate_structured_notes(
-        self, transcript_text: str, provided_title: Optional[str] = None
-    ) -> Optional[dict[str, Any]]:
+        self, transcript_text: str, provided_title: str | None = None
+    ) -> dict[str, Any] | None:
         title_instruction = ""
         if provided_title:
-            title_instruction = f"\n\nIMPORTANT: Use this exact meeting title in the MEETING_TITLE tag: {provided_title}"
+            title_instruction = (
+                f"\n\nIMPORTANT: Use this exact meeting title in the "
+                f"MEETING_TITLE tag: {provided_title}"
+            )
 
         prompt = f"""{SYSTEM_PROMPT}
 
@@ -400,7 +345,6 @@ Return ONLY the XML document, no additional text before or after."""
         try:
             response = self._call_ollama(prompt)
             return self._parse_xml_response(response)
-
         except Exception:
             return None
 
@@ -417,7 +361,7 @@ Return ONLY the XML document, no additional text before or after."""
 
         import json
 
-        full_response = []
+        full_response: list[str] = []
         chunk_count = 0
 
         with requests.post(url, json=payload, timeout=300, stream=True) as response:
@@ -438,7 +382,6 @@ Return ONLY the XML document, no additional text before or after."""
                 if token:
                     full_response.append(token)
                     chunk_count += 1
-
                     if chunk_count % 20 == 0:
                         self.console.print(
                             f"[dim]  ↳ Generating... ({chunk_count} chunks)[/dim]",
@@ -451,10 +394,9 @@ Return ONLY the XML document, no additional text before or after."""
         if chunk_count > 0:
             self.console.print(f"[dim]  ↳ Generated {chunk_count} chunks[/dim]       ")
 
-        response_text = "".join(full_response).strip()
-        return response_text
+        return "".join(full_response).strip()
 
-    def _parse_xml_response(self, response: str) -> Optional[dict[str, Any]]:
+    def _parse_xml_response(self, response: str) -> dict[str, Any] | None:
         try:
             xml_start = response.find("<?xml")
             if xml_start == -1:
@@ -485,7 +427,6 @@ Return ONLY the XML document, no additional text before or after."""
                 parent = root.find(element_name)
                 if parent is None:
                     return []
-
                 if parent.text and parent.text.strip().lower() == "none":
                     return []
 
@@ -495,7 +436,6 @@ Return ONLY the XML document, no additional text before or after."""
                         task = item.get("task", "").strip()
                         owner = item.get("owner", "").strip()
                         deadline = item.get("deadline", "").strip()
-
                         parts = []
                         if task:
                             parts.append(task)
@@ -503,7 +443,6 @@ Return ONLY the XML document, no additional text before or after."""
                             parts.append(f"Owner: {owner}")
                         if deadline:
                             parts.append(f"Deadline: {deadline}")
-
                         if parts:
                             items.append(" — ".join(parts))
                     else:
@@ -570,8 +509,7 @@ Return ONLY the XML document, no additional text before or after."""
                 self.console.print(
                     f"[dim green]✓ Auto-indexed {notes_path.name}[/dim green]"
                 )
-
-        except Exception as e:
+        except Exception as exc:
             self.console.print(
-                f"[dim yellow]⚠️ Auto-indexing failed for {notes_path.name}: {e}[/dim yellow]"
+                f"[dim yellow]Auto-indexing failed for {notes_path.name}: {exc}[/dim yellow]"
             )

@@ -3,10 +3,11 @@ import threading
 import time
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from rich.console import Console
-from rich.panel import Panel
+from rich.markdown import Markdown
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from config.settings import ChirpSettings
@@ -16,8 +17,9 @@ console = Console()
 
 
 class InteractiveChatSession:
-    def __init__(self, config: ChirpSettings):
+    def __init__(self, config: ChirpSettings, markdown: bool = True):
         self.config = config
+        self.markdown = markdown
         self.last_interrupt_time = None
         self.interrupt_timeout = 2.0
 
@@ -84,22 +86,31 @@ class InteractiveChatSession:
             return ""
         return "Press Ctrl+C again to exit"
 
+    def _count_notes(self) -> int:
+        try:
+            notes_root = self.config.directories.notes_root
+            if not notes_root.exists():
+                return 0
+            return sum(1 for _ in notes_root.glob("*/notes.md"))
+        except OSError:
+            return 0
+
     def start(self):
-        console.print(
-            Panel(
-                "[bold blue]Notes Chat[/bold blue]\n"
-                "Ask questions about your meeting notes.\n\n"
-                "[dim]Press Ctrl+C twice to exit[/dim]",
-                border_style="blue",
-                padding=(1, 2),
-                expand=False,
-            )
+        note_count = self._count_notes()
+        model = getattr(self.config.models, "llm", "local")
+        header = (
+            f"[cyan bold]Chirp[/cyan bold] [dim]· chat over {note_count} notes · "
+            f"{model} (local)[/dim]"
         )
+        console.print()
+        console.print(header)
+        console.print("[dim]type your question, or /help · ctrl+d to exit[/dim]")
+        console.print()
 
         while True:
             try:
                 question = self._session.prompt(
-                    "> ",
+                    ANSI("\x1b[1;32myou ›\x1b[0m "),
                     key_bindings=self._kb,
                     bottom_toolbar=self._toolbar,
                 )
@@ -107,15 +118,19 @@ class InteractiveChatSession:
                 if question == self._QUIT:
                     sys.stdout.write("\r\x1b[2K")
                     sys.stdout.flush()
-                    console.print("[dim]Goodbye![/dim]")
+                    console.print("[dim]bye![/dim]")
                     return
 
                 self._hide_hint()
 
-                if question.strip():
-                    self.handle_question(question)
-                else:
-                    console.print("[dim]Please enter a question[/dim]")
+                stripped = question.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("/"):
+                    if not self._handle_slash(stripped):
+                        return
+                    continue
+                self.handle_question(stripped)
 
             except EOFError:
                 try:
@@ -128,12 +143,54 @@ class InteractiveChatSession:
             except Exception as e:
                 console.print(f"[red]Error: {e}[/red]")
 
+    def _handle_slash(self, command: str) -> bool:
+        """Return False when the loop should exit."""
+        cmd = command.lstrip("/").strip().lower()
+        if cmd in {"exit", "quit", "q"}:
+            console.print("[dim]bye![/dim]")
+            return False
+        if cmd == "help":
+            console.print()
+            console.print(" [bold]slash commands[/bold]")
+            console.print(" [dim]/help[/dim]    show this list")
+            console.print(" [dim]/clear[/dim]   clear the scrollback")
+            console.print(" [dim]/exit[/dim]    quit (or ctrl+d)")
+            console.print()
+            return True
+        if cmd == "clear":
+            console.clear()
+            return True
+        console.print(f"[yellow]unknown command: /{cmd}[/yellow]")
+        return True
+
     def handle_question(self, question: str):
+        from rich.live import Live
+        from rich.text import Text
+
         progress = None
         current_thinking_msg = ""
+        live: Live | None = None
+        answer_parts: list[str] = []
+
+        def _start_live() -> Live:
+            console.print("[magenta bold]chirp ›[/magenta bold]")
+            initial = Markdown("") if self.markdown else Text("")
+            new_live = Live(
+                initial,
+                console=console,
+                refresh_per_second=10,
+                vertical_overflow="visible",
+            )
+            new_live.start()
+            return new_live
+
+        def _update_live(target: Live, text: str) -> None:
+            if self.markdown:
+                target.update(Markdown(text))
+            else:
+                target.update(Text(text))
 
         try:
-            answer_parts = []
             sources = None
             from_cache = False
 
@@ -163,57 +220,58 @@ class InteractiveChatSession:
                         progress = None
                     token = stream_event.get("content", "")
                     answer_parts.append(token)
-                    if len(answer_parts) == 1:
-                        console.print(
-                            "[magenta]>[/magenta] chirp 🐣: ", end="", highlight=False
-                        )
-                    console.print(token, end="", highlight=False)
+                    if live is None:
+                        live = _start_live()
+                    _update_live(live, "".join(answer_parts))
 
                 elif event_type == "complete":
                     if progress:
                         progress.stop()
                         progress = None
 
-                    answer = stream_event.get("answer", "")
+                    answer = stream_event.get("answer", "") or "".join(answer_parts)
                     sources = stream_event.get("sources")
                     from_cache = stream_event.get("from_cache", False)
 
-                    if not answer_parts and answer:
-                        console.print(
-                            "[magenta]>[/magenta] chirp 🐣: ", end="", highlight=False
-                        )
-                        console.print(answer)
+                    if not answer:
+                        break
 
+                    if live is None:
+                        live = _start_live()
+                    _update_live(live, answer)
                     break
 
                 elif event_type == "error":
                     if progress:
                         progress.stop()
                         progress = None
+                    if live is not None:
+                        live.stop()
+                        live = None
                     error_msg = stream_event.get("message", "Unknown error")
-                    console.print(f"\n❌ {error_msg}")
+                    console.print(f"\n[red]{error_msg}[/red]")
                     return
 
             if progress:
                 progress.stop()
-
-            if answer_parts:
-                console.print()
+            if live is not None:
+                live.stop()
+                live = None
 
             if sources:
-                console.print("")
-                sources_text = "📚 Sources:\n" + "\n".join(
-                    f"  • {source}" for source in sources
-                )
-                console.print(f"[dim]{sources_text}[/dim]")
+                console.print("[dim]sources: " + ", ".join(sources) + "[/dim]")
 
             if from_cache:
-                console.print("\n[dim]cached[/dim]")
+                console.print("[dim]cached[/dim]")
 
         except Exception as e:
             if progress:
                 progress.stop()
-            console.print(f"\n❌ Query failed: {e}")
+            if live is not None:
+                live.stop()
+            console.print(f"\n[red]Query failed: {e}[/red]")
         finally:
             if progress:
                 progress.stop()
+            if live is not None:
+                live.stop()

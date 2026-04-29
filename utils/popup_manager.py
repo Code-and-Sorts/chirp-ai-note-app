@@ -1,6 +1,5 @@
 import platform
 import subprocess
-from typing import Optional
 
 
 class PopupManager:
@@ -63,7 +62,7 @@ class PopupManager:
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
 
-    def ask_yes_no(self, title: str, question: str) -> Optional[bool]:
+    def ask_yes_no(self, title: str, question: str) -> bool | None:
         if not self.is_macos:
             return None
 

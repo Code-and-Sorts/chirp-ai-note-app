@@ -1,129 +1,128 @@
 from pathlib import Path
-from unittest.mock import patch
+
+import pytest
 
 from config.settings import ChirpSettings
 
 
 def _make_settings(tmp_path: Path) -> ChirpSettings:
     settings = ChirpSettings()
-    settings.directories.notes = tmp_path
+    settings.directories.notes_root = tmp_path
     return settings
 
 
+def _write_note(
+    tmp_path: Path,
+    slug: str,
+    title: str,
+    body: str,
+    tags: list[str] | None = None,
+) -> Path:
+    note_dir = tmp_path / slug
+    note_dir.mkdir()
+    notes_path = note_dir / "notes.md"
+    notes_path.write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
+
+    import tomli_w
+
+    with (note_dir / "meta.toml").open("wb") as fh:
+        tomli_w.dump(
+            {
+                "title": title,
+                "date": "2026-04-20T09:00:00",
+                "tags": tags or [],
+            },
+            fh,
+        )
+    return notes_path
+
+
 class TestListNotes:
-    def test_list_notes_empty_directory(self, tmp_path, monkeypatch, capsys):
-        from chirp.cli import list_notes
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
 
         settings = _make_settings(tmp_path)
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
 
-        list_notes()
+    def test_list_notes_empty_directory(self, tmp_path, monkeypatch):
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "No notes found" in result.stdout
 
-        output = capsys.readouterr().out
-        assert "No notes found" in output
+    def test_list_notes_shows_title_from_header(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "team-standup-2026-01-15", "Team Standup", "Content")
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "Team Standup" in result.stdout
 
-    def test_list_notes_shows_title_from_header(self, tmp_path, monkeypatch, capsys):
-        from chirp.cli import list_notes
+    def test_list_notes_shows_total_count(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "first-2026-01-15", "First", "Body")
+        _write_note(tmp_path, "second-2026-01-16", "Second", "Body")
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "2 total" in result.stdout
 
-        settings = _make_settings(tmp_path)
-        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
-        note = tmp_path / "meetings_2025_01_15.md"
-        note.write_text("# Team Standup\n\nSome meeting content here.\n")
-
-        list_notes()
-
-        output = capsys.readouterr().out
-        assert "Team Standup" in output
-        assert "meetings_2025_01_15.md" in output
-
-    def test_list_notes_shows_stem_when_no_header(self, tmp_path, monkeypatch, capsys):
-        from chirp.cli import list_notes
-
-        settings = _make_settings(tmp_path)
-        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
-        note = tmp_path / "my_note.md"
-        note.write_text("No heading here, just content.\n")
-
-        list_notes()
-
-        output = capsys.readouterr().out
-        assert "my_note" in output
-
-    def test_list_notes_shows_total_count(self, tmp_path, monkeypatch, capsys):
-        from chirp.cli import list_notes
-
-        settings = _make_settings(tmp_path)
-        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-
-        (tmp_path / "note1.md").write_text("# First\n")
-        (tmp_path / "note2.md").write_text("# Second\n")
-
-        list_notes()
-
-        output = capsys.readouterr().out
-        assert "2 note(s)" in output
+    def test_list_notes_shows_subcommand_hints(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "team-standup-2026-01-15", "Team Standup", "Content")
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "chirp notes view <id>" in result.stdout
+        assert "chirp notes edit <id>" in result.stdout
+        assert "chirp notes delete <id>" in result.stdout
+        assert "chirp notes --tag meeting" in result.stdout
 
 
-class TestVersion:
-    def test_version_installed(self, capsys):
-        from chirp.cli import version
+class TestTranscribeCli:
+    def _seed_note_with_audio(self, tmp_path: Path) -> None:
+        note_dir = tmp_path / "sample-2026-04-20"
+        note_dir.mkdir()
+        (note_dir / "audio.wav").write_bytes(b"\x00" * 100)
 
-        with patch("importlib.metadata.version", return_value="1.2.3"):
-            version()
+        import tomli_w
 
-        output = capsys.readouterr().out
-        assert "1.2.3" in output
+        with (note_dir / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {
+                    "title": "Sample",
+                    "date": "2026-04-20T09:00:00",
+                    "tags": [],
+                },
+                fh,
+            )
 
-    def test_version_not_installed(self, capsys):
-        from importlib.metadata import PackageNotFoundError
+    def _fake_processor(self, captured: dict):
+        class FakeBatchProcessor:
+            def __init__(self, s, model_override=None):
+                captured["settings"] = s
+                captured["model_override"] = model_override
 
-        from chirp.cli import version
+            def run_queue(self, n=None, force=False, console=None):
+                captured["n"] = n
+                captured["force"] = force
+                return {"ok": 1, "failed": 0, "total": 1}
 
-        with patch(
-            "importlib.metadata.version",
-            side_effect=PackageNotFoundError("chirp-notes-ai"),
-        ):
-            version()
+        return FakeBatchProcessor
 
-        output = capsys.readouterr().out
-        assert "dev" in output
-
-
-class TestTranscribeModelOverride:
     def test_model_override_passed_to_batch_processor(self, tmp_path, monkeypatch):
         import sys
         from unittest.mock import MagicMock
 
         settings = _make_settings(tmp_path)
-
-        audio_dir = tmp_path / "audio"
-        audio_dir.mkdir()
-        (audio_dir / "test.wav").write_bytes(b"\x00" * 100)
-        settings.directories.raw_audio = audio_dir
-
-        captured_args = {}
-
-        class FakeBatchProcessor:
-            def __init__(self, s, model_override=None):
-                captured_args["settings"] = s
-                captured_args["model_override"] = model_override
-
-            def process_files(
-                self,
-                files,
-                force=False,
-                progress_callback=None,
-                on_segment=None,
-            ):
-                return [{"success": True}]
+        self._seed_note_with_audio(tmp_path)
+        captured: dict = {}
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
         monkeypatch.setitem(sys.modules, "faster_whisper", MagicMock())
         monkeypatch.setattr(
             "transcriber.batch_processor.BatchProcessor",
-            FakeBatchProcessor,
+            self._fake_processor(captured),
         )
 
         from typer.testing import CliRunner
@@ -134,39 +133,23 @@ class TestTranscribeModelOverride:
         result = runner.invoke(chirp.cli.app, ["transcribe", "--model", "small"])
 
         assert result.exit_code == 0
-        assert captured_args.get("model_override") == "small"
+        assert captured["model_override"] == "small"
+        assert captured["n"] is None
+        assert captured["force"] is False
 
-    def test_transcribe_without_model_override(self, tmp_path, monkeypatch):
+    def test_n_and_force_passed_through(self, tmp_path, monkeypatch):
         import sys
         from unittest.mock import MagicMock
 
         settings = _make_settings(tmp_path)
-
-        audio_dir = tmp_path / "audio"
-        audio_dir.mkdir()
-        (audio_dir / "test.wav").write_bytes(b"\x00" * 100)
-        settings.directories.raw_audio = audio_dir
-
-        captured_args = {}
-
-        class FakeBatchProcessor:
-            def __init__(self, s, model_override=None):
-                captured_args["model_override"] = model_override
-
-            def process_files(
-                self,
-                files,
-                force=False,
-                progress_callback=None,
-                on_segment=None,
-            ):
-                return [{"success": True}]
+        self._seed_note_with_audio(tmp_path)
+        captured: dict = {}
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
         monkeypatch.setitem(sys.modules, "faster_whisper", MagicMock())
         monkeypatch.setattr(
             "transcriber.batch_processor.BatchProcessor",
-            FakeBatchProcessor,
+            self._fake_processor(captured),
         )
 
         from typer.testing import CliRunner
@@ -174,7 +157,330 @@ class TestTranscribeModelOverride:
         import chirp.cli
 
         runner = CliRunner()
-        result = runner.invoke(chirp.cli.app, ["transcribe"])
+        result = runner.invoke(chirp.cli.app, ["transcribe", "2", "--force"])
 
         assert result.exit_code == 0
-        assert captured_args.get("model_override") is None
+        assert captured["n"] == 2
+        assert captured["force"] is True
+
+    def test_n_must_be_positive(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "0"])
+        assert result.exit_code == 2
+        assert "must be a positive integer" in result.stdout
+
+    def test_no_stream_flag_removed(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--no-stream"])
+        assert result.exit_code != 0
+        assert "no such option" in result.stdout.lower() or result.exit_code == 2
+
+
+class TestTranscribeRegen:
+    def _seed_record_with_transcript(self, tmp_path: Path, slug: str) -> None:
+        note_dir = tmp_path / slug
+        note_dir.mkdir()
+        (note_dir / "audio.wav").write_bytes(b"\x00" * 100)
+        (note_dir / "transcript.txt").write_text("hello world", encoding="utf-8")
+
+        import tomli_w
+
+        with (note_dir / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {
+                    "title": slug,
+                    "date": "2026-04-20T09:00:00",
+                    "tags": [],
+                },
+                fh,
+            )
+
+    def test_regen_calls_note_generator_with_force_true(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        self._seed_record_with_transcript(tmp_path, "first-2026-04-20")
+        self._seed_record_with_transcript(tmp_path, "second-2026-04-20")
+
+        captured = {}
+
+        class FakeNoteGenerator:
+            def __init__(self, s):
+                captured["settings"] = s
+
+            def generate_for_records(self, records, force=False):
+                captured["records"] = records
+                captured["force"] = force
+                return {
+                    "success": True,
+                    "results": [{"success": True, "slug": r.slug} for r in records],
+                }
+
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        monkeypatch.setattr("notes.note_generator.NoteGenerator", FakeNoteGenerator)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen"])
+
+        assert result.exit_code == 0
+        assert captured.get("force") is True
+        assert len(captured.get("records", [])) == 2
+        assert "Regenerated notes for 2/2" in result.stdout
+
+    def test_regen_with_n_rejected(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "1"])
+
+        assert result.exit_code == 2
+        assert "do not pass N" in result.stdout
+
+    def test_regen_with_force_rejected(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "--force"])
+
+        assert result.exit_code == 2
+        assert "mutually exclusive" in result.stdout
+
+    def test_regen_when_no_transcripts(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["transcribe", "--regen"])
+
+        assert result.exit_code == 0
+        assert "No transcripts found" in result.stdout
+
+
+class TestNotesResolveAndTagFilter:
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
+
+    def test_tag_filter_and_semantics(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x", tags=["meeting"])
+        _write_note(tmp_path, "b-2026-04-20", "B", "x", tags=["meeting", "pricing"])
+        _write_note(tmp_path, "c-2026-04-20", "C", "x", tags=["pricing"])
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "--tag", "meeting"])
+        assert result.exit_code == 0
+        assert "2 of 3" in result.stdout
+        assert "tag: meeting" in result.stdout
+
+        result = runner.invoke(app, ["notes", "--tag", "meeting,pricing"])
+        assert result.exit_code == 0
+        assert "1 of 3" in result.stdout
+
+        result = runner.invoke(app, ["notes", "--tag", "nope"])
+        assert result.exit_code == 0
+        assert "No notes matching tag 'nope'" in result.stdout
+
+    def test_tag_with_subcommand_rejected(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "--tag", "meeting", "view", "a"])
+        assert result.exit_code == 2
+        assert "--tag is only valid when listing notes" in result.stdout
+
+    def test_unknown_id(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "view", "missing"])
+        assert result.exit_code == 1
+        assert "no note matching 'missing'" in result.stdout
+
+    def test_ambiguous_prefix(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "standup-monday-2026-04-20", "M", "x")
+        _write_note(tmp_path, "standup-tuesday-2026-04-21", "T", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "view", "standup"])
+        assert result.exit_code == 1
+        assert "matches 2 notes" in result.stdout
+
+    def test_resolve_full_id(self, tmp_path, monkeypatch):
+        from chirp.cli import _resolve_note
+        from utils.file_utils import list_notes
+
+        _write_note(tmp_path, "alpha-2026-04-20", "Alpha", "x")
+        _write_note(tmp_path, "beta-2026-04-21", "Beta", "x")
+        records = [r for r in list_notes(tmp_path) if r.notes is not None]
+
+        record = _resolve_note(records, "alpha-2026-04-20")
+        assert record.slug == "alpha-2026-04-20"
+
+    def test_resolve_unique_prefix(self, tmp_path, monkeypatch):
+        from chirp.cli import _resolve_note
+        from utils.file_utils import list_notes
+
+        _write_note(tmp_path, "alpha-2026-04-20", "Alpha", "x")
+        _write_note(tmp_path, "beta-2026-04-21", "Beta", "x")
+        records = [r for r in list_notes(tmp_path) if r.notes is not None]
+
+        record = _resolve_note(records, "alpha")
+        assert record.slug == "alpha-2026-04-20"
+
+    def test_resolve_integer_id_uses_newest_first(self, tmp_path, monkeypatch):
+        from chirp.cli import NoteNotFound, _resolve_note
+        from utils.file_utils import list_notes
+
+        # `list_notes` sorts oldest-first; the newest-first index 1 should
+        # be the most recent note.
+        _write_note(tmp_path, "older", "Older", "x")
+        # Force a later created_at via meta.toml date so ordering is
+        # deterministic regardless of mtime jitter.
+        import tomli_w
+
+        with (tmp_path / "older" / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {
+                    "title": "Older",
+                    "date": "2026-04-20T09:00:00",
+                    "tags": [],
+                },
+                fh,
+            )
+        _write_note(tmp_path, "newer", "Newer", "x")
+        with (tmp_path / "newer" / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {
+                    "title": "Newer",
+                    "date": "2026-04-21T09:00:00",
+                    "tags": [],
+                },
+                fh,
+            )
+        records = [r for r in list_notes(tmp_path) if r.notes is not None]
+
+        assert _resolve_note(records, "1").slug == "newer"
+        assert _resolve_note(records, "2").slug == "older"
+
+        with pytest.raises(NoteNotFound):
+            _resolve_note(records, "99")
+
+
+class TestNotesDelete:
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        settings = _make_settings(tmp_path)
+        settings.notes_chat.auto_index = False
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
+
+    def test_delete_with_yes_flag(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "doomed-2026-04-20", "Doomed", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        captured = {}
+        monkeypatch.setattr(
+            "chirp.cli._drop_from_index",
+            lambda settings, path: captured.setdefault("dropped", str(path)),
+        )
+
+        result = runner.invoke(app, ["notes", "delete", "doomed", "--yes"])
+        assert result.exit_code == 0
+        assert "Deleted" in result.stdout
+        assert not (tmp_path / "doomed-2026-04-20").exists()
+        assert "doomed-2026-04-20/notes.md" in captured.get("dropped", "")
+
+    def test_delete_aborts_on_no(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "safe-2026-04-20", "Safe", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+        monkeypatch.setattr("chirp.cli._drop_from_index", lambda *args: None)
+
+        result = runner.invoke(app, ["notes", "delete", "safe"], input="n\n")
+        assert result.exit_code == 0
+        assert "Deletion cancelled" in result.stdout
+        assert (tmp_path / "safe-2026-04-20").exists()
+
+
+class TestNotesReviewPatches:
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        settings = _make_settings(tmp_path)
+        settings.notes_chat.auto_index = False
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
+
+    def test_empty_tags_render_as_em_dash(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "untagged-2026-04-20", "Untagged", "x", tags=[])
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes"])
+        assert result.exit_code == 0
+        assert "—" in result.stdout
+
+    def test_empty_note_id_reports_not_found(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "alpha-2026-04-20", "Alpha", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "view", ""])
+        assert result.exit_code == 1
+        assert "no note matching" in result.stdout
+        assert "matches" not in result.stdout
+
+    def test_delete_handles_rmtree_error(self, tmp_path, monkeypatch):
+        import shutil
+
+        _write_note(tmp_path, "doomed-2026-04-20", "Doomed", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        def boom(path, ignore_errors=False):
+            raise PermissionError("simulated permission denied")
+
+        monkeypatch.setattr(shutil, "rmtree", boom)
+
+        result = runner.invoke(app, ["notes", "delete", "doomed", "--yes"])
+        assert result.exit_code == 1
+        # Rich wraps long lines so flatten whitespace before asserting.
+        flat = " ".join(result.stdout.split())
+        assert "failed to delete" in flat
+        assert "simulated permission denied" in flat

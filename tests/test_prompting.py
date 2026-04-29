@@ -58,10 +58,10 @@ class TestPrompting:
         assert len(prompt) > 10000
 
     @patch("requests.post")
-    def test_not_found_ambiguous_responses(self, mock_post):
-        """Test handling of 'not found' and 'ambiguous' responses."""
+    def test_low_confidence_answer_is_returned(self, mock_post):
+        """The LLM is allowed to say it doesn't know; surface the reply rather than throwing it away."""
         config = ChirpSettings()
-        question = "What happened?"
+        question = "hi"
         context = "Some meeting notes"
 
         mock_response = Mock()
@@ -73,8 +73,7 @@ class TestPrompting:
 
         result = generate_answer(config, question, context)
 
-        assert not result["success"]
-        assert "No relevant information found" in result["error"]
+        assert result["success"] is True
         assert "I don't have enough information" in result["answer"]
 
     @patch("requests.post")

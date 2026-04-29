@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def retrieve_context(
-    config: ChirpSettings, question: str, when_filter: Optional[str] = None
+    config: ChirpSettings, question: str, when_filter: str | None = None
 ) -> dict[str, Any]:
     """Retrieve context for answering a question using hybrid search."""
     try:
@@ -60,7 +60,7 @@ def retrieve_context(
         merged_chunks = _merge_and_dedupe(chroma_results, bm25_results)
 
         context, sources, retrieved_ids = _build_context(
-            merged_chunks, config.notes_chat.ctx_char_budget
+            merged_chunks, config.notes_chat.ctx_char_budget, config
         )
 
         if not context.strip():
@@ -84,7 +84,7 @@ def retrieve_context(
 
 
 def _search_chroma(
-    index_manager: IndexManager, query: str, k: int, time_range: Optional[Any] = None
+    index_manager: IndexManager, query: str, k: int, time_range: Any | None = None
 ) -> list[tuple[str, float, dict[str, Any]]]:
     """Search Chroma vector database."""
     try:
@@ -188,14 +188,15 @@ def _merge_and_dedupe(
 
 
 def _build_context(
-    chunks: list[tuple[str, float, dict[str, Any]]], char_budget: int
+    chunks: list[tuple[str, float, dict[str, Any]]],
+    char_budget: int,
+    config: ChirpSettings | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """Build context string with round-robin truncation."""
     if not chunks:
         return "", [], []
 
     context_parts = []
-    sources = []
     retrieved_ids = []
 
     chunks_to_include = []
@@ -222,26 +223,116 @@ def _build_context(
                 chunks_to_include.append((chunk_id, full_content, data))
             break
 
-    seen_sources = set()
-    for chunk_id, content, data in chunks_to_include:
+    note_index = _build_note_index(config) if config is not None else {}
+
+    sources = format_sources(chunks_to_include, note_index)
+    for chunk_id, content, _data in chunks_to_include:
         context_parts.append(content)
         retrieved_ids.append(chunk_id)
 
-        if "metadata" in data:
-            path = data["metadata"].get("path", "Unknown")
-            title = data["metadata"].get("title", "Unknown")
-            source_text = f"{title} ({Path(path).name})"
-            if source_text not in seen_sources:
-                seen_sources.add(source_text)
-                sources.append(source_text)
-        else:
-            source_text = f"Document {chunk_id}"
-            if source_text not in seen_sources:
-                seen_sources.add(source_text)
-                sources.append(source_text)
-
     context = "\n".join(context_parts)
     return context, sources, retrieved_ids
+
+
+def _build_note_index(config: ChirpSettings) -> dict[str, dict[str, Any]]:
+    """Map slug → ``{"index": N, "title": ...}`` matching ``chirp notes``.
+
+    The index is 1-based newest-first; the title falls back to the slug
+    when ``meta.toml`` did not record one.
+    """
+    from utils.file_utils import list_notes
+
+    notes_root = config.directories.notes_root
+    records = [r for r in list_notes(notes_root) if r.notes is not None]
+    return {
+        record.slug: {"index": idx, "title": record.title or record.slug}
+        for idx, record in enumerate(reversed(records), start=1)
+    }
+
+
+def format_sources(
+    chunks_to_include: list[tuple[str, str, dict[str, Any]]],
+    note_index: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Format `sources:` line entries as ``note #N (Title · mm:ss)``.
+
+    - `#N` matches the index `chirp notes` prints (newest-first, 1-based).
+    - The note title (from ``meta.toml`` or, failing that, the slug)
+      always sits inside the parentheses.
+    - ``mm:ss`` is appended after a `·` separator only when the chunk
+      metadata carries a timestamp (``start_ms``, ``start_seconds``, or
+      ``timestamp_ms``).
+    - Chunks from the same note collapse into one entry, keeping the
+      earliest timestamp.
+    """
+    by_slug: dict[str, dict[str, Any]] = {}
+    fallback_order: list[str] = []
+    for chunk_id, _content, data in chunks_to_include:
+        slug = _slug_from_chunk(data) or chunk_id
+        timestamp = _timestamp_seconds_from_chunk(data)
+        entry = by_slug.get(slug)
+        if entry is None:
+            entry = {"slug": slug, "timestamp": timestamp}
+            by_slug[slug] = entry
+            fallback_order.append(slug)
+        elif timestamp is not None:
+            current = entry.get("timestamp")
+            if current is None or timestamp < current:
+                entry["timestamp"] = timestamp
+
+    sources: list[str] = []
+    for slug in fallback_order:
+        entry = by_slug[slug]
+        info = note_index.get(slug)
+        if info is None:
+            sources.append(slug)
+            continue
+
+        title = info.get("title") or slug
+        index = info.get("index")
+        timestamp = entry.get("timestamp")
+        suffix = f" · {_format_mm_ss(timestamp)}" if timestamp is not None else ""
+        if index is None:
+            sources.append(f"{title}{suffix}")
+        else:
+            sources.append(f"note #{index} ({title}{suffix})")
+    return sources
+
+
+def _slug_from_chunk(data: dict[str, Any]) -> str | None:
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    if not metadata:
+        return None
+    path = metadata.get("path")
+    if not path:
+        return None
+    return Path(path).parent.name or None
+
+
+def _timestamp_seconds_from_chunk(data: dict[str, Any]) -> float | None:
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    if not metadata:
+        return None
+    if (value := metadata.get("start_seconds")) is not None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    for key in ("start_ms", "timestamp_ms"):
+        value = metadata.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value) / 1000.0
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _format_mm_ss(seconds: float) -> str:
+    total = int(max(seconds, 0))
+    minutes, secs = divmod(total, 60)
+    return f"{minutes:02d}:{secs:02d}"
 
 
 def _create_chunk_header(data: dict[str, Any]) -> str:
@@ -264,31 +355,29 @@ def _create_chunk_header(data: dict[str, Any]) -> str:
         return "Unknown source"
 
 
-def _generate_suggestion(config: ChirpSettings, time_range: Optional[Any]) -> str:
+def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
     """Generate a helpful suggestion when no results are found."""
     try:
         index_dir = config.notes_chat.index_dir
         manifest_file = index_dir / "manifest.json"
 
         if not manifest_file.exists():
-            return "Index not found. Run 'chirp notes index' to build the search index first."
+            return "Index not found. Run 'chirp index' to build the search index first."
 
         try:
             with open(manifest_file) as f:
                 manifest = json.load(f)
                 if not manifest:
-                    return "No files in search index. Run 'chirp notes index' to build the index."
+                    return "No files in search index. Run 'chirp index' to build the index."
         except:
-            return (
-                "Index appears corrupted. Run 'chirp notes index --force' to rebuild."
-            )
+            return "Index appears corrupted. Run 'chirp index --force' to rebuild."
 
-        if not config.directories.notes.exists():
-            return "No notes directory found. Try running 'chirp process' to create some notes first."
+        if not config.directories.notes_root.exists():
+            return "No notes directory found. Try running 'chirp transcribe' to create some notes first."
 
-        note_files = list(config.directories.notes.glob("*.md"))
+        note_files = list(config.directories.notes_root.glob("*/notes.md"))
         if not note_files:
-            return "No notes found. Try running 'chirp process' to create some notes first."
+            return "No notes found. Try running 'chirp transcribe' to create some notes first."
 
         latest_note = max(note_files, key=lambda f: f.stat().st_mtime)
         latest_date = datetime.fromtimestamp(latest_note.stat().st_mtime)
@@ -299,7 +388,7 @@ def _generate_suggestion(config: ChirpSettings, time_range: Optional[Any]) -> st
         return "Try a broader search or different keywords"
 
 
-def _get_query_embedding(config: ChirpSettings, query: str) -> Optional[list[float]]:
+def _get_query_embedding(config: ChirpSettings, query: str) -> list[float] | None:
     """Get embedding for query text using the same model as indexing."""
     try:
         response = requests.post(
@@ -312,7 +401,7 @@ def _get_query_embedding(config: ChirpSettings, query: str) -> Optional[list[flo
         result = response.json()
         embedding = result.get("embedding")
         if isinstance(embedding, list) and all(
-            isinstance(x, (int, float)) for x in embedding
+            isinstance(x, int | float) for x in embedding
         ):
             return embedding
         return None
