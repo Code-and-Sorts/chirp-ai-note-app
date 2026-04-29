@@ -35,3 +35,6 @@ jobs:
       python-version: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.python-version || '3.11' }}
       is-test-pypi: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.is-test-pypi == 'true' }}
     secrets: inherit
+    permissions:
+      pull-requests: write
+      id-token: write
