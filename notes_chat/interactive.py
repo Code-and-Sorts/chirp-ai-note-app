@@ -164,14 +164,35 @@ class InteractiveChatSession:
         return True
 
     def handle_question(self, question: str):
+        from rich.live import Live
+        from rich.text import Text
+
         progress = None
         current_thinking_msg = ""
+        live: Live | None = None
+        answer_parts: list[str] = []
+
+        def _start_live() -> Live:
+            console.print("[magenta bold]chirp ›[/magenta bold]")
+            initial = Markdown("") if self.markdown else Text("")
+            new_live = Live(
+                initial,
+                console=console,
+                refresh_per_second=10,
+                vertical_overflow="visible",
+            )
+            new_live.start()
+            return new_live
+
+        def _update_live(target: Live, text: str) -> None:
+            if self.markdown:
+                target.update(Markdown(text))
+            else:
+                target.update(Text(text))
 
         try:
-            answer_parts: list[str] = []
             sources = None
             from_cache = False
-            header_printed = False
 
             for stream_event in enhanced_search_and_answer_stream(
                 self.config, question
@@ -199,15 +220,9 @@ class InteractiveChatSession:
                         progress = None
                     token = stream_event.get("content", "")
                     answer_parts.append(token)
-                    if not header_printed:
-                        console.print(
-                            "[magenta bold]chirp ›[/magenta bold]",
-                            end=" ",
-                            highlight=False,
-                        )
-                        header_printed = True
-                    if not self.markdown:
-                        console.print(token, end="", highlight=False)
+                    if live is None:
+                        live = _start_live()
+                    _update_live(live, "".join(answer_parts))
 
                 elif event_type == "complete":
                     if progress:
@@ -221,35 +236,30 @@ class InteractiveChatSession:
                     if not answer:
                         break
 
-                    if not header_printed:
-                        console.print("[magenta bold]chirp ›[/magenta bold]", end=" ")
-                        header_printed = True
-
-                    if self.markdown:
-                        if answer_parts:
-                            console.print()
-                        console.print(Markdown(answer))
-                    elif not answer_parts:
-                        console.print(answer, highlight=False)
-
+                    if live is None:
+                        live = _start_live()
+                    _update_live(live, answer)
                     break
 
                 elif event_type == "error":
                     if progress:
                         progress.stop()
                         progress = None
+                    if live is not None:
+                        live.stop()
+                        live = None
                     error_msg = stream_event.get("message", "Unknown error")
                     console.print(f"\n❌ {error_msg}")
                     return
 
             if progress:
                 progress.stop()
-
-            if answer_parts and not self.markdown:
-                console.print()
+            if live is not None:
+                live.stop()
+                live = None
 
             if sources:
-                console.print("         [dim]sources: " + ", ".join(sources) + "[/dim]")
+                console.print("[dim]sources: " + ", ".join(sources) + "[/dim]")
 
             if from_cache:
                 console.print("[dim]cached[/dim]")
@@ -257,7 +267,11 @@ class InteractiveChatSession:
         except Exception as e:
             if progress:
                 progress.stop()
+            if live is not None:
+                live.stop()
             console.print(f"\n❌ Query failed: {e}")
         finally:
             if progress:
                 progress.stop()
+            if live is not None:
+                live.stop()

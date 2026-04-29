@@ -234,24 +234,34 @@ def _build_context(
     return context, sources, retrieved_ids
 
 
-def _build_note_index(config: ChirpSettings) -> dict[str, int]:
-    """Map slug → 1-based newest-first index, matching ``chirp notes``."""
+def _build_note_index(config: ChirpSettings) -> dict[str, dict[str, Any]]:
+    """Map slug → ``{"index": N, "title": ...}`` matching ``chirp notes``.
+
+    The index is 1-based newest-first; the title falls back to the slug
+    when ``meta.toml`` did not record one.
+    """
     from utils.file_utils import list_notes
 
     notes_root = config.directories.notes_root
     records = [r for r in list_notes(notes_root) if r.notes is not None]
-    return {record.slug: idx for idx, record in enumerate(reversed(records), start=1)}
+    return {
+        record.slug: {"index": idx, "title": record.title or record.slug}
+        for idx, record in enumerate(reversed(records), start=1)
+    }
 
 
 def format_sources(
     chunks_to_include: list[tuple[str, str, dict[str, Any]]],
-    note_index: dict[str, int],
+    note_index: dict[str, dict[str, Any]],
 ) -> list[str]:
-    """Format `sources:` line entries as ``note #N (mm:ss)``.
+    """Format `sources:` line entries as ``note #N (Title · mm:ss)``.
 
     - `#N` matches the index `chirp notes` prints (newest-first, 1-based).
-    - `(mm:ss)` is appended only when the chunk metadata carries a
-      timestamp (``start_ms``, ``start_seconds``, or ``timestamp_ms``).
+    - The note title (from ``meta.toml`` or, failing that, the slug)
+      always sits inside the parentheses.
+    - ``mm:ss`` is appended after a `·` separator only when the chunk
+      metadata carries a timestamp (``start_ms``, ``start_seconds``, or
+      ``timestamp_ms``).
     - Chunks from the same note collapse into one entry, keeping the
       earliest timestamp.
     """
@@ -273,15 +283,19 @@ def format_sources(
     sources: list[str] = []
     for slug in fallback_order:
         entry = by_slug[slug]
-        index = note_index.get(slug)
-        if index is None:
-            label = slug
-        else:
-            label = f"note #{index}"
+        info = note_index.get(slug)
+        if info is None:
+            sources.append(slug)
+            continue
+
+        title = info.get("title") or slug
+        index = info.get("index")
         timestamp = entry.get("timestamp")
-        if timestamp is not None:
-            label = f"{label} ({_format_mm_ss(timestamp)})"
-        sources.append(label)
+        suffix = f" · {_format_mm_ss(timestamp)}" if timestamp is not None else ""
+        if index is None:
+            sources.append(f"{title}{suffix}")
+        else:
+            sources.append(f"note #{index} ({title}{suffix})")
     return sources
 
 

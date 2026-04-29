@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from config.settings import ChirpSettings
 
 
@@ -359,6 +361,44 @@ class TestNotesResolveAndTagFilter:
 
         record = _resolve_note(records, "alpha")
         assert record.slug == "alpha-2026-04-20"
+
+    def test_resolve_integer_id_uses_newest_first(self, tmp_path, monkeypatch):
+        from chirp.cli import NoteNotFound, _resolve_note
+        from utils.file_utils import list_notes
+
+        # `list_notes` sorts oldest-first; the newest-first index 1 should
+        # be the most recent note.
+        _write_note(tmp_path, "older", "Older", "x")
+        # Force a later created_at via meta.toml date so ordering is
+        # deterministic regardless of mtime jitter.
+        import tomli_w
+
+        with (tmp_path / "older" / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {
+                    "title": "Older",
+                    "date": "2026-04-20T09:00:00",
+                    "tags": [],
+                },
+                fh,
+            )
+        _write_note(tmp_path, "newer", "Newer", "x")
+        with (tmp_path / "newer" / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {
+                    "title": "Newer",
+                    "date": "2026-04-21T09:00:00",
+                    "tags": [],
+                },
+                fh,
+            )
+        records = [r for r in list_notes(tmp_path) if r.notes is not None]
+
+        assert _resolve_note(records, "1").slug == "newer"
+        assert _resolve_note(records, "2").slug == "older"
+
+        with pytest.raises(NoteNotFound):
+            _resolve_note(records, "99")
 
 
 class TestNotesDelete:

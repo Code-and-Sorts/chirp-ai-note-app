@@ -1,3 +1,4 @@
+import math
 import sys
 from collections import deque
 from dataclasses import dataclass, field
@@ -119,16 +120,31 @@ def _resolve_mic_name(device_manager) -> str:
 
 WAVEFORM_GLYPHS = "▁▂▄▅▇█"
 WAVEFORM_WIDTH = 28
+WAVEFORM_NOISE_FLOOR = 0.01
+
+
+def _level_to_glyph_index(level: float) -> int:
+    """Map an RMS level (0..1) to a glyph index using a sqrt curve.
+
+    A linear mapping pins typical voice (RMS ≈ 0.05–0.3) at glyph 0–1, so
+    the bar looks like a flat conveyor. Square-root spreads quiet-but-
+    present audio across the full palette, giving the per-cell variation
+    that reads as a wave.
+    """
+    if level <= WAVEFORM_NOISE_FLOOR:
+        return -1
+    scaled = math.sqrt(min(level, 1.0))
+    return min(int(scaled * len(WAVEFORM_GLYPHS)), len(WAVEFORM_GLYPHS) - 1)
 
 
 def _render_waveform_box(levels: "deque[float]") -> RenderableType:
     bar = Text()
     for slot in levels:
-        if slot <= 0:
+        glyph_idx = _level_to_glyph_index(slot)
+        if glyph_idx < 0:
             bar.append("▁", style="dim")
-            continue
-        glyph_idx = min(int(slot * len(WAVEFORM_GLYPHS)), len(WAVEFORM_GLYPHS) - 1)
-        bar.append(WAVEFORM_GLYPHS[glyph_idx], style="cyan")
+        else:
+            bar.append(WAVEFORM_GLYPHS[glyph_idx], style="cyan")
     return Panel(bar, title="waveform", title_align="left", border_style="dim")
 
 
@@ -604,7 +620,7 @@ def _list_notes(tag: str | None) -> None:
     table.add_column("length", style="dim", justify="right", no_wrap=True)
     table.add_column("tags", style="dim", no_wrap=True)
 
-    for record in reversed(records):
+    for idx, record in enumerate(reversed(records), start=1):
         title = _resolve_display_title(record)
 
         try:
@@ -620,7 +636,7 @@ def _list_notes(tag: str | None) -> None:
             length_str = "?"
 
         tag_cell = ", ".join(record.tags) if record.tags else "—"
-        table.add_row(record.slug, title, date_str, length_str, tag_cell)
+        table.add_row(str(idx), title, date_str, length_str, tag_cell)
 
     console.print(table)
     console.print()
@@ -633,10 +649,19 @@ def _list_notes(tag: str | None) -> None:
 def _resolve_note(records: list[NoteRecord], note_id: str) -> NoteRecord:
     if not note_id or not note_id.strip():
         raise NoteNotFound(note_id)
-    exact = [record for record in records if record.slug == note_id]
+    cleaned = note_id.strip()
+
+    if cleaned.isdigit():
+        index = int(cleaned)
+        newest_first = list(reversed(records))
+        if 1 <= index <= len(newest_first):
+            return newest_first[index - 1]
+        raise NoteNotFound(note_id)
+
+    exact = [record for record in records if record.slug == cleaned]
     if len(exact) == 1:
         return exact[0]
-    prefix_matches = [record for record in records if record.slug.startswith(note_id)]
+    prefix_matches = [record for record in records if record.slug.startswith(cleaned)]
     if len(prefix_matches) == 1:
         return prefix_matches[0]
     if len(prefix_matches) > 1:
@@ -722,7 +747,7 @@ def notes_edit(note_id: str = typer.Argument(..., help="Note id (slug or prefix)
 
     title = _resolve_display_title(record)
     content = record.notes.read_text(encoding="utf-8")
-    editor = ManualNoteEditor(title, content)
+    editor = ManualNoteEditor(title, content, start_in_insert=True)
     try:
         result = editor.run()
     except KeyboardInterrupt:

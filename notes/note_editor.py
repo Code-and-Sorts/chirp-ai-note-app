@@ -57,13 +57,19 @@ class ManualNoteEditor:
         "white": curses.COLOR_WHITE,
     }
 
-    def __init__(self, title: str, initial_content: str, readonly: bool = False):
+    def __init__(
+        self,
+        title: str,
+        initial_content: str,
+        readonly: bool = False,
+        start_in_insert: bool = False,
+    ):
         self.title = title
         self.lines = self._initialise_lines(initial_content)
         self.cursor_y = 0
         self.cursor_x = 0
         self.top_line = 0
-        self.mode = "view"
+        self.mode = "insert" if (start_in_insert and not readonly) else "view"
         self.command_active = False
         self.command_buffer = ""
         self.message = ""

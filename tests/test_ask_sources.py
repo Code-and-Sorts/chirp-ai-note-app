@@ -7,12 +7,20 @@ import tomli_w
 from notes_chat.retrieval import _build_note_index, format_sources
 
 
-def _seed_note(tmp_path: Path, slug: str, date: str) -> Path:
+def _seed_note(
+    tmp_path: Path,
+    slug: str,
+    date: str,
+    title: str | None = None,
+) -> Path:
     note_dir = tmp_path / slug
     note_dir.mkdir()
     (note_dir / "notes.md").write_text("# x\n", encoding="utf-8")
+    meta: dict = {"date": date, "tags": []}
+    if title is not None:
+        meta["title"] = title
     with (note_dir / "meta.toml").open("wb") as fh:
-        tomli_w.dump({"title": slug, "date": date, "tags": []}, fh)
+        tomli_w.dump(meta, fh)
     return note_dir
 
 
@@ -37,35 +45,60 @@ def _chunk(slug: str, **metadata):
 class TestFormatSources:
     def test_indexes_match_chirp_notes_newest_first(self, tmp_path):
         # Two notes; newest by date should be #1.
-        _seed_note(tmp_path, "older-2026-04-20", "2026-04-20T09:00:00")
-        _seed_note(tmp_path, "newer-2026-04-21", "2026-04-21T09:00:00")
+        _seed_note(
+            tmp_path,
+            "older-2026-04-20",
+            "2026-04-20T09:00:00",
+            title="Older Title",
+        )
+        _seed_note(
+            tmp_path,
+            "newer-2026-04-21",
+            "2026-04-21T09:00:00",
+            title="Newer Title",
+        )
         note_index = _build_note_index(_settings(tmp_path))
 
         chunks = [_chunk("newer-2026-04-21")]
         sources = format_sources(chunks, note_index)
-        assert sources == ["note #1"]
+        assert sources == ["note #1 (Newer Title)"]
 
         chunks = [_chunk("older-2026-04-20")]
         sources = format_sources(chunks, note_index)
-        assert sources == ["note #2"]
+        assert sources == ["note #2 (Older Title)"]
 
     def test_omits_timestamp_when_metadata_lacks_one(self, tmp_path):
-        _seed_note(tmp_path, "demo-2026-04-20", "2026-04-20T09:00:00")
+        _seed_note(
+            tmp_path,
+            "demo-2026-04-20",
+            "2026-04-20T09:00:00",
+            title="Demo",
+        )
         note_index = _build_note_index(_settings(tmp_path))
 
         sources = format_sources([_chunk("demo-2026-04-20")], note_index)
-        assert sources == ["note #1"]
+        assert sources == ["note #1 (Demo)"]
 
     def test_appends_mm_ss_when_chunk_has_start_ms(self, tmp_path):
-        _seed_note(tmp_path, "demo-2026-04-20", "2026-04-20T09:00:00")
+        _seed_note(
+            tmp_path,
+            "demo-2026-04-20",
+            "2026-04-20T09:00:00",
+            title="Nick Offerman Interview",
+        )
         note_index = _build_note_index(_settings(tmp_path))
 
         chunks = [_chunk("demo-2026-04-20", start_ms=760000)]
         sources = format_sources(chunks, note_index)
-        assert sources == ["note #1 (12:40)"]
+        assert sources == ["note #1 (Nick Offerman Interview · 12:40)"]
 
     def test_collapses_chunks_from_same_note_keeps_earliest_timestamp(self, tmp_path):
-        _seed_note(tmp_path, "demo-2026-04-20", "2026-04-20T09:00:00")
+        _seed_note(
+            tmp_path,
+            "demo-2026-04-20",
+            "2026-04-20T09:00:00",
+            title="Demo",
+        )
         note_index = _build_note_index(_settings(tmp_path))
 
         chunks = [
@@ -74,7 +107,15 @@ class TestFormatSources:
             _chunk("demo-2026-04-20", start_ms=600000),  # 10:00
         ]
         sources = format_sources(chunks, note_index)
-        assert sources == ["note #1 (00:30)"]
+        assert sources == ["note #1 (Demo · 00:30)"]
+
+    def test_falls_back_to_slug_when_meta_lacks_title(self, tmp_path):
+        # No title set in meta.toml — _build_note_index falls back to the slug.
+        _seed_note(tmp_path, "untitled-2026-04-20", "2026-04-20T09:00:00")
+        note_index = _build_note_index(_settings(tmp_path))
+
+        sources = format_sources([_chunk("untitled-2026-04-20")], note_index)
+        assert sources == ["note #1 (untitled-2026-04-20)"]
 
     def test_falls_back_to_slug_when_index_missing(self):
         chunks = [_chunk("orphan-slug")]
