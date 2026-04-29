@@ -6,26 +6,25 @@
 </p>
 <!-- markdownlint-enable MD033 -->
 
-A CLI tool that records meetings, transcribes audio, and generates structured notes — all locally.
-
-Chirp captures system audio via BlackHole, transcribes with faster-whisper, and produces summaries with Ollama. No cloud services, no API keys, everything runs on your machine.
+Chirp is a local-first CLI for recording meetings, transcribing audio, generating notes, and searching past conversations from your terminal.
 
 ## Features
 
-- Record system audio (calls, meetings, lectures)
-- Live transcription with scrollable dashboard during recording
-- Transcribe with faster-whisper (Apple Silicon optimized)
-- Generate structured notes with Ollama + Llama 3.1
-- Search and chat with your meeting history
-- Batch process multiple recordings
+- Record audio into a new note workspace
+- Stream live transcription in a Rich dashboard while recording
+- Transcribe recordings with faster-whisper
+- Generate structured notes with Ollama
+- Browse, edit, and delete saved notes from the terminal
+- Ask questions or run keyword search across your note history
 
 ## Prerequisites
 
-**macOS only** (Windows/Linux support planned)
+Chirp currently targets **macOS** for audio capture.
 
 - Python 3.11+
-- [BlackHole](https://existential.audio/blackhole/) — virtual audio driver
-- [Ollama](https://ollama.com) — local LLM runtime
+- [Ollama](https://ollama.com) for note generation and retrieval
+- [BlackHole 2ch](https://existential.audio/blackhole/) for system-audio capture
+- Homebrew if you want `chirp init` to install missing macOS dependencies for you
 
 ## Install
 
@@ -33,102 +32,167 @@ Chirp captures system audio via BlackHole, transcribes with faster-whisper, and 
 pip install chirp-notes-ai
 ```
 
-## Setup
+## Quick start
 
-### Audio
+1. Run the guided setup:
 
-BlackHole routes system audio into Chirp. Run `chirp init` for a guided walkthrough, or set it up manually:
+   ```bash
+   chirp init
+   ```
 
-1. Install BlackHole: `brew install blackhole-2ch`
-2. Open **Audio MIDI Setup** → create a Multi-Output Device ("Chirp Output") with your speakers + BlackHole
-3. Create an Aggregate Device ("Chirp Input") with your microphone + BlackHole
-4. Set system output to Chirp Output, input to Chirp Input
+2. Record a meeting:
 
-Verify with `chirp devices`.
+   ```bash
+   chirp record --title "Team Standup" --live-transcribe
+   ```
 
-### Models
+3. Transcribe audio and generate notes:
+
+   ```bash
+   chirp transcribe
+   ```
+
+4. Browse or edit saved notes:
+
+   ```bash
+   chirp notes
+   chirp notes view 1
+   chirp notes edit 1
+   ```
+
+5. Search or chat across your history:
+
+   ```bash
+   chirp search "timeline" --since 14d
+   chirp ask -q "What action items did we capture?"
+   ```
+
+## Command overview
+
+| Command | What it does |
+| --- | --- |
+| `chirp record` | Capture audio to a new note, optionally with live transcription |
+| `chirp transcribe [N]` | Process pending recordings into transcripts and notes |
+| `chirp notes` | List saved notes; `view`, `edit`, and `delete` are subcommands |
+| `chirp ask` | Ask questions about your meetings, or open interactive chat |
+| `chirp search` | Run keyword or regex search across transcripts and notes |
+| `chirp init` | Guided setup, dependency checks, and model selection |
+| `chirp about` | Show the animated bird and version info |
+
+## Common workflows
+
+### Recording
 
 ```bash
-ollama serve
-ollama pull llama3.1:8b
-ollama pull nomic-embed-text
+# Timed recording
+chirp record --duration 30 --title "Customer Interview"
+
+# Auto-stop after a timeframe
+chirp record --title "Sprint Planning" --timeframe 45m
+
+# Add tags at capture time
+chirp record --title "Roadmap Review" --tag roadmap --tag planning
 ```
 
-Verify with `chirp test`.
-
-## Usage
+### Transcription and notes
 
 ```bash
-# Record a meeting
-chirp record --duration 60 --title "Team Standup"
-
-# Record indefinitely (ESC or Ctrl+C to stop)
-chirp record
-
-# Record with live transcription
-chirp record --live-transcribe --title "Team Standup"
-
-# Transcribe all new recordings
+# Process all pending notes
 chirp transcribe
 
-# Generate notes from transcriptions
-chirp generate
+# Process only the oldest 5 pending notes
+chirp transcribe 5
 
-# Transcribe and generate in one step
-chirp transcribe-and-generate
+# Rebuild notes from existing transcripts
+chirp transcribe --regen
+
+# Override the Whisper model for one run
+chirp transcribe --model medium
 ```
 
-### Search & chat
+### Notes, search, and chat
 
 ```bash
-# Build the search index
-chirp index
+# Filter note list by tags
+chirp notes --tag roadmap,planning
 
-# Ask a question
-chirp ask -q "what was decided about the timeline?"
-
-# Interactive chat mode
+# Open interactive chat
 chirp ask
 
-# Filter by date
-chirp ask -q "hiring updates" --when "last week"
+# Ask with a time filter
+chirp ask -q "What changed this week?" --when "last week"
+
+# Regex or JSON search output
+chirp search "action item" --since 30d
+chirp search "owner: .*" --regex --json
 ```
 
-### Configuration
+## Setup details
+
+`chirp init` is the recommended setup path. It verifies Homebrew, `ffmpeg`, BlackHole, Ollama, and your configured models, then helps install or pull anything missing.
+
+If you prefer to set things up manually on macOS:
+
+1. Install dependencies:
+
+   ```bash
+   brew install portaudio ffmpeg ollama blackhole-2ch
+   ```
+
+2. Create a **Multi-Output Device** in Audio MIDI Setup with your speakers plus BlackHole.
+3. Create an **Aggregate Device** with your microphone plus BlackHole.
+4. Start Ollama:
+
+   ```bash
+   ollama serve
+   ollama pull llama3.1:8b
+   ollama pull nomic-embed-text
+   ```
+
+5. Re-check your environment:
+
+   ```bash
+   chirp init --recheck
+   chirp devices
+   ```
+
+## Configuration and storage
+
+- Config file: `~/.chirp/config.toml`
+- Default notes root: `~/Documents/chirp`
+
+Each note is stored in its own directory:
+
+```text
+~/Documents/chirp/<note-slug>/
+├── audio.wav
+├── transcript.txt
+├── notes.md
+└── meta.toml
+```
+
+For advanced maintenance, Chirp also exposes hidden commands such as:
 
 ```bash
 chirp config --list
-chirp config --audio-dir ./my-recordings
-chirp config --notes-dir ./my-notes
-```
-
-### Diagnostics
-
-```bash
-chirp devices   # list audio devices
-chirp test      # check all dependencies
-chirp stats     # view processing stats
+chirp devices
+chirp index --force
 ```
 
 ## Troubleshooting
 
-**BlackHole not detected** — Install it (`brew install blackhole-2ch`), create the Multi-Output Device, and run `chirp devices` to verify.
+**BlackHole not detected**
+Install it with `brew install blackhole-2ch`, then confirm your Audio MIDI setup and run `chirp init --recheck` or `chirp devices`.
 
-**Recording fails** — Check microphone permissions in System Settings > Privacy & Security > Microphone. Run `chirp test`.
+**Recording fails immediately**
+Check macOS microphone permissions and confirm your default input / aggregate device settings.
 
-**Transcription fails** — Make sure the audio file isn't empty or corrupted. Try a shorter recording first.
+**Transcription or notes generation fails**
+Make sure Ollama is running and the configured models are installed. `chirp init --recheck` will show what is missing.
 
-**Note generation fails** — Make sure Ollama is running (`ollama serve`) and the model is pulled (`ollama pull llama3.1:8b`).
-
-**Chat/search not working** — Build the index first: `chirp index`. Check that you have notes in your output directory.
-
-## Roadmap
-
-- Speaker diarization
-- Calendar integration (auto-record from macOS Calendar)
-- Export to PDF, DOCX, Notion
-- Windows and Linux support
+**No notes found**
+Run `chirp transcribe` first, or check `chirp config --list` to confirm the notes root you are using.
 
 ## Development
 
-See [.docs/DEVELOPMENT.md](.docs/DEVELOPMENT.md).
+Contributor docs live in `AGENTS.md` and `.docs/DEVELOPMENT.md`.

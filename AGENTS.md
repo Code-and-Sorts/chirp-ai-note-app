@@ -1,24 +1,26 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Chirp is a Python CLI whose runtime code lives under `chirp/` with Typer commands in `chirp/cli.py`. Recorder, transcription, note generation, and chat pipelines live in sibling packages (`recorder/`, `transcriber/`, `notes/`, `notes_chat/`, `utils/`) and share Pydantic config from `config/settings.py`. Markdown templates sit in `templates/`, while runtime artifacts land in `to-transcribe/`, `transcription-out/`, and `notes-out/`. Tests mirror the domains in `tests/` (e.g., `tests/test_note_generator.py`), so add new coverage alongside the feature.
+Chirp is a Typer-based CLI in `chirp/cli.py`. Runtime domains live in sibling packages: `recorder/` for capture and live transcription, `transcriber/` for Whisper processing, `notes/` for note generation and editing, `notes_chat/` for search/chat, `config/` for Pydantic settings, and `utils/` for shared helpers. Notes are stored under `~/Documents/chirp` by default as per-note directories containing `audio.wav`, `transcript.txt`, `notes.md`, and `meta.toml`. Tests mirror runtime domains in `tests/`, and contributor docs live in this file plus `.docs/DEVELOPMENT.md`.
 
 ## Build, Test & Development Commands
-**Setup:** `make dev-install` (installs deps with `uv` and pre-commit hooks).
-**Quality checks:** `make check` chains `validate`, `lint`, `format-check`, `spell-check`, and `type-check`. Run `make lint-fix` and `make format` to auto-fix issues before pushing.
-**Testing:** `make test` runs pytest; `make test-coverage` generates HTML reports. Run a single test with `uv run pytest tests/test_note_generator.py` or a specific function with `uv run pytest tests/test_note_generator.py::test_function_name`. Use `make test-failed` to re-run only failures.
-**Validation:** `uv run chirp status` verifies environment; `make process` smoke-tests the full pipeline (record → transcribe → notes).
+**Setup:** `make dev-install` installs system deps, syncs Python dependencies with `uv`, installs the package editable, and enables pre-commit hooks. Use `make install-venv` if the virtualenv already exists and you only need the editable install.
+**Quality:** `make check` runs `validate`, `lint`, `format-check`, `spell-check`, and `type-check`. Use `make lint-fix` and `make format` before pushing.
+**Testing:** `make test`, `make test-coverage`, `make test-file FILE=tests/test_settings.py`, `make test-match PATTERN=slugify`, and `make test-failed`.
+**CLI verification:** `uv run chirp --help`, `uv run chirp init --recheck`, and `make verify-deps` are the current repo-supported smoke checks.
 
 ## Coding Style & Naming Conventions
-**Formatting:** Ruff enforces 88-char lines, double quotes, space indents (run `make format` after edits). Pre-commit hooks auto-fix ruff, codespell, trailing whitespace, and YAML.
-**Imports:** Group stdlib, third-party, and first-party (`chirp`, `config`, `notes`, etc.) via isort. Use absolute imports; avoid star imports except for exceptions.
-**Naming:** Files and functions follow domain actions (`*_manager`, `*_processor`). CLI commands stay terse (see `chirp/cli.py`). Classes use PascalCase; functions/vars use snake_case.
-**Types:** Type hints encouraged; mypy checks `chirp`, `config`, `notes`, `notes_chat`, `recorder`, `transcriber`, `utils`. Silence warnings with annotations, not `type: ignore`.
-**Comments:** Avoid unnecessary comments; write self-documenting code. Document only non-obvious intent that code cannot express.
-**Error handling:** Raise custom exceptions from `chirp.exceptions` for domain errors; use generic exceptions sparingly.
+**Formatting:** Ruff enforces 88-char lines, double quotes, and import sorting. Use absolute imports and keep stdlib / third-party / first-party groups clean.
+**Naming:** Public CLI commands are `record`, `transcribe`, `notes`, `ask`, `search`, `init`, and `about`. Hidden maintenance commands such as `config`, `devices`, and `index` exist, but they are not the primary user workflow.
+**Types:** Add type hints where practical; mypy checks `chirp`, `config`, `notes`, `notes_chat`, `recorder`, `transcriber`, and `utils`.
+**Errors:** Prefer domain exceptions from `chirp.exceptions` and user-facing messages that explain the next recovery step.
+**Comments:** Keep them rare; prefer clearer names and smaller helpers over explanatory comments.
 
 ## Testing Guidelines
-Write `pytest` tests in `tests/` with filenames starting `test_` and functions mirroring user-facing behavior. Use fixtures to stub audio and Ollama integrations; see `tests/test_audio_recorder.py` and `tests/notes_chat/` for patterns. Mark slow or integration tests with `@pytest.mark.slow` or `@pytest.mark.integration`; skip with `@pytest.mark.skip(reason="...")` if needed. Keep coverage above existing baselines by running `make test-coverage` locally.
+Write `pytest` tests under `tests/` with `test_*.py` names and behavior-focused test functions. Reuse fixtures to isolate Ollama, audio devices, and filesystem state. Mark slow or integration coverage explicitly with `@pytest.mark.slow` and `@pytest.mark.integration`. When changing CLI output or flows, update the closest focused tests first, then run the smallest relevant test slice before broader checks.
+
+## Documentation Guidelines
+`README.md` is the canonical user-facing readme for both GitHub and package metadata. Keep command examples aligned with live `chirp --help` output and with `config/settings.py`. If shared contributor guidance changes, update `AGENTS.md` first and keep `CLAUDE.md` as a thin compatibility file rather than duplicating long-form instructions.
 
 ## Commit & Pull Request Guidelines
-Commit subjects follow the short, imperative style (e.g., `Add file name override option`). Group related changes; include meaningful bodies when context is not obvious. Before opening a PR, ensure `make check` and `make test` pass, link any GitHub issues, and describe runtime impacts. Screenshots or sample CLI output help reviewers validate UX changes; attach them when modifying prompts or note templates.
+Use short imperative commit subjects. Keep changes scoped, run `make check` and `make test` before opening a PR, and include runtime-facing context when behavior or prompts change. For CLI UX changes, sample terminal output is more useful than screenshots.

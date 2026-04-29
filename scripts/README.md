@@ -1,129 +1,192 @@
-# 🐣 Chirp - AI Meeting Notes CLI
+# Chirp
 
-<!-- markdownlint-disable MD033 -->
-<p align="center">
-   <img src=".docs/imgs/chirp-logo.png" alt="Chirp Logo" height="300" />
-</p>
-<!-- markdownlint-enable MD033 -->
+Chirp is a local-first CLI for recording meetings, transcribing audio, generating notes, and searching past conversations from your terminal.
 
-🐣 A powerful CLI tool that records meetings, transcribes audio to text, and generates AI-powered meeting notes with semantic search capabilities.
+## Features
 
-## Installation
+- Record audio into a new note workspace
+- Stream live transcription in a Rich dashboard while recording
+- Transcribe recordings with faster-whisper
+- Generate structured notes with Ollama
+- Browse, edit, and delete saved notes from the terminal
+- Ask questions or run keyword search across your note history
 
-### 1. Install System Dependencies
+## Prerequisites
 
-**macOS:**
+Chirp currently targets **macOS** for audio capture.
 
-```bash
-# Install required system libraries
-brew install portaudio ollama blackhole-2ch
-```
+- Python 3.11+
+- [Ollama](https://ollama.com) for note generation and retrieval
+- [BlackHole 2ch](https://existential.audio/blackhole/) for system-audio capture
+- Homebrew if you want `chirp init` to install missing macOS dependencies for you
 
-- Set up a multi-output device using `Audio MIDI Setup`:
-  - Open Audio MIDI Setup (Applications/Utilities)
-  - Create a Multi-Output Device
-  - Include both your speakers and BlackHole
-  - Set this as your default output device
-
-**Linux (Ubuntu/Debian):**
-
-```bash
-# Install required system libraries
-sudo apt-get update
-sudo apt-get install portaudio19-dev python3-dev alsa-utils
-
-# Install Ollama for AI processing
-curl -fsSL https://ollama.ai/install.sh | sh
-```
-
-**Windows:**
-
-```bash
-# PortAudio is included with PyAudio wheels on Windows
-# Install Ollama for AI processing from: https://ollama.ai/download
-```
-
-### 2. Install Chirp
+## Install
 
 ```bash
 pip install chirp-notes-ai
 ```
 
-## AI Model Setup
+## Quick start
 
-Chirp requires **Ollama** for AI processing:
-
-1. **Start Ollama**: Run `ollama serve` in a terminal
-2. **Download models**:
+1. Run the guided setup:
 
    ```bash
-   # For meeting note generation
-   ollama pull llama3.1:8b
+   chirp init
+   ```
 
-   # For semantic search
+2. Record a meeting:
+
+   ```bash
+   chirp record --title "Team Standup" --live-transcribe
+   ```
+
+3. Transcribe audio and generate notes:
+
+   ```bash
+   chirp transcribe
+   ```
+
+4. Browse or edit saved notes:
+
+   ```bash
+   chirp notes
+   chirp notes view 1
+   chirp notes edit 1
+   ```
+
+5. Search or chat across your history:
+
+   ```bash
+   chirp search "timeline" --since 14d
+   chirp ask -q "What action items did we capture?"
+   ```
+
+## Command overview
+
+| Command | What it does |
+| --- | --- |
+| `chirp record` | Capture audio to a new note, optionally with live transcription |
+| `chirp transcribe [N]` | Process pending recordings into transcripts and notes |
+| `chirp notes` | List saved notes; `view`, `edit`, and `delete` are subcommands |
+| `chirp ask` | Ask questions about your meetings, or open interactive chat |
+| `chirp search` | Run keyword or regex search across transcripts and notes |
+| `chirp init` | Guided setup, dependency checks, and model selection |
+| `chirp about` | Show the animated bird and version info |
+
+## Common workflows
+
+### Recording
+
+```bash
+# Timed recording
+chirp record --duration 30 --title "Customer Interview"
+
+# Auto-stop after a timeframe
+chirp record --title "Sprint Planning" --timeframe 45m
+
+# Add tags at capture time
+chirp record --title "Roadmap Review" --tag roadmap --tag planning
+```
+
+### Transcription and notes
+
+```bash
+# Process all pending notes
+chirp transcribe
+
+# Process only the oldest 5 pending notes
+chirp transcribe 5
+
+# Rebuild notes from existing transcripts
+chirp transcribe --regen
+
+# Override the Whisper model for one run
+chirp transcribe --model medium
+```
+
+### Notes, search, and chat
+
+```bash
+# Filter note list by tags
+chirp notes --tag roadmap,planning
+
+# Open interactive chat
+chirp ask
+
+# Ask with a time filter
+chirp ask -q "What changed this week?" --when "last week"
+
+# Regex or JSON search output
+chirp search "action item" --since 30d
+chirp search "owner: .*" --regex --json
+```
+
+## Setup details
+
+`chirp init` is the recommended setup path. It verifies Homebrew, `ffmpeg`, BlackHole, Ollama, and your configured models, then helps install or pull anything missing.
+
+If you prefer to set things up manually on macOS:
+
+1. Install dependencies:
+
+   ```bash
+   brew install portaudio ffmpeg ollama blackhole-2ch
+   ```
+
+2. Create a **Multi-Output Device** in Audio MIDI Setup with your speakers plus BlackHole.
+3. Create an **Aggregate Device** with your microphone plus BlackHole.
+4. Start Ollama:
+
+   ```bash
+   ollama serve
+   ollama pull llama3.1:8b
    ollama pull nomic-embed-text
    ```
 
-## Usage
+5. Re-check your environment:
 
-```bash
-# Record a meeting
-chirp record --duration 30 --title "Team Standup"
+   ```bash
+   chirp init --recheck
+   chirp devices
+   ```
 
-# Transcribe audio files
-chirp transcribe
+## Configuration and storage
 
-# Generate AI meeting notes
-chirp generate-notes
+- Config file: `~/.chirp/config.toml`
+- Default notes root: `~/Documents/chirp`
 
-# Complete workflow (transcribe + generate notes)
-chirp transcribe-and-notes
+Each note is stored in its own directory:
 
-# Ask questions about your notes
-chirp ask "What were the action items from today's meeting?"
-
-# Check system status
-chirp stats
-
-# Test installation
-chirp test
+```text
+~/Documents/chirp/<note-slug>/
+├── audio.wav
+├── transcript.txt
+├── notes.md
+└── meta.toml
 ```
 
-## Configuration
-
-On first run, Chirp creates a config file at:
-
-- **macOS/Linux**: `~/.config/chirp/config.yaml`
-- **Windows**: `%APPDATA%/chirp/config.yaml`
-
-Edit this file to customize directories, models, and settings.
-
-## Features
-
-- 🎙️ **High-quality audio recording** with system audio capture
-- 📝 **Accurate transcription** using OpenAI's Whisper models
-- 🧠 **AI-powered meeting notes** with structured summaries
-- 🔍 **Semantic search** across all your meeting notes
-- 💬 **Interactive chat** to ask questions about your meetings
-- ⚙️ **Flexible configuration** with sensible defaults
-
-## Requirements
-
-- Python 3.11+
-- Ollama (for AI features)
-- System audio setup (PortAudio, BlackHole on macOS)
-
-## Support
-
-- **Documentation**: [GitHub Repository](https://github.com/Code-and-Sorts/chirp-ai-note-app)
-- **Issues**: [Report bugs or request features](https://github.com/Code-and-Sorts/chirp-ai-note-app/issues)
-
-## Debugging live transcription
-
-Run `chirp record --live-transcribe --debug-live` to capture the mono stream and per-chunk audio in `transcriptions/debug-live/`.  You can inspect a chunk with:
+For advanced maintenance, Chirp also exposes hidden commands such as:
 
 ```bash
-uv run python scripts/debug_live_transcript.py transcribe-chunk transcriptions/debug-live/chunk_0001.wav
+chirp config --list
+chirp devices
+chirp index --force
 ```
 
-This helps validate the audio the live pipeline sees.
+## Troubleshooting
+
+**BlackHole not detected**
+Install it with `brew install blackhole-2ch`, then confirm your Audio MIDI setup and run `chirp init --recheck` or `chirp devices`.
+
+**Recording fails immediately**
+Check macOS microphone permissions and confirm your default input / aggregate device settings.
+
+**Transcription or notes generation fails**
+Make sure Ollama is running and the configured models are installed. `chirp init --recheck` will show what is missing.
+
+**No notes found**
+Run `chirp transcribe` first, or check `chirp config --list` to confirm the notes root you are using.
+
+## More documentation
+
+For repository docs and contributor guidance, see the top-level `README.md`, `AGENTS.md`, and `.docs/DEVELOPMENT.md` in the GitHub repository.

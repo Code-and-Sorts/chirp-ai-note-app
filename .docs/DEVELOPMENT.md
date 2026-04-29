@@ -1,13 +1,14 @@
 # Development Guide
 
-This document is for contributors working on Chirp. End users should see the top-level `README.md`.
+This document is for contributors working on Chirp. End users should start with the top-level `README.md`.
 
 ## Prerequisites
 
-- Python 3.9+
-- macOS (BlackHole support for recording)
+- Python 3.11+
+- macOS for local audio-capture development
 - Homebrew
 - Git
+- Ollama for note-generation and retrieval flows
 
 ## Setup
 
@@ -17,59 +18,68 @@ cd chirp-ai-note-app
 make dev-install
 ```
 
-This installs dependencies, sets up pre-commit hooks, and installs the package in development mode.
+This installs system dependencies, syncs the Python environment with `uv`, installs the package editable, and enables pre-commit hooks.
 
-Install system deps:
-
-```bash
-make install-deps
-```
-
-## Running tests and checks
+If you only need the editable install in an already-prepared environment:
 
 ```bash
-make test           # Unit tests
-make test-coverage  # HTML coverage
-make lint           # Ruff linting
-make format         # Auto-format
-make type-check     # mypy type checks
-make check          # All quality checks
+make install-venv
 ```
 
-## Dev workflow
+## Quality checks
 
 ```bash
-make dev-workflow   # Style, type-check, test, build
+make check
+make test
+make test-coverage
+make lint-fix
+make format
+make type-check
 ```
 
-Individual commands are available via the Makefile for linting, formatting, spelling, and validation.
+Targeted test helpers are also available:
+
+```bash
+make test-file FILE=tests/test_settings.py
+make test-match PATTERN=slugify
+make test-failed
+```
+
+## Useful CLI checks
+
+```bash
+uv run chirp --help
+uv run chirp init --recheck
+make verify-deps
+```
 
 ## Project structure
 
 ```text
 chirp-ai-note-app/
-├── chirp/                 # Main CLI application
-│   ├── cli.py            # CLI interface with Typer
-│   └── exceptions.py     # Custom exceptions
-├── config/               # Configuration management
-│   └── settings.py      # Pydantic settings with YAML
-├── recorder/             # Audio recording modules
-├── transcriber/          # Transcription and processing
-├── notes/               # Note generation
-├── notes_chat/          # Search and query functionality
-├── utils/               # Utilities
-├── templates/           # Markdown templates
-├── .docs/               # Documentation
-├── tests/               # Test suite
-├── pyproject.toml       # Project configuration
-├── Makefile             # Development commands
-└── .pre-commit-config.yaml
+├── chirp/           # Typer CLI entrypoint and high-level flows
+├── config/          # Pydantic settings and config-path helpers
+├── recorder/        # Audio recording, device handling, live transcription
+├── transcriber/     # Whisper transcription and batch processing
+├── notes/           # Note generation, templates, manual editing
+├── notes_chat/      # Retrieval, keyword search, chat flows, indexing
+├── utils/           # Shared filesystem and time helpers
+├── templates/       # Prompt and note templates
+├── scripts/         # Dev/debug helper scripts
+├── tests/           # Pytest suite
+├── AGENTS.md        # Canonical contributor guidance
+└── README.md        # Canonical user-facing readme
 ```
+
+## Notes storage
+
+- Config file: `~/.chirp/config.toml`
+- Default notes root: `~/Documents/chirp`
+- Each note lives in its own folder with `audio.wav`, `transcript.txt`, `notes.md`, and `meta.toml`
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run `make check`
-5. Open a pull request with context
+1. Branch from `main`.
+2. Keep changes scoped.
+3. Run the relevant tests plus `make check`.
+4. Open a PR with context about behavior changes and any CLI-facing output changes.
