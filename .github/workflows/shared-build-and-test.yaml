@@ -28,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      package-version:
+        description: 'Exact package version to build'
+        required: false
+        type: string
+        default: ''
       run-integration-tests:
         description: 'Whether to run integration tests'
         required: false
@@ -132,6 +137,12 @@ jobs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         RUN_NUMBER: ${{ github.run_number }}
       run: cd scripts && uv run python update_pr_version.py
+
+    - name: 🏷️ Update version in pyproject.toml from release tag
+      if: inputs.package-version != ''
+      env:
+        RELEASE_TAG: ${{ inputs.package-version }}
+      run: cd scripts && uv run python update_release_version.py
 
     - name: 🏗️ Build
       run: uv build

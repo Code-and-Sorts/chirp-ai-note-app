@@ -13,21 +13,25 @@ on:
         required: false
         type: boolean
         default: false
+  release:
+    types:
+      - created
 
 jobs:
   build-and-test:
     uses: ./.github/workflows/shared-build-and-test.yaml
     with:
-      python-version: ${{ inputs.python-version }}
+      python-version: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.python-version || '3.11' }}
       os-matrix: '["macos-latest"]'
       upload-artifacts: true
       update-version-for-pr: false
+      package-version: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
       run-integration-tests: false
 
   publish-package:
     needs: build-and-test
     uses: ./.github/workflows/shared-publish-package.yaml
     with:
-      python-version: ${{ inputs.python-version }}
-      is-test-pypi: ${{ inputs.is-test-pypi }}
+      python-version: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.python-version || '3.11' }}
+      is-test-pypi: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.is-test-pypi == 'true' }}
     secrets: inherit
