@@ -854,11 +854,15 @@ def _resolve_display_title(record: NoteRecord) -> str:
 
 @app.command(rich_help_panel=MAIN_PANEL)
 def ask(
-    question: str | None = typer.Option(
+    question: str | None = typer.Argument(
+        None,
+        help="Question to ask about your meetings (omit for interactive chat).",
+    ),
+    question_option: str | None = typer.Option(
         None,
         "--question",
         "-q",
-        help="Question to ask about your meetings (omit for interactive chat)",
+        help="Same as the positional argument; kept for backwards compatibility.",
     ),
     when: str | None = typer.Option(None, "--when", help="Time range filter"),
     sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
@@ -874,24 +878,76 @@ def ask(
     """Chat with your notes"""
     from notes_chat.cli import ask
 
-    ask(question, when, sources, dry_run, markdown=markdown)
+    resolved = question if question is not None else question_option
+    ask(resolved, when, sources, dry_run, markdown=markdown)
 
 
 @app.command(rich_help_panel=MAIN_PANEL)
-def search():
-    """Keyword search"""
-    try:
-        settings = get_settings()
-        from notes_chat.search import LiveSearchSession
+def search(
+    query: str = typer.Argument(
+        ..., help="Substring (or regex with --regex) to search for."
+    ),
+    since: str | None = typer.Option(
+        None,
+        "--since",
+        help="Only notes from the last DURATION (e.g. 30d, 2w, 48h).",
+    ),
+    regex: bool = typer.Option(False, "--regex", help="Treat QUERY as a Python regex."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit JSON and skip the rendered output."
+    ),
+):
+    """Keyword search across transcripts and notes."""
+    from notes_chat.search_keyword import (
+        SearchOptions,
+        emit_json,
+        render_no_matches,
+        render_results,
+        run_search,
+        suggest_close_keywords,
+    )
+    from utils.time_utils import parse_since
 
-        session = LiveSearchSession(settings)
-        session.start()
+    if not query or not query.strip():
+        console.print("[red]search query is required.[/red]")
+        raise typer.Exit(2)
 
-    except KeyboardInterrupt:
-        console.print("\n[dim]Search cancelled[/dim]")
-    except Exception as e:
-        console.print(f"[red]❌ Error during search: {str(e)}[/red]")
-        raise typer.Exit(1)
+    since_minutes: int | None = None
+    if since is not None:
+        try:
+            since_minutes = parse_since(since)
+        except ValueError as exc:
+            console.print(f"[red]invalid --since: {exc}[/red]")
+            raise typer.Exit(2)
+
+    if regex:
+        try:
+            __import__("re").compile(query)
+        except __import__("re").error as exc:
+            console.print(f"[red]invalid regex: {exc.msg}[/red]")
+            raise typer.Exit(2)
+
+    settings = get_settings()
+    options = SearchOptions(
+        query=query,
+        since_minutes=since_minutes,
+        regex=regex,
+        json=json_output,
+    )
+
+    result = run_search(settings, options)
+
+    if json_output:
+        console.print(emit_json(result))
+        return
+
+    if result["matches"]:
+        render_results(console, options, result)
+        return
+
+    bm25_path = settings.notes_chat.index_dir / "bm25.json"
+    suggestions = suggest_close_keywords(bm25_path, query)
+    render_no_matches(console, options, result["total_notes_scanned"], suggestions)
 
 
 @app.command(rich_help_panel=MAIN_PANEL)

@@ -75,6 +75,7 @@ Execution order matters: storage is the foundation — most other stories depend
 | 1.5 | `init` polish — absorb BlackHole prompt, write TOML | 1.1 | [stories/1.5-init-polish.md](stories/1.5-init-polish.md) |
 | 1.6 | Verify `record` copy + flow against wireframe A3 | 1.1 | [stories/1.6-record-verify.md](stories/1.6-record-verify.md) |
 | 1.7 | Verify `ask` copy + flow against wireframe A5 | 1.1 | [stories/1.7-ask-verify.md](stories/1.7-ask-verify.md) |
+| 1.8 | `chirp search` keyword rewrite over transcripts + notes (A7) | 1.1, 1.3, 1.4 | [stories/1.8-search-keyword-rewrite.md](stories/1.8-search-keyword-rewrite.md) |
 
 ## 6. Epic-level acceptance criteria
 

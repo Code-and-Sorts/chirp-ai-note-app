@@ -57,11 +57,15 @@ def index(
 
 @app.command()
 def ask(
-    question: str | None = typer.Option(
+    question: str | None = typer.Argument(
+        None,
+        help="Question to ask about your meetings (omit for interactive chat).",
+    ),
+    question_option: str | None = typer.Option(
         None,
         "--question",
         "-q",
-        help="Question to ask about your meetings (omit for interactive chat)",
+        help="Same as the positional argument; kept for backwards compatibility.",
     ),
     when: str | None = typer.Option(
         None,
@@ -82,6 +86,9 @@ def ask(
 ):
     """Ask questions about your meeting notes. Run without a question for interactive chat."""
     config = get_notes_config()
+
+    if question is None:
+        question = question_option
 
     if question is None:
         from notes_chat.interactive import InteractiveChatSession

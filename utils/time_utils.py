@@ -92,8 +92,17 @@ def is_same_day(dt1: datetime, dt2: datetime) -> bool:
     return dt1.date() == dt2.date()
 
 
+SUFFIX_MINUTES: dict[str, float] = {
+    "s": 1 / 60,
+    "m": 1,
+    "h": 60,
+    "d": 24 * 60,
+    "w": 7 * 24 * 60,
+}
+
+
 def parse_timeframe(text: str) -> int | None:
-    """Parse the design's ``30s`` / ``5m`` / ``1h`` timeframe input into minutes.
+    """Parse the design's ``30s`` / ``5m`` / ``1h`` / ``2d`` / ``1w`` timeframe input into minutes.
 
     Returns ``None`` for empty input (user pressed ⏎ to skip). Raises
     ``ValueError`` for unrecognized formats or non-positive durations.
@@ -106,8 +115,7 @@ def parse_timeframe(text: str) -> int | None:
     if not text:
         return None
 
-    suffix_minutes = {"s": 1 / 60, "m": 1, "h": 60}
-    if text[-1] in suffix_minutes:
+    if text[-1] in SUFFIX_MINUTES:
         amount_str, unit = text[:-1], text[-1]
     else:
         amount_str, unit = text, "m"
@@ -120,5 +128,25 @@ def parse_timeframe(text: str) -> int | None:
     if not math.isfinite(amount) or amount <= 0:
         raise ValueError(f"timeframe must be positive: {text!r}")
 
-    minutes = amount * suffix_minutes[unit]
+    minutes = amount * SUFFIX_MINUTES[unit]
     return max(1, math.ceil(minutes))
+
+
+def parse_since(text: str) -> int:
+    """Parse ``--since`` arguments (``30d`` / ``2w`` / ``48h``) into minutes.
+
+    Stricter than ``parse_timeframe``: empty input is rejected, and durations
+    shorter than one hour are rejected too. ``5m`` / ``30s`` are not useful
+    recency filters and would surprise users who expected ``m`` to mean months.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        raise ValueError("--since requires a value (e.g. 30d, 2w, 48h)")
+
+    minutes = parse_timeframe(cleaned)
+    assert minutes is not None
+    if minutes < 60:
+        raise ValueError(
+            f"--since must be at least 1h (got {cleaned!r}); use 1h, 2d, 1w, etc."
+        )
+    return minutes

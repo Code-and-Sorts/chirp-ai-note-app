@@ -1,6 +1,6 @@
 import pytest
 
-from utils.time_utils import parse_timeframe
+from utils.time_utils import parse_since, parse_timeframe
 
 
 def test_empty_returns_none():
@@ -46,3 +46,37 @@ def test_rejects_zero_and_negative():
 
 def test_default_unit_tolerates_whitespace():
     assert parse_timeframe("  7  ") == 7
+
+
+def test_days_and_weeks():
+    assert parse_timeframe("1d") == 24 * 60
+    assert parse_timeframe("30d") == 30 * 24 * 60
+    assert parse_timeframe("2w") == 14 * 24 * 60
+
+
+class TestParseSince:
+    def test_accepts_hours_days_weeks(self):
+        assert parse_since("1h") == 60
+        assert parse_since("48h") == 48 * 60
+        assert parse_since("30d") == 30 * 24 * 60
+        assert parse_since("2w") == 14 * 24 * 60
+
+    def test_rejects_empty(self):
+        with pytest.raises(ValueError, match="--since requires a value"):
+            parse_since("")
+        with pytest.raises(ValueError, match="--since requires a value"):
+            parse_since("   ")
+
+    def test_rejects_sub_hour_units(self):
+        for bad in ["5m", "30s", "59m"]:
+            with pytest.raises(ValueError, match="at least 1h"):
+                parse_since(bad)
+
+    def test_rejects_garbage(self):
+        with pytest.raises(ValueError):
+            parse_since("soon")
+
+    def test_rejects_zero_and_negative(self):
+        for bad in ["0d", "0h", "-1d"]:
+            with pytest.raises(ValueError):
+                parse_since(bad)

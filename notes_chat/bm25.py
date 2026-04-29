@@ -10,6 +10,8 @@ class BM25Index:
         self.bm25_file = bm25_file
         self.bm25 = None
         self.doc_ids: list[str] = []
+        self._tokenized_corpus: list[list[str]] = []
+        self._vocabulary: dict[str, int] | None = None
         self.load()
 
     def load(self):
@@ -25,9 +27,22 @@ class BM25Index:
 
             if data.get("corpus"):
                 corpus = [doc.split() for doc in data["corpus"]]
+                self._tokenized_corpus = corpus
                 self.bm25 = BM25Okapi(corpus)
         except Exception:
             pass
+
+    def vocabulary(self) -> dict[str, int]:
+        """Return token → distinct-document count for the loaded corpus."""
+        if self._vocabulary is not None:
+            return self._vocabulary
+
+        counts: dict[str, int] = {}
+        for tokens in self._tokenized_corpus:
+            for token in set(tokens):
+                counts[token] = counts.get(token, 0) + 1
+        self._vocabulary = counts
+        return counts
 
     def search(self, query: str, k: int = 10) -> list[tuple[str, float]]:
         """Search using BM25."""
