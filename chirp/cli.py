@@ -879,7 +879,14 @@ def ask(
     from notes_chat.cli import ask
 
     resolved = question if question is not None else question_option
-    ask(resolved, when, sources, dry_run, markdown=markdown)
+    ask(
+        question=resolved,
+        question_option=None,
+        when=when,
+        sources=sources,
+        dry_run=dry_run,
+        markdown=markdown,
+    )
 
 
 @app.command(rich_help_panel=MAIN_PANEL)
