@@ -265,13 +265,13 @@ def record(
         try:
             duration = _prompt_timeframe()
         except ValueError as exc:
-            console.print(f"[red]❌ {exc}[/red]")
+            console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1)
     elif timeframe is not None and duration is None:
         try:
             duration = parse_timeframe(timeframe)
         except ValueError as exc:
-            console.print(f"[red]❌ {exc}[/red]")
+            console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1)
 
     resolved_tags: list[str] = list(tags) if tags else []
@@ -362,25 +362,22 @@ def record(
             console.print("[yellow]nothing to save.[/yellow]")
             return
 
-        console.print(f"[green]✅ saved to {note_dir}[/green]")
+        console.print(f"[green]saved to {note_dir}[/green]")
         console.print(" [dim]› chirp transcribe    · turn this into notes[/dim]")
 
     except KeyboardInterrupt:
         console.print("[yellow]Recording stopped by user[/yellow]")
     except AudioDeviceError as e:
-        console.print(f"[red]❌ Audio device error: {str(e)}[/red]")
-        console.print("[dim]Try 'chirp devices' to see available audio devices[/dim]")
+        console.print(f"[red]Audio device error: {str(e)}[/red]")
         raise typer.Exit(1)
     except RecordingError as e:
-        console.print(f"[red]❌ Recording error: {str(e)}[/red]")
+        console.print(f"[red]Recording error: {str(e)}[/red]")
         raise typer.Exit(1)
     except ConfigurationError as e:
-        console.print(f"[red]❌ Configuration error: {str(e)}[/red]")
-        console.print("[dim]Try 'chirp config --list' to check your settings[/dim]")
+        console.print(f"[red]Configuration error: {str(e)}[/red]")
         raise typer.Exit(1)
     except Exception as e:
-        console.print(f"[red]❌ Unexpected error: {str(e)}[/red]")
-        console.print("[dim]Please report this issue if it persists[/dim]")
+        console.print(f"[red]Unexpected error: {str(e)}[/red]")
         raise typer.Exit(1)
 
 
@@ -395,9 +392,9 @@ def _run_live_transcription(
     from recorder.live_session import LiveSessionResult, LiveTranscriptionSession
 
     if title:
-        console.print(f"[cyan]📝 Title: {title}[/cyan]")
+        console.print(f"[cyan]Title: {title}[/cyan]")
     if duration:
-        console.print(f"[cyan]⏱️ Planned duration: {duration} minutes[/cyan]")
+        console.print(f"[cyan]Planned duration: {duration} minutes[/cyan]")
 
     session = LiveTranscriptionSession(
         settings=settings,
@@ -412,16 +409,16 @@ def _run_live_transcription(
     try:
         result: LiveSessionResult = session.run()
     except ImportError as e:
-        console.print(f"[red]❌ {e}[/red]")
+        console.print(f"[red]{e}[/red]")
         raise typer.Exit(1)
     except RecordingError as e:
-        console.print(f"[red]❌ Live recording error: {str(e)}[/red]")
+        console.print(f"[red]Live recording error: {str(e)}[/red]")
         raise typer.Exit(1)
 
     from utils.time_utils import format_duration
 
     console.print()
-    console.print("[green]✅ Live recording complete[/green]")
+    console.print("[green]Live recording complete[/green]")
     console.print(f"[dim]Audio saved to:[/dim] {result.audio_path}")
     console.print(
         f"[dim]Duration:[/dim] {format_duration(result.duration_seconds)}  •  [dim]Live words transcribed:[/dim] {result.total_words}"
@@ -501,7 +498,7 @@ def _run_regen_pipeline(settings) -> None:
 
     note_generator = NoteGenerator(settings)
     console.print(
-        f"[bold blue]🧠 Regenerating notes for {len(records)} record(s)...[/bold blue]"
+        f"[bold blue]Regenerating notes for {len(records)} record(s)…[/bold blue]"
     )
     result = note_generator.generate_for_records(records, force=True)
 
@@ -509,7 +506,7 @@ def _run_regen_pipeline(settings) -> None:
     success_count = sum(1 for r in sub_results if r.get("success"))
     if success_count:
         console.print(
-            f"[green]✅ Regenerated notes for {success_count}/{len(sub_results)} record(s)[/green]"
+            f"[green]Regenerated notes for {success_count}/{len(sub_results)} record(s)[/green]"
         )
     if success_count < len(sub_results):
         failed = [r for r in sub_results if not r.get("success")]
@@ -759,7 +756,7 @@ def notes_edit(note_id: str = typer.Argument(..., help="Note id (slug or prefix)
         return
 
     record.notes.write_text(result.content, encoding="utf-8")
-    console.print(f"[green]✅ Updated note: {record.notes}[/green]")
+    console.print(f"[green]Updated note: {record.notes}[/green]")
 
     if settings.notes_chat.auto_index:
         _reindex_after_edit(settings, record)
@@ -784,7 +781,7 @@ def _reindex_after_edit(settings: ChirpSettings, record: NoteRecord) -> None:
             console.print(f"[dim green]✓ Re-indexed {notes_path.name}[/dim green]")
     except Exception as exc:  # pragma: no cover - defensive
         console.print(
-            f"[dim yellow]⚠️ Auto-indexing failed for "
+            f"[dim yellow]Auto-indexing failed for "
             f"{notes_path.name}: {exc}[/dim yellow]"
         )
 
@@ -816,7 +813,7 @@ def notes_delete(
     except OSError as exc:
         console.print(f"[red]✗ failed to delete {record.dir}: {exc}[/red]")
         raise typer.Exit(1)
-    console.print(f"[green]✅ Deleted {record.dir}[/green]")
+    console.print(f"[green]Deleted {record.dir}[/green]")
 
     if notes_path is not None:
         _drop_from_index(settings, notes_path)
@@ -833,7 +830,7 @@ def _drop_from_index(settings: ChirpSettings, notes_path: Path) -> None:
         index_manager._save_manifest(manifest)
         index_manager._rebuild_bm25()
     except Exception as exc:  # pragma: no cover - defensive
-        console.print(f"[dim yellow]⚠️ Failed to update index: {exc}[/dim yellow]")
+        console.print(f"[dim yellow]Failed to update index: {exc}[/dim yellow]")
 
 
 def _resolve_display_title(record: NoteRecord) -> str:
@@ -1047,7 +1044,7 @@ Channels: {settings.audio.channels}
 [cyan]Monitoring:[/cyan]
 Warning: {settings.monitoring.warning_minutes} minutes
 Interval: {settings.monitoring.warning_interval} minutes""",
-            title="🐣 Chirp Configuration",
+            title="Chirp Configuration",
         )
         console.print(panel)
         return
@@ -1077,7 +1074,7 @@ Interval: {settings.monitoring.warning_interval} minutes""",
     if changes_made:
         settings.save_to_file(ChirpSettings.get_config_path())
         settings.ensure_directories_exist()
-        console.print("[green]✅ Configuration updated[/green]")
+        console.print("[green]Configuration updated[/green]")
 
 
 @app.command(hidden=True)
@@ -1141,18 +1138,18 @@ def devices():
 
     console.print()
     if device_manager.check_blackhole_available():
-        console.print("[green]✅ BlackHole detected and ready[/green]")
+        console.print("[green]BlackHole detected and ready[/green]")
     elif device_manager.check_aggregate_available():
-        console.print("[green]✅ Aggregate device detected and ready[/green]")
+        console.print("[green]Aggregate device detected and ready[/green]")
     elif device_manager.get_default_input_device() is not None:
         console.print(
-            "[green]✅ Default input device detected (microphone recording ready)[/green]"
+            "[green]Default input device detected (microphone recording ready)[/green]"
         )
         console.print(
             "[dim]For system audio capture, install BlackHole: https://existential.audio/blackhole/[/dim]"
         )
     else:
-        console.print("[red]❌ No suitable input device found[/red]")
+        console.print("[red]No suitable input device found[/red]")
         console.print("Install BlackHole from: https://existential.audio/blackhole/")
         console.print("Or create an Aggregate Device in Audio MIDI Setup")
     console.print("[dim]Run 'chirp init' for first-run setup.[/dim]")

@@ -2,19 +2,19 @@
 
 # Default help command
 help: ## Show this help message
-	@echo "🐣 Chirp Development Makefile"
+	@echo "Chirp Development Makefile"
 	@echo ""
 	@echo "Available commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # Installation commands
 install-deps: ## Install system dependencies (macOS)
-	@echo "📦 Installing system dependencies..."
+	@echo "Installing system dependencies..."
 	@if command -v brew >/dev/null 2>&1; then \
 		echo "Installing PortAudio for PyAudio..."; \
 		brew install portaudio; \
 	else \
-		echo "❌ Homebrew not found. Please install manually:"; \
+		echo "Homebrew not found. Please install manually:"; \
 		echo "  - PortAudio: https://portaudio.com/"; \
 		echo "  - Or install Homebrew: https://brew.sh/"; \
 		exit 1; \
@@ -107,15 +107,15 @@ spell-check: ## Check spelling with codespell
 
 # Validation commands
 validate: ## Validate code compiles and imports work
-	@echo "🔍 Validating Python code..."
+	@echo "Validating Python code..."
 	@uv run python -m py_compile chirp/cli.py
-	@uv run python -c "import chirp.cli; print('✅ CLI imports successfully')"
-	@uv run python -c "import config.settings; print('✅ Config imports successfully')"
-	@uv run python -c "import recorder.audio_recorder; print('✅ Recorder imports successfully')" || echo "⚠️  Recorder may need audio dependencies"
-	@uv run python -c "import transcriber.whisper_transcriber; print('✅ Transcriber imports successfully')" || echo "⚠️  Transcriber may need model downloads"
-	@uv run python -c "import notes.note_generator; print('✅ Notes generator imports successfully')"
-	@uv run python -c "import notes_chat.index; print('✅ Notes chat imports successfully')" || echo "⚠️  Notes chat may need Ollama running"
-	@echo "✅ Code validation complete!"
+	@uv run python -c "import chirp.cli; print('CLI imports successfully')"
+	@uv run python -c "import config.settings; print('Config imports successfully')"
+	@uv run python -c "import recorder.audio_recorder; print('Recorder imports successfully')" || echo "Recorder may need audio dependencies"
+	@uv run python -c "import transcriber.whisper_transcriber; print('Transcriber imports successfully')" || echo "Transcriber may need model downloads"
+	@uv run python -c "import notes.note_generator; print('Notes generator imports successfully')"
+	@uv run python -c "import notes_chat.index; print('Notes chat imports successfully')" || echo "Notes chat may need Ollama running"
+	@echo "Code validation complete!"
 
 # Quality check combination
 check: validate style-check type-check ## Run all quality checks (excluding tests)
@@ -132,14 +132,14 @@ update: ## Update dependencies
 # Setup commands
 setup: install ## Initial setup for new installations
 	uv run pre-commit install
-	@echo "✅ Chirp setup complete!"
+	@echo "Chirp setup complete!"
 	@echo "Next steps:"
 	@echo "  1. Install BlackHole: make setup-blackhole"
 	@echo "  2. Install Ollama: make setup-ollama"
 	@echo "  3. Run 'make verify-deps' to verify setup"
 
 setup-blackhole: ## Show BlackHole installation instructions
-	@echo "🎵 BlackHole Audio Driver Installation"
+	@echo "BlackHole Audio Driver Installation"
 	@echo ""
 	@echo "1. Install BlackHole:"
 	@echo "   brew install blackhole-2ch"
@@ -153,7 +153,7 @@ setup-blackhole: ## Show BlackHole installation instructions
 	@echo "4. Verify with: make verify-deps"
 
 setup-ollama: ## Show Ollama setup instructions
-	@echo "🧠 Ollama Setup Instructions"
+	@echo "Ollama Setup Instructions"
 	@echo ""
 	@echo "1. Install Ollama:"
 	@echo "   brew install ollama"
@@ -187,31 +187,31 @@ clean-all: clean ## Clean everything including build artifacts
 
 # Development workflow shortcuts
 dev-workflow: ## Complete development workflow (style, type-check, test, build)
-	@echo "🔄 Running development workflow..."
+	@echo "Running development workflow..."
 	@$(MAKE) style
 	@$(MAKE) type-check
 	@$(MAKE) test
 	@$(MAKE) build
-	@echo "✅ Development workflow complete!"
+	@echo "Development workflow complete!"
 
 demo: ## Run a complete demo workflow
-	@echo "🎬 Chirp Demo Workflow"
+	@echo "Chirp Demo Workflow"
 	@echo "1. Verifying dependencies..."
 	@$(MAKE) verify-deps
 	@echo "2. Browsing notes..."
 	@$(MAKE) notes
-	@echo "✅ Demo complete! Ready to record with 'make record'"
+	@echo "Demo complete! Ready to record with 'make record'"
 
 # Documentation
 docs: ## Show documentation locations
-	@echo "📚 Chirp Documentation:"
+	@echo "Chirp Documentation:"
 	@echo "  - README.md - Main documentation"
 	@echo "  - .docs/DEVELOPMENT.md - Developer guide"
 	@echo "  - CLI help: uv run chirp --help"
 
 # System information
 info: ## Show system and version information
-	@echo "🐣 Chirp System Information:"
+	@echo "Chirp System Information:"
 	@echo "Python: $(shell python --version)"
 	@echo "UV: $(shell uv --version)"
 	@echo "Project: $(shell grep '^version' pyproject.toml | cut -d'"' -f2)"
@@ -221,9 +221,9 @@ info: ## Show system and version information
 
 # Quick examples
 example: ## Example: Record a 1-minute meeting and process it
-	@echo "🎬 Running Chirp example workflow:"
+	@echo "Running Chirp example workflow:"
 	@echo "1. Recording 1-minute meeting titled 'Demo Meeting'..."
-	@$(MAKE) record DURATION=1 TITLE="Demo Meeting" || echo "⚠️  Recording failed (audio setup required)"
+	@$(MAKE) record DURATION=1 TITLE="Demo Meeting" || echo "Recording failed (audio setup required)"
 	@echo "2. Transcribing pending notes..."
 	@$(MAKE) transcribe
 	@echo "3. Example follow-ups:"

@@ -14,7 +14,7 @@ def index(
 ):
     """Build or rebuild the notes search index."""
     config = get_notes_config()
-    console.print("[blue]🔍 Building notes index...[/blue]")
+    console.print("[blue]Building notes index…[/blue]")
 
     if force:
         console.print("[yellow]--force specified, rebuilding entire index[/yellow]")
@@ -42,16 +42,16 @@ def index(
 
         if result.get("success"):
             console.print(
-                f"[green]✅ Index built successfully: {result.get('files_processed', 0)} files processed[/green]"
+                f"[green]Index built successfully: {result.get('files_processed', 0)} files processed[/green]"
             )
         else:
             console.print(
-                f"[red]❌ Index build failed: {result.get('error', 'Unknown error')}[/red]"
+                f"[red]Index build failed: {result.get('error', 'Unknown error')}[/red]"
             )
             raise typer.Exit(1)
 
     except Exception as e:
-        console.print(f"[red]❌ Index build failed: {e}[/red]")
+        console.print(f"[red]Index build failed: {e}[/red]")
         raise typer.Exit(1)
 
 
@@ -102,30 +102,28 @@ def ask(
         from notes_chat.prompting import generate_answer
         from notes_chat.retrieval import retrieve_context
 
-        console.print(f"[blue]🤔 Searching for: {question}[/blue]")
+        console.print(f"[dim]searching for: {question}[/dim]")
 
         context_result = retrieve_context(config, question, when_filter=when)
 
         if not context_result.get("success"):
             error = context_result.get("error", "Unknown error")
             if "no documents found" in error.lower():
-                console.print("[yellow]📭 No relevant documents found.[/yellow]")
+                console.print("[yellow]No relevant documents found.[/yellow]")
                 if context_result.get("suggestion"):
-                    console.print(f"[dim]💡 Try: {context_result['suggestion']}[/dim]")
+                    console.print(f"[dim]try: {context_result['suggestion']}[/dim]")
                 raise typer.Exit(2)
             else:
-                console.print(f"[red]❌ Context retrieval failed: {error}[/red]")
+                console.print(f"[red]Context retrieval failed: {error}[/red]")
                 if context_result.get("suggestion"):
-                    console.print(f"[dim]💡 {context_result['suggestion']}[/dim]")
+                    console.print(f"[dim]{context_result['suggestion']}[/dim]")
                 raise typer.Exit(1)
 
         context = context_result["context"]
         retrieved_ids = context_result["retrieved_ids"]
 
         if dry_run:
-            console.print(
-                "[yellow]🧪 Dry run mode - showing context and prompt:[/yellow]"
-            )
+            console.print("[yellow]dry run — showing context and prompt:[/yellow]")
             console.print(f"[dim]Context length: {len(context)} characters[/dim]")
             console.print(f"[dim]Retrieved chunks: {len(retrieved_ids)}[/dim]")
             console.print("\n[bold]Context:[/bold]")
@@ -134,14 +132,14 @@ def ask(
 
         cached_answer = get_cached_answer(question, retrieved_ids)
         if cached_answer:
-            console.print("[dim]📋 Using cached answer[/dim]")
+            console.print("[dim]using cached answer[/dim]")
             answer = cached_answer
         else:
             answer_result = generate_answer(config, question, context)
 
             if not answer_result.get("success"):
                 console.print(
-                    f"[red]❌ Answer generation failed: {answer_result.get('error', 'Unknown error')}[/red]"
+                    f"[red]Answer generation failed: {answer_result.get('error', 'Unknown error')}[/red]"
                 )
                 raise typer.Exit(1)
 
@@ -161,7 +159,7 @@ def ask(
             console.print(f"\n[dim]sources: {joined}[/dim]")
 
     except Exception as e:
-        console.print(f"[red]❌ Query failed: {e}[/red]")
+        console.print(f"[red]Query failed: {e}[/red]")
         raise typer.Exit(1)
 
 

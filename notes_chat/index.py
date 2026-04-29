@@ -169,7 +169,7 @@ class IndexManager:
 
             if not embeddings:
                 console.print(
-                    f"[yellow]⚠️ Failed to get embeddings for {file_path.name}[/yellow]"
+                    f"[yellow]Failed to get embeddings for {file_path.name}[/yellow]"
                 )
                 return False
 
@@ -183,7 +183,7 @@ class IndexManager:
             return True
 
         except Exception as e:
-            console.print(f"[red]❌ Failed to index {file_path.name}: {e}[/red]")
+            console.print(f"[red]Failed to index {file_path.name}: {e}[/red]")
             return False
 
     def _remove_from_index(self, file_path: str):
@@ -194,7 +194,7 @@ class IndexManager:
                 self.collection.delete(ids=results["ids"])
         except Exception as e:
             console.print(
-                f"[yellow]⚠️ Failed to remove {Path(file_path).name}: {e}[/yellow]"
+                f"[yellow]Failed to remove {Path(file_path).name}: {e}[/yellow]"
             )
 
     def _extract_metadata(self, file_path: Path, content: str) -> NoteMeta | None:
@@ -234,7 +234,7 @@ class IndexManager:
 
         except Exception as e:
             console.print(
-                f"[yellow]⚠️ Failed to extract metadata from {file_path.name}: {e}[/yellow]"
+                f"[yellow]Failed to extract metadata from {file_path.name}: {e}[/yellow]"
             )
             return None
 
@@ -339,7 +339,7 @@ class IndexManager:
             return embeddings
 
         except Exception as e:
-            console.print(f"[red]❌ Failed to get embeddings: {e}[/red]")
+            console.print(f"[red]Failed to get embeddings: {e}[/red]")
             return None
 
     def _chunk_to_metadata(self, chunk: Chunk) -> dict[str, Any]:
@@ -360,7 +360,7 @@ class IndexManager:
 
             rebuild_bm25_index(self.collection, self.bm25_file)
         except Exception as e:
-            console.print(f"[yellow]⚠️ Failed to rebuild BM25 index: {e}[/yellow]")
+            console.print(f"[yellow]Failed to rebuild BM25 index: {e}[/yellow]")
 
 
 def build_index(

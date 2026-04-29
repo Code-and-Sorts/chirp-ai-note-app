@@ -106,7 +106,7 @@ class ChirpSettings(BaseModel):
             settings = cls.create_default_config()
             settings.save_to_file(config_path)
 
-            console.print("[green]✅ Default config created![/green]")
+            console.print("[green]Default config created.[/green]")
             console.print(f"[dim]Edit {config_path} to customize settings[/dim]")
             return settings
 

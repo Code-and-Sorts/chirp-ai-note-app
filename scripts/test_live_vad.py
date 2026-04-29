@@ -19,7 +19,7 @@ def main():
 
     device_index = device_manager.get_recommended_device()
     if device_index is None:
-        print("❌ No suitable audio input device found.")
+        print("No suitable audio input device found.")
         return 1
 
     print("Starting VAD test...")
@@ -47,7 +47,7 @@ def main():
         print(f"  Channels: {audio_stream.channels}")
         print(f"  Frame duration: {audio_stream.frame_duration * 1000:.1f} ms\n")
     except Exception as exc:
-        print(f"❌ Failed to start audio: {exc}")
+        print(f"Failed to start audio: {exc}")
         return 1
 
     vad_chunker = VADChunker(
@@ -83,7 +83,7 @@ def main():
                 chunks = event.payload.get("chunks_emitted", 0)
 
                 speech_pct = (speech_frames / frame_count * 100) if frame_count else 0
-                state = "🟢 SPEAKING" if triggered else "⚫ Silent"
+                state = "SPEAKING" if triggered else "Silent"
 
                 print(
                     f"[VAD] {state} | Frames: {frame_count} ({speech_pct:.1f}% speech) | Chunks: {chunks}"
@@ -111,7 +111,7 @@ def main():
     print(f"  Total chunks emitted: {chunk_count}")
 
     if chunk_count == 0:
-        print("\n⚠️  WARNING: No chunks were emitted!")
+        print("\nWARNING: No chunks were emitted!")
         print("Possible issues:")
         print("  - No audio detected (check microphone/audio source)")
         print("  - Energy threshold too high")

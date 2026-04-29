@@ -511,5 +511,5 @@ Return ONLY the XML document, no additional text before or after."""
                 )
         except Exception as exc:
             self.console.print(
-                f"[dim yellow]⚠️ Auto-indexing failed for {notes_path.name}: {exc}[/dim yellow]"
+                f"[dim yellow]Auto-indexing failed for {notes_path.name}: {exc}[/dim yellow]"
             )

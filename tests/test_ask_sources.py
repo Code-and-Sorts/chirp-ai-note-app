@@ -226,7 +226,7 @@ class TestAskMarkdownToggle:
         result = CliRunner().invoke(app, ["ask", "-q", "what?", "--no-markdown"])
         assert result.exit_code == 0
         assert "sources: note #1" in result.stdout
-        assert "📚" not in result.stdout
+        assert "Sources:" not in result.stdout
 
     def test_no_sources_flag_omits_footer(self, monkeypatch):
         from typer.testing import CliRunner

@@ -249,7 +249,7 @@ class InteractiveChatSession:
                         live.stop()
                         live = None
                     error_msg = stream_event.get("message", "Unknown error")
-                    console.print(f"\n❌ {error_msg}")
+                    console.print(f"\n[red]{error_msg}[/red]")
                     return
 
             if progress:
@@ -269,7 +269,7 @@ class InteractiveChatSession:
                 progress.stop()
             if live is not None:
                 live.stop()
-            console.print(f"\n❌ Query failed: {e}")
+            console.print(f"\n[red]Query failed: {e}[/red]")
         finally:
             if progress:
                 progress.stop()
