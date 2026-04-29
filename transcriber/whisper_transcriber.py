@@ -78,7 +78,7 @@ class WhisperTranscriber:
         recording_datetime = self._get_recording_datetime(
             audio_file_path, audio_metadata
         )
-        recording_id = derive_recording_id(audio_file_path)
+        recording_id = derive_recording_id(audio_file_path, recording_datetime)
         meeting_name = self._get_meeting_name(audio_metadata)
         device = self._get_optimal_device()
         compute_type = self._get_compute_type()
@@ -255,7 +255,9 @@ class WhisperTranscriber:
                         "segments": [],
                         "metadata": {
                             "schema_version": 2,
-                            "recording_id": derive_recording_id(audio_file),
+                            "recording_id": derive_recording_id(
+                                audio_file, recording_datetime
+                            ),
                             "recording_filename": audio_file.name,
                             "recording_path": str(audio_file.resolve()),
                             "meeting_name": self._get_meeting_name(audio_metadata),

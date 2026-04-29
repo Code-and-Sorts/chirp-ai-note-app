@@ -1,4 +1,4 @@
-.PHONY: help install dev-install test lint format type-check clean run build setup check-deps
+.PHONY: help install dev-install test lint format type-check clean run build setup verify-deps
 
 # Default help command
 help: ## Show this help message
@@ -35,60 +35,27 @@ install-venv: ## Install chirp to current virtual environment in editable mode
 run: ## Run Chirp in development mode
 	uv run python -m chirp.cli
 
-# CLI command shortcuts
+# CLI command shortcuts (mirror the 7 visible chirp commands)
 record: ## Start recording a meeting (with optional DURATION and TITLE)
 	uv run chirp record $(if $(DURATION),--duration $(DURATION)) $(if $(TITLE),--title "$(TITLE)")
 
-transcribe: ## Transcribe audio files
+transcribe: ## Transcribe pending notes (FORCE=1 re-runs all stages)
 	uv run chirp transcribe $(if $(FORCE),--force)
-
-generate: ## Generate meeting notes from transcripts
-	uv run chirp generate $(if $(FORCE),--force)
-
-process: ## Process audio files (transcribe + generate notes)
-	uv run chirp transcribe-and-generate $(if $(FORCE),--force)
 
 notes: ## Browse your notes (list)
 	uv run chirp notes
 
-note: ## Create or edit a single note (optional NAME)
-	uv run chirp note $(NAME)
+search: ## Keyword search through transcripts and notes (QUERY required)
+	uv run chirp search "$(QUERY)" $(if $(SINCE),--since $(SINCE)) $(if $(REGEX),--regex) $(if $(JSON),--json)
 
-search: ## Keyword search through your notes
-	uv run chirp search
-
-ask: ## Start interactive chat with your notes
-	uv run chirp ask
-
-ask-question: ## Ask a question about your notes (requires QUESTION)
-	uv run chirp ask --question "$(QUESTION)" $(if $(WHEN),--when "$(WHEN)")
-
-index: ## Build notes search index
-	uv run chirp index $(if $(FORCE),--force)
-
-stats: ## Show Chirp statistics
-	uv run chirp stats
-
-about: ## Show the animated Chirp logo + version info
-	uv run chirp about
-
-version: ## Show the installed Chirp version
-	uv run chirp version
-
-config: ## Show Chirp configuration
-	uv run chirp config --list
-
-devices: ## List audio devices
-	uv run chirp devices
+ask: ## Ask your notes (QUESTION optional — omit for interactive chat)
+	uv run chirp ask $(if $(QUESTION),"$(QUESTION)") $(if $(WHEN),--when "$(WHEN)")
 
 init: ## First-run setup & model picker
 	uv run chirp init $(if $(RECHECK),--recheck) $(if $(SWITCH_MODEL),--switch-model)
 
-chirp-setup: ## Step-by-step audio setup guide (chirp setup)
-	uv run chirp setup
-
-chirp-test: ## Test Chirp dependencies and configuration (chirp test)
-	uv run chirp test
+about: ## Show the animated Chirp logo + version info
+	uv run chirp about
 
 # Testing commands
 test: ## Run unit tests
@@ -156,8 +123,8 @@ check: validate style-check type-check ## Run all quality checks (excluding test
 ci: lint format-check type-check test ## Run CI checks (lint, format, type-check, test)
 
 # Dependency management
-check-deps: ## Check if all dependencies are available (alias for chirp-test)
-	uv run chirp test
+verify-deps: ## Verify dependencies via chirp init --recheck
+	uv run chirp init --recheck
 
 update: ## Update dependencies
 	uv sync --upgrade
@@ -169,7 +136,7 @@ setup: install ## Initial setup for new installations
 	@echo "Next steps:"
 	@echo "  1. Install BlackHole: make setup-blackhole"
 	@echo "  2. Install Ollama: make setup-ollama"
-	@echo "  3. Run 'make check-deps' to verify setup"
+	@echo "  3. Run 'make verify-deps' to verify setup"
 
 setup-blackhole: ## Show BlackHole installation instructions
 	@echo "🎵 BlackHole Audio Driver Installation"
@@ -183,7 +150,7 @@ setup-blackhole: ## Show BlackHole installation instructions
 	@echo "   - Include both your speakers and BlackHole"
 	@echo "   - Set this as your default output device"
 	@echo ""
-	@echo "4. Test with: make devices"
+	@echo "4. Verify with: make verify-deps"
 
 setup-ollama: ## Show Ollama setup instructions
 	@echo "🧠 Ollama Setup Instructions"
@@ -198,7 +165,7 @@ setup-ollama: ## Show Ollama setup instructions
 	@echo "   ollama pull llama3.1:8b"
 	@echo "   ollama pull nomic-embed-text"
 	@echo ""
-	@echo "4. Test with: make check-deps"
+	@echo "4. Verify with: make verify-deps"
 
 # Build commands
 build: ## Build package
@@ -229,14 +196,10 @@ dev-workflow: ## Complete development workflow (style, type-check, test, build)
 
 demo: ## Run a complete demo workflow
 	@echo "🎬 Chirp Demo Workflow"
-	@echo "1. Checking dependencies..."
-	@$(MAKE) check-deps
-	@echo "2. Showing stats..."
-	@$(MAKE) stats
-	@echo "3. Listing audio devices..."
-	@$(MAKE) devices
-	@echo "4. Showing configuration..."
-	@$(MAKE) config
+	@echo "1. Verifying dependencies..."
+	@$(MAKE) verify-deps
+	@echo "2. Browsing notes..."
+	@$(MAKE) notes
 	@echo "✅ Demo complete! Ready to record with 'make record'"
 
 # Documentation
@@ -255,16 +218,14 @@ info: ## Show system and version information
 	@echo "OS: $(shell uname -s)"
 	@echo "Architecture: $(shell uname -m)"
 	@echo "Working Directory: $(PWD)"
-	@echo ""
-	@$(MAKE) stats
 
 # Quick examples
 example: ## Example: Record a 1-minute meeting and process it
 	@echo "🎬 Running Chirp example workflow:"
 	@echo "1. Recording 1-minute meeting titled 'Demo Meeting'..."
 	@$(MAKE) record DURATION=1 TITLE="Demo Meeting" || echo "⚠️  Recording failed (audio setup required)"
-	@echo "2. Processing audio files..."
-	@$(MAKE) process FORCE=true
-	@echo "3. Example notes search commands:"
-	@echo "   make ask-question QUESTION='what was discussed?'"
-	@echo "   make ask-question QUESTION='any action items?' WHEN='yesterday'"
+	@echo "2. Transcribing pending notes..."
+	@$(MAKE) transcribe
+	@echo "3. Example follow-ups:"
+	@echo "   make ask QUESTION='what was discussed?'"
+	@echo "   make search QUERY='action items'"
