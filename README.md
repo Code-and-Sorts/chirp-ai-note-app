@@ -196,3 +196,9 @@ Run `chirp transcribe` first, or check `chirp config --list` to confirm the note
 ## Development
 
 Contributor docs live in `AGENTS.md` and `.docs/DEVELOPMENT.md`.
+
+<!-- markdownlint-disable MD033 -->
+<p align="center">
+   <img src=".docs/imgs/chirp-footer.svg" alt="Chirp Footer" />
+</p>
+<!-- markdownlint-enable MD033 -->
