@@ -81,7 +81,7 @@ jobs:
           echo "normalized=${NORMALIZED_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: 📥 Open PR to sync version on main
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           base: main
           branch: chore/sync-pyproject-to-${{ steps.version.outputs.normalized }}
