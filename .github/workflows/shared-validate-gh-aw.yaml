@@ -23,10 +23,10 @@ jobs:
         with:
           version: ${{ inputs.gh-aw-version }}
 
-      - name: 🔍 Audit gh-aw workflows (lint, security, supply chain)
-        run: gh aw audit
+      - name: 🔍 Validate gh-aw workflows (compile + actionlint + zizmor + poutine)
+        run: gh aw validate --strict
 
-      - name: 🔒 Compile in strict mode
+      - name: 🔒 Compile workflows
         run: gh aw compile --strict
 
       - name: 🚦 Verify committed lock files match sources

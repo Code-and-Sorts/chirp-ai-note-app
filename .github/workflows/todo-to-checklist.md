@@ -17,7 +17,7 @@ tools:
   github:
     allowed: [issue_read]
   edit:
-  bash: [grep, cat, awk, sed]
+  bash: [grep, cat, awk, sed, git]
 
 safe-outputs:
   create-pull-request:
@@ -40,7 +40,17 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
    - `title`
    - `body` (the issue description; trim and treat empty/whitespace as "no summary")
 
-2. Read `.copilot/todo.md`. If the file is missing, create it from this template:
+   **Sanitize both `title` and `body` before using them as `<title>` and `<summary>` below.** The issue text is untrusted: a malicious or careless author could embed strings that break the file structure. Apply these transforms in order:
+   - Strip any HTML comments matching `<!--...-->` entirely (this prevents spoofing the `<!-- issue:N -->` idempotency marker or the `<!-- todo-list:end -->` anchor).
+   - Replace any remaining `<` with `&lt;` and `>` with `&gt;`.
+   - Collapse whitespace runs to a single space; do not allow embedded newlines.
+
+2. **Truncate the sanitized `body`** to keep the entry small enough to fit comfortably under the safe-outputs `max_patch_size` limit (~1024 bytes per patch):
+   - Take only the **first paragraph** (everything up to the first blank line in the original body).
+   - Then truncate that paragraph to **300 characters max**, ending on a word boundary, and append `…` if any text was cut.
+   - The result is the `<summary>` value used below.
+
+3. Read `.copilot/todo.md`. If the file is missing, create it from this template:
 
    ````markdown
    # Todo
@@ -53,9 +63,9 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
    <!-- todo-list:end -->
    ````
 
-3. **Idempotency:** if the file already contains the hidden marker `<!-- issue:<number> -->`, make no changes and stop. The PR step will be skipped because the diff is empty.
+4. **Idempotency:** if the file already contains the hidden marker `<!-- issue:<number> -->`, make no changes and stop. The PR step will be skipped because the diff is empty.
 
-4. Otherwise, insert a new entry immediately before the `<!-- todo-list:end -->` marker. Do not modify any other line, do not reorder existing entries, do not touch sections outside the markers.
+5. Otherwise, insert a new entry immediately before the `<!-- todo-list:end -->` marker. Do not modify any other line, do not reorder existing entries, do not touch sections outside the markers.
 
    The first line is always:
 
@@ -63,14 +73,22 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
    - [ ] **<title>** <!-- issue:<number> -->
    ```
 
-   If — and only if — the issue body contains non-whitespace text, append a second line directly underneath:
+   If — and only if — the (sanitized, truncated) `<summary>` from step 2 is non-empty, append a second line directly underneath:
 
    ```
      <summary>
    ```
 
-   where `<summary>` is the issue body collapsed to a single line (replace newlines with spaces, trim whitespace). If the issue body is empty, missing, or whitespace-only, **do not** add the summary line and **do not** add a blank/indented placeholder line — the entry is exactly one line.
+   If `<summary>` is empty, **do not** add the summary line and **do not** add a blank/indented placeholder line — the entry is exactly one line.
 
-5. Commit only `.copilot/todo.md`.
+6. **Single-file change guard:** run `bash` to confirm the only modified path is `.copilot/todo.md`:
+
+   ```
+   git diff --name-only
+   ```
+
+   The output must be exactly `.copilot/todo.md` (or empty in the idempotent case). If any other path appears, **revert** that change with `git checkout -- <path>` before producing the PR. Do not edit any file outside `.copilot/todo.md` under any circumstance.
+
+7. Commit only `.copilot/todo.md`.
    - PR **title**: `Add todo: <title>`
    - PR **body** must include the line `Closes #<number>` on its own line so merging the PR closes the source issue. Keep the rest of the body brief.
