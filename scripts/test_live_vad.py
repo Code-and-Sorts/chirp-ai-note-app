@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 import time
 
@@ -122,4 +123,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())
