@@ -38,3 +38,45 @@ jobs:
     permissions:
       pull-requests: write
       id-token: write
+
+  sync-version-to-main:
+    needs: publish-package
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: ⤵️ Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: 🚀 Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: 🏷️ Update pyproject.toml to released version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: cd scripts && uv run python update_release_version.py
+
+      - name: 📤 Commit and push to main
+        run: |
+          if git diff --quiet -- pyproject.toml; then
+            echo "::notice::pyproject.toml already at released version; nothing to sync."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: sync pyproject.toml to released version ${{ github.event.release.tag_name }}"
+          if ! git push origin main; then
+            echo "::error::Failed to push version sync to main. Branch protection may require manual sync. Update pyproject.toml's [project] version to '${{ github.event.release.tag_name }}' (normalized) and commit to main."
+            exit 1
+          fi
