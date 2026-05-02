@@ -36,12 +36,12 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
 ## Steps
 
 1. Use the `issue_read` tool to fetch issue **#${{ github.event.issue.number }}** in repository `${{ github.repository }}`. From the response, capture:
-   - `number` (the issue number — used only for the hidden idempotency marker and the PR `Closes` keyword)
+   - `number` (used **only** for the PR `Closes` keyword so merging the PR closes the source issue — never written into `.copilot/todo.md`)
    - `title`
    - `body` (the issue description; trim and treat empty/whitespace as "no summary")
 
    **Sanitize both `title` and `body` before using them as `<title>` and `<summary>` below.** The issue text is untrusted: a malicious or careless author could embed strings that break the file structure. Apply these transforms in order:
-   - Strip any HTML comments matching `<!--...-->` entirely (this prevents spoofing the `<!-- issue:N -->` idempotency marker or the `<!-- todo-list:end -->` anchor).
+   - Strip any HTML comments matching `<!--...-->` entirely (this prevents an author from injecting fake `<!-- todo-list:end -->` anchors).
    - Replace any remaining `<` with `&lt;` and `>` with `&gt;`.
    - Collapse whitespace runs to a single space; do not allow embedded newlines.
 
@@ -65,15 +65,17 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
    <!-- todo-list:end -->
    ````
 
-4. **Idempotency:** if the file already contains the hidden marker `<!-- issue:<number> -->`, make no changes and stop. The PR step will be skipped because the diff is empty.
+4. **Idempotency:** between the `<!-- todo-list:start -->` and `<!-- todo-list:end -->` markers, look for any existing line of the form `- [ ] **<title>**` (after the same sanitization applied in step 1) where the `<title>` matches the issue's sanitized title **exactly**. If one is found, make no changes and stop. The PR step will be skipped because the diff is empty.
 
 5. Otherwise, insert a new entry immediately before the `<!-- todo-list:end -->` marker. Do not modify any other line, do not reorder existing entries, do not touch sections outside the markers.
 
    The first line is always:
 
    ```
-   - [ ] **<title>** <!-- issue:<number> -->
+   - [ ] **<title>**
    ```
+
+   The issue number must **not** appear anywhere in `.copilot/todo.md` — neither visibly nor inside an HTML comment.
 
    If — and only if — the (sanitized, truncated) `<summary>` from step 2 is non-empty, append a second line directly underneath:
 
