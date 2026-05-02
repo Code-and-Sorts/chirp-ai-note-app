@@ -24,6 +24,7 @@ safe-outputs:
     title-prefix: "[todo] "
     labels: [automation, todo-list]
     draft: false
+    allowed-files: [".copilot/todo.md"]
 ---
 
 # Append Labeled Todo Issue to Checklist
