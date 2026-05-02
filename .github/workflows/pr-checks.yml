@@ -22,6 +22,10 @@ jobs:
         with:
           python-version: '3.11'
 
+  validate-gh-aw:
+    if: github.event.pull_request.draft == false
+    uses: ./.github/workflows/shared-validate-gh-aw.yaml
+
   build-and-test:
     needs: quality-checks
     if: github.event.pull_request.draft == false

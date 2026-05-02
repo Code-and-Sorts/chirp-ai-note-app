@@ -1,0 +1,37 @@
+name: Validate gh-aw Workflows
+
+on:
+  workflow_call:
+    inputs:
+      gh-aw-version:
+        description: 'Version tag of github/gh-aw to install (e.g. v0.71.1)'
+        required: false
+        type: string
+        default: 'v0.71.1'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: ⤵️ Checkout code
+        uses: actions/checkout@v6
+
+      - name: 🛠️ Install gh-aw CLI
+        uses: github/gh-aw/actions/setup-cli@v0.71.1
+        with:
+          version: ${{ inputs.gh-aw-version }}
+
+      - name: 🔍 Audit gh-aw workflows (lint, security, supply chain)
+        run: gh aw audit
+
+      - name: 🔒 Compile in strict mode
+        run: gh aw compile --strict
+
+      - name: 🚦 Verify committed lock files match sources
+        run: |
+          if ! git diff --exit-code -- '.github/workflows/*.lock.yml' '.github/aw/actions-lock.json'; then
+            echo "::error::gh-aw lock files are out of date. Run 'gh aw compile' locally and commit the result."
+            exit 1
+          fi
