@@ -55,7 +55,9 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
    ````markdown
    # Todo
 
+   <!--
    Auto-managed checklist of issues labeled `todo`.
+   -->
 
    ## Open
 
