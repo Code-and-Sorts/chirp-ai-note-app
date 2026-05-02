@@ -17,9 +17,14 @@ on:
     types:
       - published
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     uses: ./.github/workflows/shared-build-and-test.yaml
+    permissions:
+      contents: read
     with:
       python-version: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.python-version || '3.11' }}
       os-matrix: '["macos-latest"]'

@@ -46,6 +46,8 @@ on:
 jobs:
   build-and-test:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -162,6 +164,8 @@ jobs:
     if: ${{ inputs.run-integration-tests }}
     needs: build-and-test
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
