@@ -45,12 +45,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: ⤵️ Checkout main
         uses: actions/checkout@v6
         with:
           ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: 🐍 Set up Python
@@ -69,18 +69,27 @@ jobs:
       - name: 🔒 Regenerate uv.lock to match new project version
         run: uv lock
 
-      - name: 📤 Commit and push to main
+      - name: 🔎 Read normalized version
+        id: version
         run: |
-          if git diff --quiet -- pyproject.toml uv.lock; then
-            echo "::notice::pyproject.toml and uv.lock already at released version; nothing to sync."
-            exit 0
-          fi
           NORMALIZED_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml uv.lock
-          git commit -m "chore: sync pyproject.toml to released version ${{ github.event.release.tag_name }}"
-          if ! git push origin main; then
-            echo "::error::Failed to push version sync to main. Branch protection may require manual sync. Set pyproject.toml's [project] version to '${NORMALIZED_VERSION}' (normalized form of release tag '${{ github.event.release.tag_name }}'), run 'uv lock', and commit both files to main."
-            exit 1
-          fi
+          echo "normalized=${NORMALIZED_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: 📥 Open PR to sync version on main
+        uses: peter-evans/create-pull-request@v7
+        with:
+          base: main
+          branch: chore/sync-pyproject-to-${{ steps.version.outputs.normalized }}
+          delete-branch: true
+          commit-message: "chore: sync pyproject.toml to released version ${{ steps.version.outputs.normalized }}"
+          title: "chore: sync pyproject.toml to released version ${{ steps.version.outputs.normalized }}"
+          body: |
+            Automated sync after publishing release [`${{ github.event.release.tag_name }}`](${{ github.event.release.html_url }}).
+
+            Updates `pyproject.toml`'s `[project].version` to `${{ steps.version.outputs.normalized }}` and regenerates `uv.lock` so future PR dev builds derive their version from the latest released base. Without this, PR builds would continue versioning off the previous `pyproject.toml`, and PEP 440 ordering could prevent `pip install --upgrade chirp-notes-ai` from picking up new releases.
+          labels: |
+            automation
+            release-sync
+          add-paths: |
+            pyproject.toml
+            uv.lock
