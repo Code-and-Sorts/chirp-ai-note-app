@@ -66,17 +66,21 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: cd scripts && uv run python update_release_version.py
 
+      - name: 🔒 Regenerate uv.lock to match new project version
+        run: uv lock
+
       - name: 📤 Commit and push to main
         run: |
-          if git diff --quiet -- pyproject.toml; then
-            echo "::notice::pyproject.toml already at released version; nothing to sync."
+          if git diff --quiet -- pyproject.toml uv.lock; then
+            echo "::notice::pyproject.toml and uv.lock already at released version; nothing to sync."
             exit 0
           fi
+          NORMALIZED_VERSION=$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml
+          git add pyproject.toml uv.lock
           git commit -m "chore: sync pyproject.toml to released version ${{ github.event.release.tag_name }}"
           if ! git push origin main; then
-            echo "::error::Failed to push version sync to main. Branch protection may require manual sync. Update pyproject.toml's [project] version to '${{ github.event.release.tag_name }}' (normalized) and commit to main."
+            echo "::error::Failed to push version sync to main. Branch protection may require manual sync. Set pyproject.toml's [project] version to '${NORMALIZED_VERSION}' (normalized form of release tag '${{ github.event.release.tag_name }}'), run 'uv lock', and commit both files to main."
             exit 1
           fi
