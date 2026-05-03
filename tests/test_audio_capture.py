@@ -6,6 +6,7 @@ platform. Tests that depend on the real Swift binary are gated to macOS.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import io
 import itertools
@@ -22,10 +23,9 @@ import numpy as np
 import pytest
 
 if sys.platform != "darwin":
-    pytest.importorskip(
-        "audio_capture",
-        reason="audio_capture is import-guarded off-Darwin; covered by "
-        "test_non_macos_import_raises which patches sys.platform.",
+    pytest.skip(
+        "audio_capture requires macOS; see test_non_macos_import_raises",
+        allow_module_level=True,
     )
 
 if sys.platform == "darwin":
@@ -108,7 +108,10 @@ def _spawn_fake_helper(
 
 
 def _patch_resolve_to(path: Path):
-    return mock.patch("audio_capture._resolve_binary_path", return_value=path)
+    return mock.patch(
+        "audio_capture._resolve_binary_path",
+        return_value=contextlib.nullcontext(path),
+    )
 
 
 def test_permission_denied_raises_permission_error(tmp_path: Path) -> None:

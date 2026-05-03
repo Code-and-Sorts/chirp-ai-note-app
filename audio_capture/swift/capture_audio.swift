@@ -91,7 +91,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
                 try stdoutHandle.write(contentsOf: header)
                 try stdoutHandle.write(contentsOf: pcm)
             } catch {
-                self.shutdown(reason: "epipe")
+                handleBrokenPipe()
             }
         }
     }
@@ -197,6 +197,9 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         shutdown(reason: "scstream_stopped")
+        writeStderr("error: scstream_stopped: \(error.localizedDescription)\n")
+        flushStderr()
+        exit(1)
     }
 
     func shutdown(reason: String) {

@@ -100,7 +100,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+source = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 omit = [
     "tests/*",
     "*/__pycache__/*",
@@ -125,7 +125,7 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
-files = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+files = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [dependency-groups]
 dev = [

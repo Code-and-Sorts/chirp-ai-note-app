@@ -32,6 +32,7 @@ import sys
 if sys.platform != "darwin":
     raise RuntimeError("audio_capture requires macOS 13+")
 
+import contextlib
 import queue
 import struct
 import subprocess
@@ -64,13 +65,12 @@ class AudioCaptureCrashed(RuntimeError):
     """Raised when the helper exits with a non-zero return code."""
 
 
-def _resolve_binary_path() -> Path:
+def _resolve_binary_path() -> contextlib.AbstractContextManager[Path]:
     package_files = resources.files("audio_capture")
     binary_resource = (
         package_files / "CaptureAudio.app" / "Contents" / "MacOS" / "capture_audio"
     )
-    with resources.as_file(binary_resource) as path:
-        return Path(path)
+    return resources.as_file(binary_resource)
 
 
 def _read_frame(
@@ -101,27 +101,36 @@ class AudioCapture:
         self._recent_stderr: list[str] = []
         self._cleaned_up = False
         self._atexit_finalizer: weakref.finalize | None = None
+        self._binary_resource_ctx: contextlib.AbstractContextManager[Path] | None = None
 
     def __enter__(self) -> AudioCapture:
-        binary_path = _resolve_binary_path()
-        if not binary_path.exists():
-            raise FileNotFoundError(
-                "capture_audio binary not found. Build it with: "
-                "python -m audio_capture.build"
+        ctx = _resolve_binary_path()
+        binary_path = ctx.__enter__()
+        self._binary_resource_ctx = ctx
+        try:
+            if not binary_path.exists():
+                raise FileNotFoundError(
+                    "capture_audio binary not found. Build it with: "
+                    "python -m audio_capture.build"
+                )
+
+            self._proc = subprocess.Popen(
+                [str(binary_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
             )
 
-        self._proc = subprocess.Popen(
-            [str(binary_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=0,
-        )
-
-        try:
-            self._start_stderr_drain()
-            self._wait_for_startup()
+            try:
+                self._start_stderr_drain()
+                self._wait_for_startup()
+            except BaseException:
+                self._cleanup_after_failed_start()
+                raise
         except BaseException:
-            self._cleanup_after_failed_start()
+            if self._binary_resource_ctx is not None:
+                self._binary_resource_ctx.__exit__(None, None, None)
+                self._binary_resource_ctx = None
             raise
 
         self._atexit_finalizer = weakref.finalize(self, _atexit_cleanup, self._proc)
@@ -139,8 +148,8 @@ class AudioCapture:
                 for raw in iter(stderr.readline, b""):
                     line = raw.decode("utf-8", errors="replace").rstrip("\n")
                     q.put(line)
-            except Exception:
-                pass
+            except Exception as exc:
+                q.put(f"[audio_capture drain error] {exc}")
 
         thread = threading.Thread(
             target=drain,
@@ -200,6 +209,7 @@ class AudioCapture:
         try:
             proc.terminate()
         except ProcessLookupError:
+            # Process already exited before terminate() could reach it.
             pass
         try:
             proc.wait(timeout=_PROC_WAIT_FAILURE_TIMEOUT)
@@ -207,10 +217,12 @@ class AudioCapture:
             try:
                 proc.kill()
             except ProcessLookupError:
+                # Process already exited before kill() could reach it.
                 pass
             try:
                 proc.wait(timeout=_PROC_WAIT_FAILURE_TIMEOUT)
             except subprocess.TimeoutExpired:
+                # Cleanup must not mask the original startup error; best-effort wait.
                 pass
         if self._stderr_thread is not None:
             self._stderr_thread.join(timeout=_STDERR_JOIN_TIMEOUT)
@@ -227,6 +239,7 @@ class AudioCapture:
             try:
                 proc.terminate()
             except ProcessLookupError:
+                # Process already exited between poll() and terminate().
                 pass
             try:
                 proc.wait(timeout=_PROC_WAIT_TIMEOUT)
@@ -234,15 +247,20 @@ class AudioCapture:
                 try:
                     proc.kill()
                 except ProcessLookupError:
+                    # Process already exited between timeout and kill() attempt.
                     pass
                 try:
                     proc.wait(timeout=_PROC_WAIT_FAILURE_TIMEOUT)
                 except subprocess.TimeoutExpired:
+                    # Process did not exit after kill(); best-effort shutdown.
                     pass
         if self._stderr_thread is not None:
             self._stderr_thread.join(timeout=_STDERR_JOIN_TIMEOUT)
         if self._atexit_finalizer is not None:
             self._atexit_finalizer.detach()
+        if self._binary_resource_ctx is not None:
+            self._binary_resource_ctx.__exit__(None, None, None)
+            self._binary_resource_ctx = None
 
     def _drain_recent_stderr(self) -> None:
         while True:
@@ -306,8 +324,10 @@ def _atexit_cleanup(proc: subprocess.Popen[bytes]) -> None:
                 try:
                     proc.wait(timeout=_PROC_WAIT_FAILURE_TIMEOUT)
                 except subprocess.TimeoutExpired:
+                    # Best-effort wait at interpreter exit; force-continue cleanup.
                     pass
     except Exception:
+        # Swallow all errors during interpreter shutdown; cleanup is best-effort.
         pass
 
 
