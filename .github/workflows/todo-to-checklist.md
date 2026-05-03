@@ -25,6 +25,10 @@ safe-outputs:
     labels: [automation, todo-list]
     draft: false
     allowed-files: [".copilot/todo.md"]
+    protected-files:
+      policy: blocked
+      exclude:
+        - .copilot/
 ---
 
 # Append Labeled Todo Issue to Checklist
