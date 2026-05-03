@@ -24,7 +24,7 @@ safe-outputs:
     title-prefix: "[todo] "
     labels: [automation, todo-list]
     draft: false
-    allowed-files: [".copilot/todo.md"]
+    allowed-files: ["TODO.md"]
 ---
 
 # Append Labeled Todo Issue to Checklist
@@ -32,12 +32,12 @@ safe-outputs:
 A repo contributor has applied the `todo` label to issue
 **#${{ github.event.issue.number }}** — `${{ github.event.issue.title }}`.
 
-Update `.copilot/todo.md` so the checklist mirrors the new label.
+Update `TODO.md` so the checklist mirrors the new label.
 
 ## Steps
 
 1. Use the `issue_read` tool to fetch issue **#${{ github.event.issue.number }}** in repository `${{ github.repository }}`. From the response, capture:
-   - `number` (used **only** for the PR `Closes` keyword so merging the PR closes the source issue — never written into `.copilot/todo.md`)
+   - `number` (used **only** for the PR `Closes` keyword so merging the PR closes the source issue — never written into `TODO.md`)
    - `title`
    - `body` (the issue description; trim and treat empty/whitespace as "no summary")
 
@@ -51,7 +51,7 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
    - Then truncate that paragraph to **300 characters max**, ending on a word boundary, and append `…` if any text was cut.
    - The result is the `<summary>` value used below.
 
-3. Read `.copilot/todo.md`. If the file is missing, create it from this template:
+3. Read `TODO.md`. If the file is missing, create it from this template:
 
    ````markdown
    # Todo
@@ -76,7 +76,7 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
    - [ ] **<title>**
    ```
 
-   The issue number must **not** appear anywhere in `.copilot/todo.md` — neither visibly nor inside an HTML comment.
+   The issue number must **not** appear anywhere in `TODO.md` — neither visibly nor inside an HTML comment.
 
    If — and only if — the (sanitized, truncated) `<summary>` from step 2 is non-empty, append a second line directly underneath:
 
@@ -86,14 +86,14 @@ Update `.copilot/todo.md` so the checklist mirrors the new label.
 
    If `<summary>` is empty, **do not** add the summary line and **do not** add a blank/indented placeholder line — the entry is exactly one line.
 
-6. **Single-file change guard:** run `bash` to confirm the only modified path is `.copilot/todo.md`:
+6. **Single-file change guard:** run `bash` to confirm the only modified path is `TODO.md`:
 
    ```
    git diff --name-only
    ```
 
-   The output must be exactly `.copilot/todo.md` (or empty in the idempotent case). If any other path appears, **revert** that change with `git checkout -- <path>` before producing the PR. Do not edit any file outside `.copilot/todo.md` under any circumstance.
+   The output must be exactly `TODO.md` (or empty in the idempotent case). If any other path appears, **revert** that change with `git checkout -- <path>` before producing the PR. Do not edit any file outside `TODO.md` under any circumstance.
 
-7. Commit only `.copilot/todo.md`.
+7. Commit only `TODO.md`.
    - PR **title**: `Add todo: <title>`
    - PR **body** must include the line `Closes #<number>` on its own line so merging the PR closes the source issue. Keep the rest of the body brief.
