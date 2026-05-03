@@ -31,7 +31,10 @@ dependencies = [
 chirp = "chirp.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+packages = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"audio_capture/CaptureAudio.app" = "audio_capture/CaptureAudio.app"
 
 [project.optional-dependencies]
 dev = [
@@ -49,6 +52,7 @@ dev = [
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+extend-exclude = ["audio_capture/swift", "audio_capture/CaptureAudio.app"]
 
 [tool.ruff.lint]
 select = [
