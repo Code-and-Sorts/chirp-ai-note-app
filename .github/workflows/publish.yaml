@@ -81,20 +81,45 @@ jobs:
           echo "normalized=${NORMALIZED_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: 📥 Open PR to sync version on main
-        uses: peter-evans/create-pull-request@v7
-        with:
-          base: main
-          branch: chore/sync-pyproject-to-${{ steps.version.outputs.normalized }}
-          delete-branch: true
-          commit-message: "chore: sync pyproject.toml to released version ${{ steps.version.outputs.normalized }}"
-          title: "chore: sync pyproject.toml to released version ${{ steps.version.outputs.normalized }}"
-          body: |
-            Automated sync after publishing release [`${{ github.event.release.tag_name }}`](${{ github.event.release.html_url }}).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NORMALIZED_VERSION: ${{ steps.version.outputs.normalized }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+        run: |
+          set -euo pipefail
 
-            Updates `pyproject.toml`'s `[project].version` to `${{ steps.version.outputs.normalized }}` and regenerates `uv.lock` so future PR dev builds derive their version from the latest released base. Without this, PR builds would continue versioning off the previous `pyproject.toml`, and PEP 440 ordering could prevent `pip install --upgrade chirp-notes-ai` from picking up new releases.
-          labels: |
-            automation
-            release-sync
-          add-paths: |
-            pyproject.toml
-            uv.lock
+          BRANCH="chore/sync-pyproject-to-${NORMALIZED_VERSION}"
+          TITLE="chore: sync pyproject.toml to released version ${NORMALIZED_VERSION}"
+
+          if [[ -z "$(git status --porcelain pyproject.toml uv.lock)" ]]; then
+            echo "No changes to pyproject.toml or uv.lock; skipping PR."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B "$BRANCH"
+          git add pyproject.toml uv.lock
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "$BRANCH"
+
+          BODY=$(cat <<EOF
+          Automated sync after publishing release [\`${RELEASE_TAG}\`](${RELEASE_URL}).
+
+          Updates \`pyproject.toml\`'s \`[project].version\` to \`${NORMALIZED_VERSION}\` and regenerates \`uv.lock\` so future PR dev builds derive their version from the latest released base. Without this, PR builds would continue versioning off the previous \`pyproject.toml\`, and PEP 440 ordering could prevent \`pip install --upgrade chirp-notes-ai\` from picking up new releases.
+          EOF
+          )
+
+          if EXISTING=$(gh pr view "$BRANCH" --json number --jq .number 2>/dev/null); then
+            echo "PR #${EXISTING} already exists for ${BRANCH}; updated branch in place."
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --label automation \
+              --label release-sync
+          fi
