@@ -33,8 +33,8 @@ chirp = "chirp.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"audio_capture/CaptureAudio.app" = "audio_capture/CaptureAudio.app"
+[tool.hatch.build.hooks.custom]
+# hatch_build.py conditionally includes CaptureAudio.app when present
 
 [project.optional-dependencies]
 dev = [
