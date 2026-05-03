@@ -38,6 +38,7 @@ func failStartup(_ message: String) -> Never {
 
 final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private let writeQueue = DispatchQueue(label: "com.codeandsorts.chirp.capture-audio.write")
+    private let sampleQueue = DispatchQueue(label: "com.codeandsorts.chirp.capture-audio.sample")
     private let anchorHostTime: UInt64
     private let timebaseNumer: UInt64
     private let timebaseDenom: UInt64
@@ -78,8 +79,12 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func writeFrame(source: UInt8, timestampUs: UInt64, pcm: Data) {
-        writeQueue.async { [weak self] in
-            guard let self = self, !self.isStopped() else { return }
+        // Sync onto writeQueue so OS pipe back-pressure stalls the producer
+        // (SCStream sampleQueue or AVAudioEngine tap thread) instead of
+        // unbounded in-process buffering. Producers run on queues distinct
+        // from writeQueue, so this never deadlocks.
+        writeQueue.sync {
+            if isStopped() { return }
             var header = Data(capacity: 1 + 8 + 4)
             var src = source
             header.append(&src, count: 1)
@@ -114,7 +119,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
         config.sampleRate = 16000
         config.channelCount = 1
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: writeQueue)
+        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
         let semaphore = DispatchSemaphore(value: 0)
         var startError: Error?
         stream.startCapture { error in
@@ -288,7 +293,17 @@ func runMain() {
     do {
         try session.startSystemAudio()
     } catch {
-        failStartup("screen_recording_denied")
+        // SCStream surfaces user-declined screen-recording permission as
+        // SCStreamError code -3801 (.userDeclined). Anything else is a
+        // genuine startup failure and should be reported distinctly so the
+        // Python wrapper does not steer users toward System Settings for
+        // non-permission problems.
+        let nsError = error as NSError
+        if nsError.code == -3801 {
+            failStartup("screen_recording_denied")
+        } else {
+            failStartup("screen_recording_failed: \(nsError.localizedDescription)")
+        }
     }
 
     let deviceName: String

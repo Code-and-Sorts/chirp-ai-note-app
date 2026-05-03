@@ -1,13 +1,13 @@
 """Tests for the `audio_capture` package.
 
-Parser tests and the Python-fake-helper end-to-end test run on every
-platform. Tests that depend on the real Swift binary are gated to macOS.
+Parser tests, fake-helper end-to-end tests, and the non-Darwin guard test
+run on every platform. Tests that depend on the real built Swift binary
+are gated to macOS via ``@pytest.mark.skipif``.
 """
 
 from __future__ import annotations
 
 import contextlib
-import importlib
 import io
 import itertools
 import os
@@ -16,31 +16,28 @@ import subprocess
 import sys
 import textwrap
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
 
 import numpy as np
 import pytest
 
-if sys.platform != "darwin":
-    pytest.skip(
-        "audio_capture requires macOS; see test_non_macos_import_raises",
-        allow_module_level=True,
-    )
-
-if sys.platform == "darwin":
-    from audio_capture import (
-        AudioCapture,
-        AudioCaptureCrashed,
-        AudioCaptureStartTimeout,
-        _read_frame,
-    )
-
-
-pytestmark = pytest.mark.skipif(
-    sys.platform != "darwin",
-    reason="audio_capture only imports on macOS; see test_non_macos_import_raises",
+from audio_capture import (
+    AudioCapture,
+    AudioCaptureCrashed,
+    AudioCaptureStartTimeout,
+    _read_frame,
 )
+
+
+@pytest.fixture(autouse=True)
+def _force_darwin_platform(request: pytest.FixtureRequest) -> Iterator[None]:
+    if "real_platform" in request.keywords:
+        yield
+        return
+    with mock.patch.object(sys, "platform", "darwin"):
+        yield
 
 
 def _pack_frame(source: int, timestamp_us: int, samples: np.ndarray) -> bytes:
@@ -363,18 +360,13 @@ def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
             assert cap._proc is not None
 
 
-def test_non_macos_import_raises() -> None:
-    target_platform = "linux" if sys.platform != "linux" else "win32"
-    saved = sys.modules.pop("audio_capture", None)
-    try:
-        with mock.patch("sys.platform", target_platform):
-            with pytest.raises(RuntimeError) as excinfo:
-                importlib.import_module("audio_capture")
-        assert "macOS 13+" in str(excinfo.value)
-    finally:
-        sys.modules.pop("audio_capture", None)
-        if saved is not None:
-            sys.modules["audio_capture"] = saved
+@pytest.mark.real_platform
+def test_non_darwin_capture_raises() -> None:
+    with mock.patch.object(sys, "platform", "linux"):
+        with pytest.raises(RuntimeError) as excinfo:
+            with AudioCapture():
+                pass
+    assert "macOS 13+" in str(excinfo.value)
 
 
 @pytest.mark.integration

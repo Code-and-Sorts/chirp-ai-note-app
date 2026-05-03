@@ -15,8 +15,10 @@ Example:
 16 kHz mono float32. Timestamps are microseconds since a single shared
 anchor captured before either engine starts (monotonic per source).
 
-Requires macOS 13+. The package raises ``RuntimeError`` at import time on
-non-Darwin hosts so callers fail loudly rather than silently degrading.
+Requires macOS 13+ at runtime. Importing the package is platform-neutral
+so wire-format helpers (``_read_frame``) and exception types stay
+introspectable on any host. ``AudioCapture().__enter__`` raises
+``RuntimeError`` on non-Darwin so callers fail loudly at first use.
 
 Building from source:
     Either ``make -C audio_capture/swift build`` or
@@ -27,15 +29,11 @@ Building from source:
 
 from __future__ import annotations
 
-import sys
-
-if sys.platform != "darwin":
-    raise RuntimeError("audio_capture requires macOS 13+")
-
 import contextlib
 import queue
 import struct
 import subprocess
+import sys
 import threading
 import time
 import weakref
@@ -104,6 +102,8 @@ class AudioCapture:
         self._binary_resource_ctx: contextlib.AbstractContextManager[Path] | None = None
 
     def __enter__(self) -> AudioCapture:
+        if sys.platform != "darwin":
+            raise RuntimeError("audio_capture requires macOS 13+")
         ctx = _resolve_binary_path()
         binary_path = ctx.__enter__()
         self._binary_resource_ctx = ctx

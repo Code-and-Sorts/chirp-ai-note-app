@@ -1,4 +1,4 @@
-ARCH ?= arm64
+ARCH ?= $(shell uname -m)
 SWIFT ?= swiftc
 BUNDLE := ../CaptureAudio.app
 MACOS_DIR := $(BUNDLE)/Contents/MacOS
