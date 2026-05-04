@@ -127,11 +127,16 @@ class LiveAudioStream:
                 for _ts_us, mixed in mixer.drain():
                     self._publish_mixed_frame(mixed)
         except Exception as exc:
-            # Stash the error and flip stop_event so the live session can
-            # surface it instead of completing with a silently truncated
-            # recording.
+            # Stash the error so the live session can surface it instead
+            # of completing with a silently truncated recording.
             logger.exception("audio-capture-mixer thread crashed")
             self._capture_error = exc
+        finally:
+            # `cap.frames()` can also exhaust cleanly when the helper
+            # closes stdout and exits 0; in that case no exception fires
+            # but no further frames will arrive. Setting stop_event in
+            # `finally` covers both crash and clean-EOF paths so a live
+            # session without a duration cap doesn't wait forever.
             self.stop_event.set()
 
     def _publish_mixed_frame(self, mixed: np.ndarray) -> None:

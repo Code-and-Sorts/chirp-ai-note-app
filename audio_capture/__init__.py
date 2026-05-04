@@ -101,6 +101,15 @@ class AudioCaptureCrashed(RuntimeError):
     """Raised when the helper exits with a non-zero return code."""
 
 
+class AudioCaptureCorrupt(RuntimeError):
+    """Raised when the helper's framing protocol is violated.
+
+    Distinct from EOF (clean stream end) and from `AudioCaptureCrashed`
+    (helper exited non-zero) so callers can tell "stream truncated by
+    corruption" apart from "stream ended normally".
+    """
+
+
 def _resolve_binary_path() -> contextlib.AbstractContextManager[Path]:
     package_files = resources.files("audio_capture")
     binary_resource = (
@@ -129,7 +138,13 @@ def _read_frame(
     if length == 0:
         return source, timestamp_us, np.zeros(0, dtype=np.float32)
     if length > _MAX_FRAME_PAYLOAD_BYTES:
-        return None
+        # Surface corruption as an explicit error rather than mapping it
+        # to EOF; otherwise a wedged helper that emits a bogus length and
+        # then exits 0 looks indistinguishable from a clean stream end.
+        raise AudioCaptureCorrupt(
+            f"capture_audio frame payload length {length} exceeds "
+            f"the {_MAX_FRAME_PAYLOAD_BYTES} byte cap; framing is corrupt"
+        )
     payload = stdout.read(length)
     if len(payload) < length:
         return None
@@ -429,6 +444,7 @@ def _atexit_cleanup(proc: subprocess.Popen[bytes]) -> None:
 
 __all__ = [
     "AudioCapture",
+    "AudioCaptureCorrupt",
     "AudioCaptureCrashed",
     "AudioCaptureStartTimeout",
     "SOURCE_MICROPHONE",

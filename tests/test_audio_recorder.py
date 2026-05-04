@@ -286,6 +286,24 @@ class TestAudioRecorder:
         assert recorder.is_recording is False
         assert list(tmp_path.iterdir()) == []
 
+    def test_start_recording_unblocks_when_helper_eofs_cleanly(
+        self, tmp_path, mock_settings, mock_device_manager
+    ):
+        # Helper closes stdout and exits 0; cap.frames() exhausts cleanly
+        # without raising. The worker must flip is_recording=False so
+        # start_recording's main wait loop exits instead of polling
+        # forever.
+        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        frames = _paired_float_frames(pair_count=3)
+        fake_cap = FakeAudioCapture(frames=frames, mic_device_name="MockMic")
+
+        with patch("recorder.audio_recorder.AudioCapture", return_value=fake_cap):
+            slug = recorder.start_recording(title="clean-eof")
+
+        assert slug is not None
+        assert recorder.is_recording is False
+        assert (tmp_path / slug / "audio.wav").exists()
+
     def test_start_recording_surfaces_worker_crash_after_partial_capture(
         self, tmp_path, mock_settings, mock_device_manager
     ):

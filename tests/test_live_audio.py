@@ -230,6 +230,25 @@ def test_capture_error_is_set_when_mixer_thread_crashes() -> None:
     assert stop_event.is_set()
 
 
+def test_mixer_thread_sets_stop_event_on_clean_helper_eof() -> None:
+    # `cap.frames()` can exhaust cleanly when the helper closes stdout
+    # and exits 0. The mixer thread must still flip stop_event so a
+    # live session without a duration cap doesn't wait forever after
+    # the helper has already stopped emitting.
+    stream, _frame_queue, _level_queue, stop_event = _make_stream()
+    fake = _FakeAudioCapture(_paired_frames(2), block_after_drain=False)
+
+    with mock.patch("recorder.live_audio.AudioCapture", return_value=fake):
+        stream.start()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not stop_event.is_set():
+            time.sleep(0.01)
+        stream.stop()
+
+    assert stop_event.is_set()
+    assert stream.capture_error is None
+
+
 def test_audio_frame_timestamps_are_synthesized_from_frame_index() -> None:
     # Mixer-thread scheduling latency must NOT leak into AudioFrame.timestamp:
     # downstream VAD / chunking expects timestamps that advance by exactly

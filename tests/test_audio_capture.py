@@ -25,6 +25,7 @@ import pytest
 
 from audio_capture import (
     AudioCapture,
+    AudioCaptureCorrupt,
     AudioCaptureCrashed,
     AudioCaptureStartTimeout,
     _read_frame,
@@ -81,6 +82,17 @@ def test_read_frame_returns_none_on_partial_payload() -> None:
     header = struct.pack("<BQI", 1, 0, 16)
     stream = io.BytesIO(header + b"\x00\x00\x00\x00")
     assert _read_frame(stream) is None
+
+
+def test_read_frame_raises_on_oversized_length() -> None:
+    # Bogus length prefix > 8 MiB cap. Must surface as corruption rather
+    # than be silently mapped to EOF — otherwise a wedged helper that
+    # exits 0 after writing a corrupt header looks like a clean stream
+    # end and the caller accepts a truncated capture.
+    header = struct.pack("<BQI", 1, 0, 9 * 1024 * 1024)
+    stream = io.BytesIO(header)
+    with pytest.raises(AudioCaptureCorrupt):
+        _read_frame(stream)
 
 
 def _spawn_fake_helper(

@@ -106,6 +106,24 @@ class TestSilencePadding:
             np.testing.assert_allclose(mixed, 0.5, atol=1e-6)
 
 
+class TestPartialChunkStall:
+    def test_stall_padding_works_when_lagging_has_partial_chunk(self):
+        # Lagging source delivers a sub-frame partial then stops. Without
+        # the partial-chunk fix, _is_stalled() short-circuits on size > 0
+        # and drain() blocks forever, discarding the leading source's
+        # buffered audio when the 8-frame cap eventually drops it.
+        mixer = StereoToMonoMixer(gap_ms=100)
+        for index in range(6):
+            mixer.feed(SOURCE_SYSTEM, index * 32_000, _const(512, 0.5))
+        mixer.feed(SOURCE_MICROPHONE, 0, _const(100, 0.3))
+
+        output = list(mixer.drain())
+
+        assert len(output) >= 1
+        for _, mixed in output:
+            np.testing.assert_allclose(mixed, 0.5, atol=1e-6)
+
+
 class TestBufferCap:
     def test_caps_buffer_to_eight_frames(self):
         mixer = StereoToMonoMixer()

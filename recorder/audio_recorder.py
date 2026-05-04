@@ -187,10 +187,13 @@ class AudioRecorder:
                     self.current_level = min(1.0, float(np.max(np.abs(mixed))))
         except Exception as exc:
             # Stash the error so `start_recording` re-raises it instead of
-            # silently truncating the partial recording. is_recording is
-            # flipped so the main wait loop exits promptly.
+            # silently truncating the partial recording.
             logger.exception("audio-recorder-capture worker crashed")
             self._capture_error = exc
+        finally:
+            # `cap.frames()` can also exhaust cleanly on helper EOF; flip
+            # the flag in `finally` so the main wait loop exits in both
+            # crash and clean-EOF paths instead of polling forever.
             self.is_recording = False
 
     def _stop_recording_timer(self):

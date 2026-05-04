@@ -33,9 +33,29 @@ extern int responsibility_spawnattrs_setdisclaim(posix_spawnattr_t *attrs,
 
 static volatile pid_t child_pid = 0;
 
+// Grace period (seconds) between forwarding a termination signal and
+// escalating to SIGKILL on the child. Picked to be well under the Python
+// side's `_PROC_WAIT_TIMEOUT` so the escalation completes before Python
+// itself escalates from SIGTERM to SIGKILL on the launcher.
+#define CHILD_KILL_GRACE_SECONDS 2
+
+static void escalate_to_sigkill(int sig) {
+    (void)sig;
+    if (child_pid > 0) {
+        kill(child_pid, SIGKILL);
+    }
+}
+
 static void forward_signal(int sig) {
     if (child_pid > 0) {
         kill(child_pid, sig);
+        // If the child ignores the forwarded signal (wedged Swift helper,
+        // for example), Python's later SIGKILL would only kill the
+        // launcher and orphan the child. Arm an alarm so the launcher
+        // SIGKILLs the child itself if it hasn't exited within the grace
+        // period.
+        signal(SIGALRM, escalate_to_sigkill);
+        alarm(CHILD_KILL_GRACE_SECONDS);
     }
 }
 

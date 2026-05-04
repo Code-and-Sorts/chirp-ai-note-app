@@ -129,7 +129,13 @@ class StereoToMonoMixer:
         return frame
 
     def _is_stalled(self, lagging: int, leading: int) -> bool:
-        if self._buffers[lagging].size > 0:
+        # A source with at least one full frame already buffered is not
+        # stalled — drain() will pair it normally on the next iteration.
+        # A *partial* buffer (0 < size < frame_samples) still counts as
+        # stalled when the timestamp gap criterion fires; otherwise the
+        # leading source's audio would be discarded forever waiting for
+        # the lagging side's partial to fill (which it may never do).
+        if self._buffers[lagging].size >= self._frame_samples:
             return False
         leading_head = self._head_ts[leading]
         if leading_head is None:
