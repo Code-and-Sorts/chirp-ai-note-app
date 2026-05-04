@@ -1,6 +1,5 @@
-import array
 import logging
-import math
+import sys
 import threading
 import tomllib
 import wave
@@ -9,10 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from threading import Timer
 
-import pyaudio
+import numpy as np
 import tomli_w
 
+from audio_capture import AudioCapture
 from config.settings import ChirpSettings
+from recorder.audio_mixer import StereoToMonoMixer
 from recorder.device_manager import DeviceManager
 from recorder.meeting_monitor import MeetingMonitor
 from utils.file_utils import (
@@ -24,29 +25,26 @@ from utils.time_utils import get_recording_duration
 
 logger = logging.getLogger(__name__)
 
+OUTPUT_SAMPLE_RATE = 16000
+OUTPUT_CHANNELS = 1
+OUTPUT_SAMPLE_WIDTH_BYTES = 2
+
 
 class AudioRecorder:
     def __init__(self, settings: ChirpSettings, device_manager: DeviceManager):
         self.settings = settings
         self.device_manager = device_manager
-        self.audio = pyaudio.PyAudio()
         self.is_recording = False
-        self.frames: list[bytes] = []
-        self.stream = None
+        self.frames: list[np.ndarray] = []
         self.recording_thread: Timer | None = None
         self.monitor: MeetingMonitor | None = None
         self.start_time: datetime | None = None
         self.title: str | None = None
         self.current_level: float = 0.0
-        self._record_channels: int = 1
-        self._output_channels: int = 1
         self.note_dir: Path | None = None
         self.slug: str | None = None
         self._paused: bool = False
-
-    def __del__(self):
-        if self.audio:
-            self.audio.terminate()
+        self._capture_thread: threading.Thread | None = None
 
     def start_recording(
         self,
@@ -58,13 +56,8 @@ class AudioRecorder:
         if self.is_recording:
             raise RuntimeError("Recording already in progress")
 
-        device_index = self.device_manager.get_recommended_device()
-        if device_index is None:
-            raise RuntimeError("No suitable audio device found")
-
-        device_info = self.device_manager.get_device_info(device_index)
-        if not device_info or device_info["maxInputChannels"] == 0:
-            raise RuntimeError("Selected device has no input channels")
+        if sys.platform != "darwin":
+            raise RuntimeError("chirp record requires macOS 13 or later")
 
         notes_root = self.settings.directories.notes_root
         notes_root.mkdir(parents=True, exist_ok=True)
@@ -76,74 +69,72 @@ class AudioRecorder:
         note_dir.mkdir(parents=True, exist_ok=True)
         audio_path = note_dir / AUDIO_FILENAME
 
-        mic_name = self._resolve_mic_name(device_index)
-
-        record_channels = int(device_info["maxInputChannels"])
-        output_channels = min(self.settings.audio.channels, record_channels)
-        sample_rate = min(
-            self.settings.audio.sample_rate, int(device_info["defaultSampleRate"])
-        )
-
-        self._record_channels = record_channels
-        self._output_channels = output_channels
         self.frames = []
         self.is_recording = True
         self._paused = False
+        self.current_level = 0.0
         self.start_time = recorded_date
         self.title = effective_title
         self.note_dir = note_dir
         self.slug = slug
 
-        self._write_initial_meta(
-            note_dir=note_dir,
-            title=effective_title,
-            recorded_at=recorded_date,
-            mic=mic_name,
-            tags=list(tags or []),
-        )
-
-        self.stream = self.audio.open(
-            format=pyaudio.paInt16,
-            channels=record_channels,
-            rate=sample_rate,
-            input=True,
-            input_device_index=device_index,
-            frames_per_buffer=self.settings.audio.chunk_size,
-            stream_callback=self._audio_callback,
-        )
-
-        self.monitor = MeetingMonitor(
-            self.settings.monitoring,
-            self.start_time,
-            self._on_warning,
-            self._should_stop_recording,
-        )
-
-        if self.stream:
-            self.stream.start_stream()
-        if self.monitor:
-            self.monitor.start()
-
-        if duration_minutes:
-            self.recording_thread = Timer(
-                duration_minutes * 60, self._stop_recording_timer
-            )
-            if self.recording_thread:
-                self.recording_thread.start()
-
         try:
-            while self.is_recording:
-                threading.Event().wait(0.1)
-                if level_callback is not None:
-                    try:
-                        level_callback(self.current_level)
-                    except Exception:
-                        logger.debug("Level callback failed, disabling", exc_info=True)
-                        level_callback = None
+            with AudioCapture() as cap:
+                mic_name = cap.mic_device_name or "default"
+
+                self._write_initial_meta(
+                    note_dir=note_dir,
+                    title=effective_title,
+                    recorded_at=recorded_date,
+                    mic=mic_name,
+                    tags=list(tags or []),
+                )
+
+                self.monitor = MeetingMonitor(
+                    self.settings.monitoring,
+                    self.start_time,
+                    self._on_warning,
+                    self._should_stop_recording,
+                )
+                self.monitor.start()
+
+                if duration_minutes:
+                    self.recording_thread = Timer(
+                        duration_minutes * 60, self._stop_recording_timer
+                    )
+                    self.recording_thread.start()
+
+                self._capture_thread = threading.Thread(
+                    target=self._capture_worker,
+                    args=(cap,),
+                    name="audio-recorder-capture",
+                    daemon=True,
+                )
+                self._capture_thread.start()
+
+                try:
+                    while self.is_recording:
+                        threading.Event().wait(0.1)
+                        if level_callback is not None:
+                            try:
+                                level_callback(self.current_level)
+                            except Exception:
+                                logger.debug(
+                                    "Level callback failed, disabling", exc_info=True
+                                )
+                                level_callback = None
+                except KeyboardInterrupt:
+                    self.is_recording = False
         except KeyboardInterrupt:
             pass
+        except Exception:
+            import shutil
+
+            shutil.rmtree(note_dir, ignore_errors=True)
+            raise
         finally:
             self._cleanup_recording()
+            self.is_recording = False
 
         if not self.frames:
             import shutil
@@ -151,12 +142,7 @@ class AudioRecorder:
             shutil.rmtree(note_dir, ignore_errors=True)
             raise RuntimeError("No audio data recorded")
 
-        self._save_recording(
-            audio_path,
-            self._record_channels,
-            self._output_channels,
-            sample_rate,
-        )
+        self._save_recording(audio_path)
 
         duration_s = get_recording_duration(self.start_time) if self.start_time else 0.0
         self._update_meta_duration(note_dir, duration_s)
@@ -168,6 +154,7 @@ class AudioRecorder:
 
     def pause(self) -> None:
         self._paused = True
+        self.current_level = 0.0
 
     def resume(self) -> None:
         self._paused = False
@@ -176,40 +163,32 @@ class AudioRecorder:
     def is_paused(self) -> bool:
         return getattr(self, "_paused", False)
 
-    def _audio_callback(self, in_data, frame_count, time_info, status):
-        if self.is_recording:
-            if not in_data:
-                self.current_level = 0.0
-                return (None, pyaudio.paContinue)
-
-            try:
-                sanitized = in_data
-                if len(sanitized) % 2 != 0:
-                    sanitized = sanitized[:-1]
-
-                if len(sanitized) < 2:
-                    self.current_level = 0.0
-                    return (None, pyaudio.paContinue)
-
-                if not self.is_paused:
-                    self.frames.append(sanitized)
-
-                samples = array.array("h")
-                samples.frombytes(sanitized)
-                rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-                self.current_level = min(rms / 32768.0, 1.0)
-            except Exception:
-                self.current_level = 0.0
-        return (None, pyaudio.paContinue)
+    def _capture_worker(self, cap: AudioCapture) -> None:
+        mixer = StereoToMonoMixer(
+            frame_ms=32, sample_rate=OUTPUT_SAMPLE_RATE, gap_ms=100
+        )
+        try:
+            for source, timestamp_us, samples in cap.frames():
+                if not self.is_recording:
+                    break
+                mixer.feed(source, timestamp_us, samples)
+                for _, mixed in mixer.drain():
+                    if self._paused:
+                        continue
+                    self.frames.append(mixed)
+                    self.current_level = min(1.0, float(np.max(np.abs(mixed))))
+        except Exception:
+            logger.exception("audio-recorder-capture worker crashed")
+            self.is_recording = False
 
     def _stop_recording_timer(self):
         self.is_recording = False
 
     def _cleanup_recording(self):
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-            self.stream = None
+        if self._capture_thread is not None:
+            if self._capture_thread.ident is not None:
+                self._capture_thread.join(timeout=2.0)
+            self._capture_thread = None
 
         if self.monitor:
             self.monitor.stop()
@@ -219,28 +198,19 @@ class AudioRecorder:
             self.recording_thread.cancel()
             self.recording_thread = None
 
-    def _save_recording(
-        self,
-        file_path: Path,
-        record_channels: int,
-        output_channels: int,
-        sample_rate: int,
-    ):
+    def _save_recording(self, file_path: Path) -> None:
         if not self.frames:
             raise RuntimeError("No audio data recorded")
 
-        raw_data = b"".join(self.frames)
-
-        if record_channels > output_channels:
-            raw_data = self._mixdown_channels(
-                raw_data, record_channels, output_channels
-            )
+        mixed = np.concatenate(self.frames)
+        clipped = np.clip(mixed, -1.0, 1.0)
+        int16_samples = (clipped * 32767).astype(np.int16, copy=False)
 
         with wave.open(str(file_path), "wb") as wave_file:
-            wave_file.setnchannels(output_channels)
-            wave_file.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
-            wave_file.setframerate(sample_rate)
-            wave_file.writeframes(raw_data)
+            wave_file.setnchannels(OUTPUT_CHANNELS)
+            wave_file.setsampwidth(OUTPUT_SAMPLE_WIDTH_BYTES)
+            wave_file.setframerate(OUTPUT_SAMPLE_RATE)
+            wave_file.writeframes(int16_samples.tobytes())
 
     def _write_initial_meta(
         self,
@@ -263,41 +233,6 @@ class AudioRecorder:
         meta = _read_meta(meta_path)
         meta["duration_s"] = float(duration_s)
         _write_meta(meta_path, meta)
-
-    def _resolve_mic_name(self, device_index: int) -> str:
-        try:
-            devices = self.device_manager.list_devices()
-            for device in devices:
-                if device["index"] == device_index:
-                    name = device.get("name")
-                    if isinstance(name, str):
-                        return name
-        except Exception:
-            pass
-        return "default"
-
-    @staticmethod
-    def _mixdown_channels(
-        raw_data: bytes, input_channels: int, output_channels: int
-    ) -> bytes:
-        samples = array.array("h")
-        samples.frombytes(raw_data)
-
-        total_frames = len(samples) // input_channels
-        output = array.array("h")
-
-        for frame in range(total_frames):
-            offset = frame * input_channels
-            for out_ch in range(output_channels):
-                mixed = 0
-                sources = 0
-                for in_ch in range(out_ch, input_channels, output_channels):
-                    mixed += samples[offset + in_ch]
-                    sources += 1
-                mixed = max(-32768, min(32767, int(mixed / sources)))
-                output.append(mixed)
-
-        return output.tobytes()
 
     def _on_warning(self, elapsed_minutes: int):
         from utils.popup_manager import PopupManager

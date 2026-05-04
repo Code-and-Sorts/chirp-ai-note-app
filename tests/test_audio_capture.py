@@ -220,7 +220,11 @@ def test_frames_raises_on_nonzero_exit(tmp_path: Path) -> None:
     frame_bytes = _pack_frame(1, 1000, samples)
 
     cmd = _spawn_fake_helper(
-        stderr_lines=["capture: started", "error: screen_recording_denied"],
+        stderr_lines=[
+            "capture: started",
+            'capture: microphone=enabled device="MockMic"',
+            "error: screen_recording_denied",
+        ],
         frames=[frame_bytes],
         exit_code=1,
     )
@@ -276,7 +280,10 @@ def test_end_to_end_with_python_fake_helper(tmp_path: Path) -> None:
     ]
 
     cmd = _spawn_fake_helper(
-        stderr_lines=["capture: started"],
+        stderr_lines=[
+            "capture: started",
+            'capture: microphone=enabled device="MockMic"',
+        ],
         frames=frames,
         exit_code=0,
     )
@@ -314,6 +321,62 @@ def test_end_to_end_with_python_fake_helper(tmp_path: Path) -> None:
         with AudioCapture() as cap:
             mic_only = list(cap.mic_frames())
     assert [ts for ts, _ in mic_only] == [110, 210]
+
+
+def test_mic_device_name_parsed_from_diagnostic_line(tmp_path: Path) -> None:
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\necho stub\n")
+    fake_binary.chmod(0o755)
+
+    cmd = _spawn_fake_helper(
+        stderr_lines=[
+            "capture: started",
+            "capture: sample_rate=16000 channels=1 format=float32",
+            "capture: system_audio=enabled",
+            'capture: microphone=enabled device="MacBook Pro Microphone"',
+        ],
+        frames=[],
+        exit_code=0,
+    )
+
+    real_popen = subprocess.Popen
+
+    def popen_override(args, **kwargs):
+        return real_popen(cmd, **kwargs)
+
+    with (
+        _patch_resolve_to(fake_binary),
+        mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
+    ):
+        with AudioCapture() as cap:
+            assert cap.mic_device_name == "MacBook Pro Microphone"
+
+
+def test_mic_device_name_is_none_when_diagnostic_line_absent(
+    tmp_path: Path,
+) -> None:
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\necho stub\n")
+    fake_binary.chmod(0o755)
+
+    cmd = _spawn_fake_helper(
+        stderr_lines=["capture: started"],
+        frames=[],
+        exit_code=0,
+    )
+
+    real_popen = subprocess.Popen
+
+    def popen_override(args, **kwargs):
+        return real_popen(cmd, **kwargs)
+
+    with (
+        _patch_resolve_to(fake_binary),
+        mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
+        mock.patch("audio_capture._POST_START_DRAIN_SECONDS", 0.1),
+    ):
+        with AudioCapture() as cap:
+            assert cap.mic_device_name is None
 
 
 def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
@@ -355,6 +418,7 @@ def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
         _patch_resolve_to(fake_binary),
         mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
         mock.patch("audio_capture._STARTUP_TIMEOUT_SECONDS", 1.0),
+        mock.patch("audio_capture._POST_START_DRAIN_SECONDS", 0.1),
     ):
         with AudioCapture() as cap:
             assert cap._proc is not None

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import queue
+import re
 import struct
 import subprocess
 import sys
@@ -48,11 +49,22 @@ SOURCE_SYSTEM = 1
 SOURCE_MICROPHONE = 2
 
 _FRAME_HEADER_SIZE = 1 + 8 + 4
+# Sanity cap on a single frame's payload; well above any realistic 16 kHz
+# float32 chunk (a 1-second buffer is 64 KiB). Defends against a
+# malformed length prefix from a wedged or corrupted helper.
+_MAX_FRAME_PAYLOAD_BYTES = 8 * 1024 * 1024
 _STARTUP_TIMEOUT_SECONDS = 5.0
+# Post-`capture: started` window during which we drain the diagnostic lines
+# the helper emits next (sample_rate, system_audio, microphone=...). The
+# Swift side flushes all four lines back-to-back, so this only needs to cover
+# pipe + drainer-thread latency.
+_POST_START_DRAIN_SECONDS = 0.5
 _PROC_WAIT_TIMEOUT = 5.0
 _PROC_WAIT_FAILURE_TIMEOUT = 2.0
 _STDERR_JOIN_TIMEOUT = 1.0
 _CRASH_WAIT_TIMEOUT = 2.0
+
+_MIC_DEVICE_LINE_RE = re.compile(r'^capture: microphone=enabled device="(.+)"$')
 
 
 class AudioCaptureStartTimeout(RuntimeError):
@@ -82,6 +94,8 @@ def _read_frame(
     length = struct.unpack("<I", header[9:13])[0]
     if length == 0:
         return source, timestamp_us, np.zeros(0, dtype=np.float32)
+    if length > _MAX_FRAME_PAYLOAD_BYTES:
+        return None
     payload = stdout.read(length)
     if len(payload) < length:
         return None
@@ -100,6 +114,7 @@ class AudioCapture:
         self._cleaned_up = False
         self._atexit_finalizer: weakref.finalize | None = None
         self._binary_resource_ctx: contextlib.AbstractContextManager[Path] | None = None
+        self.mic_device_name: str | None = None
 
     def __enter__(self) -> AudioCapture:
         if sys.platform != "darwin":
@@ -116,6 +131,7 @@ class AudioCapture:
 
             self._proc = subprocess.Popen(
                 [str(binary_path)],
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
@@ -179,6 +195,7 @@ class AudioCapture:
                 continue
             self._recent_stderr.append(line)
             if line == "capture: started":
+                self._drain_post_start_diagnostics()
                 return
             if line == "capture: awaiting_permission":
                 deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
@@ -186,6 +203,27 @@ class AudioCapture:
             if line.startswith("error: "):
                 code = line[len("error: ") :].strip()
                 raise self._permission_error(code)
+
+    def _drain_post_start_diagnostics(self) -> None:
+        # The helper emits `capture: sample_rate=...`, `capture: system_audio=...`,
+        # and `capture: microphone=enabled device="..."` immediately after
+        # `capture: started`. Drain them here so `mic_device_name` is set
+        # before `__enter__` returns; callers reading it right after entering
+        # the context manager get a deterministic value.
+        deadline = time.monotonic() + _POST_START_DRAIN_SECONDS
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            try:
+                line = self._stderr_queue.get(timeout=remaining)
+            except queue.Empty:
+                return
+            self._recent_stderr.append(line)
+            match = _MIC_DEVICE_LINE_RE.match(line)
+            if match:
+                self.mic_device_name = match.group(1)
+                return
 
     def _permission_error(self, code: str) -> Exception:
         if code == "microphone_denied":

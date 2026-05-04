@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import logging
 import queue
+import sys
 import threading
 import time
 import wave
@@ -8,11 +11,22 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import pyaudio
 
+from audio_capture import AudioCapture
 from config.settings import ChirpSettings
+from recorder.audio_mixer import (
+    SOURCE_MICROPHONE,
+    SOURCE_SYSTEM,
+    StereoToMonoMixer,
+)
 from recorder.device_manager import DeviceManager
 from recorder.live_types import AudioFrame
+
+logger = logging.getLogger(__name__)
+
+_LIVE_SAMPLE_RATE = 16000
+_LIVE_CHANNELS = 1
+_MIXER_THREAD_JOIN_TIMEOUT = 2.0
 
 
 class LiveAudioStream:
@@ -33,20 +47,22 @@ class LiveAudioStream:
         self.stop_event = stop_event
         self.level_queue = level_queue
         self.frame_ms = frame_ms
-        self.channels = channels
+        # `channels` constructor arg is retained for backward compatibility;
+        # AudioCapture always produces mono mixed output.
+        self.channels = _LIVE_CHANNELS
         self.debug_dir = debug_dir
         self._debug_frames: list[bytes] = []
 
-        self._stream: pyaudio.Stream | None = None
-        self._audio = pyaudio.PyAudio()
         self._frames: list[bytes] = []
         self._start_time: float | None = None
         self._frame_duration = frame_ms / 1000.0
-        self._sample_rate = settings.audio.sample_rate
+        self._sample_rate = _LIVE_SAMPLE_RATE
         self._frame_samples = max(1, int(self._sample_rate * (self.frame_ms / 1000.0)))
-        self._frame_index = 0
-        self._lock = threading.Lock()
         self._recorded_at: datetime | None = None
+
+        self._cap_ctx: AudioCapture | None = None
+        self._cap: AudioCapture | None = None
+        self._mixer_thread: threading.Thread | None = None
 
     @property
     def sample_rate(self) -> int:
@@ -61,127 +77,89 @@ class LiveAudioStream:
         return self._frame_duration
 
     def start(self):
-        device_index = self.device_manager.get_recommended_device()
-        if device_index is None:
-            raise RuntimeError("No suitable audio device found for live transcription")
+        if sys.platform != "darwin":
+            raise RuntimeError("chirp record requires macOS 13 or later")
 
-        device_info = self.device_manager.get_device_info(device_index)
-        if not device_info or device_info["maxInputChannels"] == 0:
-            raise RuntimeError("Selected device has no input channels")
-
-        max_inputs = int(device_info.get("maxInputChannels", 0))
-        channels = min(self.channels, max_inputs if max_inputs > 0 else 1)
-        channels = max(1, channels)
-
-        default_rate = device_info.get("defaultSampleRate", self._sample_rate)
-        try:
-            default_rate = int(float(default_rate))
-        except (TypeError, ValueError):
-            default_rate = self._sample_rate
-
-        candidate_rates: list[int] = []
-        for rate in [self._sample_rate, 16000, 48000, 32000, default_rate]:
-            try:
-                rate_int = int(float(rate))
-            except (TypeError, ValueError):
-                continue
-            if rate_int > 0 and rate_int not in candidate_rates:
-                candidate_rates.append(rate_int)
-
-        stream: pyaudio.Stream | None = None
-        last_error: Exception | None = None
-
-        for rate in candidate_rates:
-            frame_samples = max(1, int(rate * (self.frame_ms / 1000.0)))
-            try:
-                stream = self._audio.open(
-                    format=pyaudio.paInt16,
-                    channels=channels,
-                    rate=rate,
-                    input=True,
-                    input_device_index=device_index,
-                    frames_per_buffer=frame_samples,
-                    stream_callback=self._callback,
-                )
-                self._sample_rate = rate
-                self._frame_samples = frame_samples
-                break
-            except Exception as exc:  # pragma: no cover - hardware dependent
-                last_error = exc
-                continue
-
-        if stream is None:
-            message = "Failed to open audio stream"
-            if last_error:
-                message += f": {last_error}"
-            raise RuntimeError(message)
-
-        self._frame_duration = self._frame_samples / self._sample_rate
+        self._sample_rate = _LIVE_SAMPLE_RATE
+        self.channels = _LIVE_CHANNELS
+        self._frame_samples = 512
+        self._frame_duration = self.frame_ms / 1000.0
         self._frames.clear()
-        self._frame_index = 0
+        self._debug_frames.clear()
         self._start_time = time.monotonic()
         self._recorded_at = datetime.now()
 
-        self._stream = stream
-        self.channels = channels
-        self._stream.start_stream()
+        cap_ctx = AudioCapture()
+        cap = cap_ctx.__enter__()
+        self._cap_ctx = cap_ctx
+        self._cap = cap
 
-    def _callback(self, in_data, frame_count, time_info, status_flags):  # noqa: D401
-        if self.stop_event.is_set():
-            return (None, pyaudio.paComplete)
+        thread = threading.Thread(
+            target=self._mixer_loop,
+            name="audio-capture-mixer",
+            daemon=True,
+        )
+        self._mixer_thread = thread
+        thread.start()
 
-        with self._lock:
-            if self._start_time is None:
-                self._start_time = time.monotonic()
+    def _mixer_loop(self) -> None:
+        cap = self._cap
+        if cap is None:
+            return
+        mixer = StereoToMonoMixer(
+            frame_ms=self.frame_ms,
+            sample_rate=_LIVE_SAMPLE_RATE,
+            gap_ms=100,
+        )
+        start_time = self._start_time or time.monotonic()
+        try:
+            for source, timestamp_us, samples in cap.frames():
+                if self.stop_event.is_set():
+                    break
+                if source not in (SOURCE_SYSTEM, SOURCE_MICROPHONE):
+                    continue
+                mixer.feed(source, timestamp_us, samples)
+                for _ts_us, mixed in mixer.drain():
+                    self._publish_mixed_frame(mixed, start_time)
+        except Exception:
+            logger.exception("audio-capture-mixer thread crashed")
+            self.stop_event.set()
 
-            timestamp = self._frame_index * self._frame_duration
-            self._frame_index += 1
-            self._frames.append(in_data)
-
-        pcm = np.frombuffer(in_data, dtype=np.int16)
-        if self.channels > 1 and pcm.size:
-            pcm = pcm.reshape(-1, self.channels)
-            mono = np.mean(pcm, axis=1).astype(np.int16)
-            peak = np.max(np.abs(pcm), axis=0).mean() / 32768.0 if pcm.size else 0.0
-        else:
-            mono = pcm.astype(np.int16, copy=False)
-            peak = np.max(np.abs(mono)) / 32768.0 if mono.size else 0.0
-
-        mono_bytes = np.ascontiguousarray(mono).tobytes()
-        if mono.size:
-            peak = min(1.0, peak)
+    def _publish_mixed_frame(self, mixed: np.ndarray, start_time: float) -> None:
+        if mixed.size:
+            peak = min(1.0, float(np.max(np.abs(mixed))))
         else:
             peak = 0.0
-        frame_level = float(peak)
+        clipped = np.clip(mixed, -1.0, 1.0)
+        int16_bytes = (clipped * 32767).astype(np.int16).tobytes()
+        timestamp_seconds = time.monotonic() - start_time
         frame = AudioFrame(
-            data=mono_bytes,
-            timestamp=timestamp,
+            data=int16_bytes,
+            timestamp=timestamp_seconds,
             duration=self._frame_duration,
-            level=frame_level,
+            level=peak,
         )
-
+        self._frames.append(int16_bytes)
         if self.debug_dir is not None:
-            self._debug_frames.append(mono_bytes)
-
-        try:
+            self._debug_frames.append(int16_bytes)
+        with contextlib.suppress(queue.Full):
             self.frame_queue.put_nowait(frame)
-        except queue.Full:
-            # Drop frame to avoid blocking the audio callback thread
-            pass
-
-        try:
-            self.level_queue.put_nowait(frame_level)
-        except queue.Full:
-            pass
-
-        return (None, pyaudio.paContinue)
+        with contextlib.suppress(queue.Full):
+            self.level_queue.put_nowait(peak)
 
     def stop(self):
         self.stop_event.set()
-        if self._stream:
-            self._stream.stop_stream()
-            self._stream.close()
-            self._stream = None
+        thread = self._mixer_thread
+        cap_ctx = self._cap_ctx
+        if cap_ctx is not None:
+            try:
+                cap_ctx.__exit__(None, None, None)
+            finally:
+                self._cap_ctx = None
+                self._cap = None
+        if thread is not None:
+            thread.join(timeout=_MIXER_THREAD_JOIN_TIMEOUT)
+            self._mixer_thread = None
 
     def save_recording(self, file_path: Path, title: str | None = None):
         import json
@@ -219,10 +197,5 @@ class LiveAudioStream:
                 json.dump(metadata, fh, indent=2)
 
     def close(self):
-        if self._stream:
-            self._stream.stop_stream()
-            self._stream.close()
-            self._stream = None
-        if self._audio:
-            self._audio.terminate()
-            self._audio = None
+        if self._cap_ctx is not None or self._mixer_thread is not None:
+            self.stop()
