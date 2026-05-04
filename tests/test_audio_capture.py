@@ -116,23 +116,11 @@ def _spawn_fake_helper(
     ]
 
 
-@contextlib.contextmanager
 def _patch_resolve_to(path: Path):
-    launcher = path.parent / "disclaim_launcher"
-    if not launcher.exists():
-        launcher.write_text("#!/bin/sh\nexit 0\n")
-        launcher.chmod(0o755)
-    with (
-        mock.patch(
-            "audio_capture._resolve_binary_path",
-            return_value=contextlib.nullcontext(path),
-        ),
-        mock.patch(
-            "audio_capture._resolve_launcher_path",
-            return_value=contextlib.nullcontext(launcher),
-        ),
-    ):
-        yield
+    return mock.patch(
+        "audio_capture._resolve_binary_path",
+        return_value=contextlib.nullcontext(path),
+    )
 
 
 def test_permission_denied_raises_permission_error(tmp_path: Path) -> None:
@@ -505,17 +493,13 @@ def test_wheel_bundles_executable_helper(tmp_path: Path) -> None:
     wheel_path = wheels[0]
 
     binary_in_wheel = "audio_capture/CaptureAudio.app/Contents/MacOS/capture_audio"
-    launcher_in_wheel = (
-        "audio_capture/CaptureAudio.app/Contents/MacOS/disclaim_launcher"
-    )
     with zipfile.ZipFile(wheel_path) as zf:
         names = zf.namelist()
-        for required in (binary_in_wheel, launcher_in_wheel):
-            assert required in names, (
-                f"{required} missing from wheel; zipfile contains: "
-                f"{[n for n in names if 'audio_capture' in n][:10]}"
-            )
-            unix_mode = (zf.getinfo(required).external_attr >> 16) & 0o777
-            assert unix_mode & 0o111, (
-                f"{required} in wheel lacks any execute bit: mode={oct(unix_mode)}"
-            )
+        assert binary_in_wheel in names, (
+            f"{binary_in_wheel} missing from wheel; zipfile contains: "
+            f"{[n for n in names if 'audio_capture' in n][:10]}"
+        )
+        unix_mode = (zf.getinfo(binary_in_wheel).external_attr >> 16) & 0o777
+        assert unix_mode & 0o111, (
+            f"helper binary in wheel lacks any execute bit: mode={oct(unix_mode)}"
+        )

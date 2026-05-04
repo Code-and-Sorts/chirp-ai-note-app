@@ -177,6 +177,16 @@ class LiveAudioStream:
                 self._cap = None
         if thread is not None:
             thread.join(timeout=_MIXER_THREAD_JOIN_TIMEOUT)
+            if thread.is_alive():
+                # If the mixer thread didn't exit within the timeout,
+                # `capture_error` may not yet be fully published. Surface
+                # this so the caller can correlate a missing-error report
+                # against a real timeout.
+                logger.warning(
+                    "audio-capture-mixer thread did not join within %.1fs; "
+                    "capture_error may be stale",
+                    _MIXER_THREAD_JOIN_TIMEOUT,
+                )
             self._mixer_thread = None
 
     def save_recording(self, file_path: Path, title: str | None = None):

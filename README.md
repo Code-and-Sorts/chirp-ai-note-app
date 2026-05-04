@@ -19,8 +19,9 @@ Chirp is a local-first CLI for recording meetings, transcribing audio, generatin
 
 ## Prerequisites
 
-Chirp currently targets **macOS** for audio capture.
+Chirp currently targets **macOS 13.0 (Ventura) or later** for audio capture. The bundled `CaptureAudio.app` helper uses ScreenCaptureKit's audio-only mode, which requires macOS 13+.
 
+- macOS 13.0+
 - Python 3.11+
 - [Ollama](https://ollama.com) for note generation and retrieval
 - [BlackHole 2ch](https://existential.audio/blackhole/) for system-audio capture

@@ -16,14 +16,22 @@ output by feeding numpy arrays.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 SOURCE_SYSTEM = 1
 SOURCE_MICROPHONE = 2
 
 _SOURCES: tuple[int, int] = (SOURCE_SYSTEM, SOURCE_MICROPHONE)
+
+_SOURCE_NAMES: dict[int, str] = {
+    SOURCE_SYSTEM: "system",
+    SOURCE_MICROPHONE: "microphone",
+}
 
 
 class StereoToMonoMixer:
@@ -78,6 +86,14 @@ class StereoToMonoMixer:
 
         excess = self._buffers[source].size - self._max_buffer_samples
         if excess > 0:
+            # Consumer can't keep up; drop the oldest samples to bound
+            # memory. Visible in logs so prolonged consumer stalls don't
+            # silently lose audio.
+            logger.warning(
+                "audio_mixer: %s buffer over cap; dropped %d samples",
+                _SOURCE_NAMES.get(source, str(source)),
+                excess,
+            )
             self._buffers[source] = self._buffers[source][excess:]
             head = self._head_ts[source]
             if head is not None:

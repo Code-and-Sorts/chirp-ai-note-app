@@ -30,6 +30,7 @@ Building from source:
 from __future__ import annotations
 
 import contextlib
+import logging
 import platform
 import queue
 import re
@@ -45,6 +46,8 @@ from pathlib import Path
 from typing import IO
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 SOURCE_SYSTEM = 1
 SOURCE_MICROPHONE = 2
@@ -118,14 +121,6 @@ def _resolve_binary_path() -> contextlib.AbstractContextManager[Path]:
     return resources.as_file(binary_resource)
 
 
-def _resolve_launcher_path() -> contextlib.AbstractContextManager[Path]:
-    package_files = resources.files("audio_capture")
-    launcher_resource = (
-        package_files / "CaptureAudio.app" / "Contents" / "MacOS" / "disclaim_launcher"
-    )
-    return resources.as_file(launcher_resource)
-
-
 def _read_frame(
     stdout: IO[bytes],
 ) -> tuple[int, int, np.ndarray] | None:
@@ -163,9 +158,6 @@ class AudioCapture:
         self._cleaned_up = False
         self._atexit_finalizer: weakref.finalize | None = None
         self._binary_resource_ctx: contextlib.AbstractContextManager[Path] | None = None
-        self._launcher_resource_ctx: contextlib.AbstractContextManager[Path] | None = (
-            None
-        )
         self.mic_device_name: str | None = None
 
     def __enter__(self) -> AudioCapture:
@@ -180,24 +172,16 @@ class AudioCapture:
                     "python -m audio_capture.build"
                 )
 
-            launcher_ctx = _resolve_launcher_path()
-            launcher_path = launcher_ctx.__enter__()
-            self._launcher_resource_ctx = launcher_ctx
-            if not launcher_path.exists():
-                launcher_ctx.__exit__(None, None, None)
-                self._launcher_resource_ctx = None
-                raise FileNotFoundError(
-                    "disclaim_launcher binary not found. Build it with: "
-                    "python -m audio_capture.build"
-                )
-
-            # Launching the helper through `disclaim_launcher` breaks the
-            # macOS TCC responsibility chain so screen-recording / mic
-            # prompts attribute to the bundled `CaptureAudio.app` (and a
-            # Chirp row appears in System Settings) instead of inheriting
-            # the parent terminal's TCC state.
+            # `capture_audio` re-spawns itself with the macOS
+            # `responsibility_spawnattrs_setdisclaim` flag set so the
+            # screen-recording / mic prompts attribute to the bundled
+            # `CaptureAudio.app` (and a Chirp row appears in System
+            # Settings) rather than inheriting the parent terminal's TCC
+            # state. From Python's perspective the first invocation is a
+            # tiny launcher shim; the second invocation does the actual
+            # capture.
             self._proc = subprocess.Popen(
-                [str(launcher_path), str(binary_path)],
+                [str(binary_path)],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -211,9 +195,6 @@ class AudioCapture:
                 self._cleanup_after_failed_start()
                 raise
         except BaseException:
-            if self._launcher_resource_ctx is not None:
-                self._launcher_resource_ctx.__exit__(None, None, None)
-                self._launcher_resource_ctx = None
             if self._binary_resource_ctx is not None:
                 self._binary_resource_ctx.__exit__(None, None, None)
                 self._binary_resource_ctx = None
@@ -284,10 +265,18 @@ class AudioCapture:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                logger.debug(
+                    "audio_capture: post-start drain timed out without "
+                    "microphone diagnostic line; mic_device_name stays None"
+                )
                 return
             try:
                 line = self._stderr_queue.get(timeout=remaining)
             except queue.Empty:
+                logger.debug(
+                    "audio_capture: post-start drain ran out of lines "
+                    "before microphone diagnostic"
+                )
                 return
             self._recent_stderr.append(line)
             match = _MIC_DEVICE_LINE_RE.match(line)
@@ -366,9 +355,6 @@ class AudioCapture:
             self._stderr_thread.join(timeout=_STDERR_JOIN_TIMEOUT)
         if self._atexit_finalizer is not None:
             self._atexit_finalizer.detach()
-        if self._launcher_resource_ctx is not None:
-            self._launcher_resource_ctx.__exit__(None, None, None)
-            self._launcher_resource_ctx = None
         if self._binary_resource_ctx is not None:
             self._binary_resource_ctx.__exit__(None, None, None)
             self._binary_resource_ctx = None
