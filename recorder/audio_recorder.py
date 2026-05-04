@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import threading
 import tomllib
@@ -6,6 +8,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from threading import Timer
+from typing import TYPE_CHECKING
 
 import numpy as np
 import tomli_w
@@ -13,7 +16,6 @@ import tomli_w
 from audio_capture import AudioCapture, check_macos_version
 from config.settings import ChirpSettings
 from recorder.audio_mixer import StereoToMonoMixer
-from recorder.device_manager import DeviceManager
 from recorder.meeting_monitor import MeetingMonitor
 from utils.file_utils import (
     AUDIO_FILENAME,
@@ -21,6 +23,12 @@ from utils.file_utils import (
     slugify,
 )
 from utils.time_utils import get_recording_duration
+
+if TYPE_CHECKING:
+    # Imported only for type hints. `recorder.device_manager` pulls in
+    # PyAudio at import time, which would defeat this module's
+    # platform-neutral import goal on hosts where PyAudio is unavailable.
+    from recorder.device_manager import DeviceManager
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +65,7 @@ class AudioRecorder:
             raise RuntimeError("Recording already in progress")
 
         check_macos_version()
+        _warn_if_audio_settings_overridden(self.settings)
         self._capture_error = None
 
         notes_root = self.settings.directories.notes_root
@@ -280,6 +289,30 @@ class AudioRecorder:
             "duration": get_recording_duration(self.start_time),
             "start_time": self.start_time,
         }
+
+
+def _warn_if_audio_settings_overridden(settings: ChirpSettings) -> None:
+    """Log a one-line warning when configured audio format != recorder output.
+
+    The bundled CaptureAudio.app helper is hardcoded to 16 kHz mono. If a
+    user has overridden `settings.audio.sample_rate` or `.channels` to a
+    different value, the recorder will silently produce 16 kHz mono
+    anyway. Surface that mismatch so the discrepancy is visible to
+    operators reading logs rather than baked into the WAV.
+    """
+    sample_rate = settings.audio.sample_rate
+    channels = settings.audio.channels
+    if sample_rate != OUTPUT_SAMPLE_RATE or channels != OUTPUT_CHANNELS:
+        logger.warning(
+            "audio_recorder: settings.audio.sample_rate=%s channels=%s "
+            "differ from recorder output (%s Hz, %s channel%s); produced "
+            "WAV will be 16 kHz mono regardless",
+            sample_rate,
+            channels,
+            OUTPUT_SAMPLE_RATE,
+            OUTPUT_CHANNELS,
+            "" if OUTPUT_CHANNELS == 1 else "s",
+        )
 
 
 def _read_meta(meta_path: Path) -> dict:

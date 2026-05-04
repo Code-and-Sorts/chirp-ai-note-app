@@ -8,6 +8,7 @@ import time
 import wave
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -18,14 +19,42 @@ from recorder.audio_mixer import (
     SOURCE_SYSTEM,
     StereoToMonoMixer,
 )
-from recorder.device_manager import DeviceManager
 from recorder.live_types import AudioFrame
+
+if TYPE_CHECKING:
+    # Imported only for type hints. `recorder.device_manager` pulls in
+    # PyAudio at import time, which would defeat this module's
+    # platform-neutral import goal on hosts where PyAudio is unavailable.
+    from recorder.device_manager import DeviceManager
 
 logger = logging.getLogger(__name__)
 
 _LIVE_SAMPLE_RATE = 16000
 _LIVE_CHANNELS = 1
 _MIXER_THREAD_JOIN_TIMEOUT = 2.0
+
+
+def _warn_if_audio_settings_overridden(settings: ChirpSettings) -> None:
+    """Log a one-line warning when configured audio format != live output.
+
+    Mirrors the offline recorder's check: live capture is hardcoded to
+    16 kHz mono and any user override is silently ignored, so we surface
+    the mismatch in logs rather than producing audio that disagrees with
+    the displayed config.
+    """
+    sample_rate = settings.audio.sample_rate
+    channels = settings.audio.channels
+    if sample_rate != _LIVE_SAMPLE_RATE or channels != _LIVE_CHANNELS:
+        logger.warning(
+            "live_audio: settings.audio.sample_rate=%s channels=%s differ "
+            "from live capture output (%s Hz, %s channel%s); live frames "
+            "and saved WAV will be 16 kHz mono regardless",
+            sample_rate,
+            channels,
+            _LIVE_SAMPLE_RATE,
+            _LIVE_CHANNELS,
+            "" if _LIVE_CHANNELS == 1 else "s",
+        )
 
 
 class LiveAudioStream:
@@ -88,6 +117,7 @@ class LiveAudioStream:
 
     def start(self):
         check_macos_version()
+        _warn_if_audio_settings_overridden(self.settings)
 
         self._sample_rate = _LIVE_SAMPLE_RATE
         self.channels = _LIVE_CHANNELS

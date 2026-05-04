@@ -20,7 +20,7 @@ def _build_settings(notes_root):
     settings.directories = directories
     audio = Mock()
     audio.sample_rate = 16000
-    audio.channels = 2
+    audio.channels = 1
     audio.chunk_size = 1024
     audio.format = "wav"
     settings.audio = audio
