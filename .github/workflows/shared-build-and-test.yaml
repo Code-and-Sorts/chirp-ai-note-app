@@ -146,6 +146,10 @@ jobs:
         RELEASE_TAG: ${{ inputs.package-version }}
       run: cd scripts && uv run python update_release_version.py
 
+    - name: 🍎 Build native audio_capture helper (macOS only)
+      if: runner.os == 'macOS'
+      run: uv run python -m audio_capture.build
+
     - name: 🏗️ Build
       run: uv build
 

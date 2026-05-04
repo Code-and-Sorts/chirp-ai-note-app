@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.codeandsorts.chirp.capture-audio</string>
+    <key>CFBundleExecutable</key>
+    <string>capture_audio</string>
+    <key>CFBundleName</key>
+    <string>Chirp</string>
+    <key>CFBundleDisplayName</key>
+    <string>Chirp</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__CHIRP_VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__CHIRP_VERSION__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Chirp uses your microphone to transcribe what you say in meetings.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Chirp captures system audio for transcription. No screen contents are recorded.</string>
+</dict>
+</plist>

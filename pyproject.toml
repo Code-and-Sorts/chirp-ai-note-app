@@ -31,7 +31,10 @@ dependencies = [
 chirp = "chirp.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+packages = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+
+[tool.hatch.build.hooks.custom]
+# hatch_build.py conditionally includes CaptureAudio.app when present
 
 [project.optional-dependencies]
 dev = [
@@ -49,6 +52,7 @@ dev = [
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+extend-exclude = ["audio_capture/swift", "audio_capture/CaptureAudio.app"]
 
 [tool.ruff.lint]
 select = [
@@ -93,10 +97,11 @@ addopts = [
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
+    "real_platform: skip the auto-darwin sys.platform patch in audio_capture tests",
 ]
 
 [tool.coverage.run]
-source = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+source = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 omit = [
     "tests/*",
     "*/__pycache__/*",
@@ -121,7 +126,7 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
-files = ["chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+files = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [dependency-groups]
 dev = [
