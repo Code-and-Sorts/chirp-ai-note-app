@@ -185,6 +185,13 @@ class AudioRecorder:
                         continue
                     self.frames.append(mixed)
                     self.current_level = min(1.0, float(np.max(np.abs(mixed))))
+            # Flush any sub-frame tail — helper chunks are arbitrary-sized,
+            # so a clean EOF often leaves <512 samples buffered per source.
+            tail = mixer.flush()
+            if tail is not None and not self._paused:
+                _, mixed = tail
+                self.frames.append(mixed)
+                self.current_level = min(1.0, float(np.max(np.abs(mixed))))
         except Exception as exc:
             # Stash the error so `start_recording` re-raises it instead of
             # silently truncating the partial recording.

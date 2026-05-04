@@ -292,10 +292,14 @@ class LiveTranscriptionSession:
     def _write_live_meta(self, note_dir: Path, title: str) -> None:
         from datetime import datetime
 
+        mic = "default"
+        if self.audio_stream is not None:
+            mic = self.audio_stream.mic_device_name or "default"
+
         meta = {
             "title": title,
             "date": datetime.now().isoformat(),
-            "mic": "default",
+            "mic": mic,
             "tags": list(self.tags),
         }
         meta_path = note_dir / META_FILENAME

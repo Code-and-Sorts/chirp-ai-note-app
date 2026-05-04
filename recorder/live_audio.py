@@ -64,10 +64,15 @@ class LiveAudioStream:
         self._mixer_thread: threading.Thread | None = None
         self._frame_index = 0
         self._capture_error: BaseException | None = None
+        self._mic_device_name: str | None = None
 
     @property
     def capture_error(self) -> BaseException | None:
         return self._capture_error
+
+    @property
+    def mic_device_name(self) -> str | None:
+        return self._mic_device_name
 
     @property
     def sample_rate(self) -> int:
@@ -86,8 +91,8 @@ class LiveAudioStream:
 
         self._sample_rate = _LIVE_SAMPLE_RATE
         self.channels = _LIVE_CHANNELS
-        self._frame_samples = 512
-        self._frame_duration = self.frame_ms / 1000.0
+        self._frame_samples = max(1, int(self._sample_rate * self.frame_ms / 1000.0))
+        self._frame_duration = self._frame_samples / self._sample_rate
         self._frames.clear()
         self._debug_frames.clear()
         self._frame_index = 0
@@ -99,6 +104,7 @@ class LiveAudioStream:
         cap = cap_ctx.__enter__()
         self._cap_ctx = cap_ctx
         self._cap = cap
+        self._mic_device_name = cap.mic_device_name
 
         thread = threading.Thread(
             target=self._mixer_loop,
@@ -126,6 +132,12 @@ class LiveAudioStream:
                 mixer.feed(source, timestamp_us, samples)
                 for _ts_us, mixed in mixer.drain():
                     self._publish_mixed_frame(mixed)
+            # Flush any sub-frame tail before the thread exits — see
+            # StereoToMonoMixer.flush docstring for the rationale.
+            tail = mixer.flush()
+            if tail is not None:
+                _, mixed = tail
+                self._publish_mixed_frame(mixed)
         except Exception as exc:
             # Stash the error so the live session can surface it instead
             # of completing with a silently truncated recording.

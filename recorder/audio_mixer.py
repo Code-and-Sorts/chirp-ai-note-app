@@ -33,6 +33,12 @@ _SOURCE_NAMES: dict[int, str] = {
     SOURCE_MICROPHONE: "microphone",
 }
 
+# Allowed jitter when checking whether an incoming chunk is contiguous
+# with the buffered tail. Anything beyond this threshold past the last
+# fed chunk's end is treated as a real discontinuity (e.g. SCK pausing
+# during silence) rather than normal callback timing noise.
+_CONTIGUITY_TOLERANCE_US = 5_000
+
 
 class StereoToMonoMixer:
     def __init__(
@@ -78,6 +84,26 @@ class StereoToMonoMixer:
             return
         if samples.dtype != np.float32:
             samples = samples.astype(np.float32, copy=False)
+
+        # Discontinuity check. `feed()` would otherwise concatenate the
+        # incoming chunk onto whatever tail is buffered as if the two
+        # were contiguous. When a source pauses (SCK going silent, mic
+        # disconnect/reconnect) and resumes with a later timestamp, that
+        # would alias the new audio into earlier emit slots. Detect the
+        # gap, drop the partial tail, and re-anchor at the new timestamp
+        # — matches the spec's "lossy alignment" stance.
+        last_end = self._last_seen_end[source]
+        if last_end is not None and timestamp_us > last_end + _CONTIGUITY_TOLERANCE_US:
+            tail = self._buffers[source].size
+            if tail > 0:
+                logger.warning(
+                    "audio_mixer: %s discontinuity %dus; dropped %d tail samples",
+                    _SOURCE_NAMES.get(source, str(source)),
+                    timestamp_us - last_end,
+                    tail,
+                )
+            self._buffers[source] = np.zeros(0, dtype=np.float32)
+            self._head_ts[source] = None
 
         if self._head_ts[source] is None:
             self._head_ts[source] = timestamp_us
@@ -132,6 +158,40 @@ class StereoToMonoMixer:
                 continue
 
             return
+
+    def flush(self) -> tuple[int, np.ndarray] | None:
+        """Emit one final mixed frame for any remaining sub-frame tails.
+
+        Helper chunks are arbitrary-sized, so a clean EOF often leaves
+        less than one full frame buffered per source. Without `flush()`,
+        `drain()` would drop those tail samples and short captures could
+        slip below the "no audio recorded" threshold even though audio
+        arrived. Pads each source's remainder up to `frame_samples` with
+        silence; returns ``None`` if both buffers are empty.
+        """
+        sys_size = self._buffers[SOURCE_SYSTEM].size
+        mic_size = self._buffers[SOURCE_MICROPHONE].size
+        if sys_size == 0 and mic_size == 0:
+            return None
+
+        head = max(
+            self._head_ts[SOURCE_SYSTEM] or 0,
+            self._head_ts[SOURCE_MICROPHONE] or 0,
+        )
+        sys_frame = self._take_partial_padded(SOURCE_SYSTEM)
+        mic_frame = self._take_partial_padded(SOURCE_MICROPHONE)
+        return head, _mix(sys_frame, mic_frame)
+
+    def _take_partial_padded(self, source: int) -> np.ndarray:
+        samples = self._buffers[source]
+        if samples.size == 0:
+            return _silence(self._frame_samples)
+        take = min(samples.size, self._frame_samples)
+        out = _silence(self._frame_samples)
+        out[:take] = samples[:take]
+        self._buffers[source] = np.zeros(0, dtype=np.float32)
+        self._head_ts[source] = None
+        return out
 
     def _take_frame(self, source: int) -> np.ndarray:
         frame = self._buffers[source][: self._frame_samples].copy()

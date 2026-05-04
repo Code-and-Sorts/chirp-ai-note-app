@@ -106,6 +106,79 @@ class TestSilencePadding:
             np.testing.assert_allclose(mixed, 0.5, atol=1e-6)
 
 
+class TestDiscontinuity:
+    def test_feed_discards_partial_tail_when_timestamp_jumps(self):
+        # Source feeds a partial 100-sample chunk at ts=0, then a full
+        # frame at ts=200000us — far past the contiguity tolerance.
+        # Without discontinuity handling those would concatenate as if
+        # contiguous and the second chunk would emit at the wrong time.
+        mixer = StereoToMonoMixer()
+        mixer.feed(SOURCE_SYSTEM, 0, _const(100, 0.1))
+        mixer.feed(SOURCE_MICROPHONE, 0, _const(100, 0.1))
+        # Big gap on system: ~200ms past the 100-sample (6.25ms) end.
+        mixer.feed(SOURCE_SYSTEM, 200_000, _const(512, 0.5))
+        mixer.feed(SOURCE_MICROPHONE, 200_000, _const(512, 0.5))
+
+        output = list(mixer.drain())
+
+        assert len(output) == 1
+        ts, mixed = output[0]
+        # Re-anchored to the post-gap timestamp, not to the dropped tail.
+        assert ts == 200_000
+        np.testing.assert_allclose(mixed, 1.0, atol=1e-6)
+
+    def test_feed_keeps_buffer_within_tolerance(self):
+        # Within the 5ms tolerance, chunks are treated as contiguous.
+        mixer = StereoToMonoMixer()
+        mixer.feed(SOURCE_SYSTEM, 0, _const(256, 0.4))
+        mixer.feed(SOURCE_MICROPHONE, 0, _const(256, 0.4))
+        # 256 samples at 16 kHz = 16000us. Re-feed shifted by ~16002us,
+        # which is contiguous with the prior chunk's end (16000us) within
+        # the 5ms tolerance.
+        mixer.feed(SOURCE_SYSTEM, 16_002, _const(256, 0.4))
+        mixer.feed(SOURCE_MICROPHONE, 16_002, _const(256, 0.4))
+
+        output = list(mixer.drain())
+
+        assert len(output) == 1
+        ts, mixed = output[0]
+        assert ts == 0
+        np.testing.assert_allclose(mixed, 0.8, atol=1e-6)
+
+
+class TestFlush:
+    def test_flush_emits_partial_final_frame_padded_with_silence(self):
+        mixer = StereoToMonoMixer()
+        mixer.feed(SOURCE_SYSTEM, 0, _const(200, 0.5))
+        mixer.feed(SOURCE_MICROPHONE, 0, _const(100, 0.5))
+
+        # Not enough for a full frame; drain returns nothing.
+        assert list(mixer.drain()) == []
+
+        flushed = mixer.flush()
+
+        assert flushed is not None
+        ts, mixed = flushed
+        assert ts == 0
+        assert mixed.size == 512
+        # Samples 0–99: both sources active → 0.5 + 0.5 clipped at 1.0
+        np.testing.assert_allclose(mixed[:100], 1.0, atol=1e-6)
+        # Samples 100–199: sys only → 0.5
+        np.testing.assert_allclose(mixed[100:200], 0.5, atol=1e-6)
+        # Samples 200–511: silence on both
+        np.testing.assert_allclose(mixed[200:], 0.0, atol=1e-6)
+
+    def test_flush_returns_none_when_buffers_empty(self):
+        mixer = StereoToMonoMixer()
+        assert mixer.flush() is None
+
+    def test_flush_clears_buffers(self):
+        mixer = StereoToMonoMixer()
+        mixer.feed(SOURCE_SYSTEM, 0, _const(100, 0.5))
+        mixer.flush()
+        assert mixer.flush() is None
+
+
 class TestPartialChunkStall:
     def test_stall_padding_works_when_lagging_has_partial_chunk(self):
         # Lagging source delivers a sub-frame partial then stops. Without

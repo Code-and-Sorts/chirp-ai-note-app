@@ -249,6 +249,64 @@ def test_mixer_thread_sets_stop_event_on_clean_helper_eof() -> None:
     assert stream.capture_error is None
 
 
+def test_mic_device_name_is_exposed_from_audio_capture() -> None:
+    stream, _frame_queue, _level_queue, stop_event = _make_stream()
+    fake = _FakeAudioCapture(_paired_frames(2), block_after_drain=False)
+    fake.mic_device_name = "Studio Mic Pro"
+
+    with mock.patch("recorder.live_audio.AudioCapture", return_value=fake):
+        stream.start()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not stop_event.is_set():
+            time.sleep(0.01)
+        stream.stop()
+
+    assert stream.mic_device_name == "Studio Mic Pro"
+
+
+def test_frame_samples_derived_from_frame_ms() -> None:
+    # Non-default frame_ms must drive frame size and AudioFrame duration
+    # consistently — earlier hard-coded 512 samples was a latent bug.
+    frame_queue: queue.Queue[AudioFrame] = queue.Queue()
+    level_queue: queue.Queue[float] = queue.Queue()
+    stop_event = threading.Event()
+    settings = mock.MagicMock()
+    settings.audio.sample_rate = 16000
+    stream = LiveAudioStream(
+        settings=settings,
+        device_manager=mock.MagicMock(),
+        frame_queue=frame_queue,
+        stop_event=stop_event,
+        level_queue=level_queue,
+        frame_ms=64,  # non-default
+    )
+    sample_rate = 16000
+    chunk_us = (1024 * 1_000_000) // sample_rate  # 64 ms per chunk
+    sequence: list[tuple[int, int, np.ndarray]] = []
+    for index in range(4):
+        ts = index * chunk_us
+        sequence.append((SOURCE_SYSTEM, ts, np.full(1024, 0.2, dtype=np.float32)))
+        sequence.append((SOURCE_MICROPHONE, ts, np.full(1024, 0.1, dtype=np.float32)))
+    fake = _FakeAudioCapture(sequence, block_after_drain=False)
+
+    with mock.patch("recorder.live_audio.AudioCapture", return_value=fake):
+        stream.start()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not stop_event.is_set():
+            time.sleep(0.01)
+        stream.stop()
+
+    collected: list[AudioFrame] = []
+    while not frame_queue.empty():
+        collected.append(frame_queue.get_nowait())
+
+    assert len(collected) >= 3
+    for frame in collected:
+        # 64 ms × 16 kHz × 2 bytes per int16 = 2048 bytes
+        assert len(frame.data) == 1024 * 2
+        assert frame.duration == pytest.approx(0.064)
+
+
 def test_audio_frame_timestamps_are_synthesized_from_frame_index() -> None:
     # Mixer-thread scheduling latency must NOT leak into AudioFrame.timestamp:
     # downstream VAD / chunking expects timestamps that advance by exactly

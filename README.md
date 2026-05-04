@@ -24,7 +24,6 @@ Chirp currently targets **macOS 13.0 (Ventura) or later** for audio capture. The
 - macOS 13.0+
 - Python 3.11+
 - [Ollama](https://ollama.com) for note generation and retrieval
-- [BlackHole 2ch](https://existential.audio/blackhole/) for system-audio capture
 - Homebrew if you want `chirp init` to install missing macOS dependencies for you
 
 ## Install
