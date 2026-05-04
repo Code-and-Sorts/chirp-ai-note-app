@@ -384,3 +384,46 @@ def test_built_bundle_binary_is_executable(tmp_path: Path) -> None:
     if not bundle_binary.exists():
         pytest.skip("Swift helper not built; run `python -m audio_capture.build`")
     assert os.access(bundle_binary, os.X_OK)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only wheel build")
+def test_wheel_bundles_executable_helper(tmp_path: Path) -> None:
+    import zipfile
+
+    repo_root = Path(__file__).resolve().parent.parent
+    bundle_binary = (
+        repo_root
+        / "audio_capture"
+        / "CaptureAudio.app"
+        / "Contents"
+        / "MacOS"
+        / "capture_audio"
+    )
+    if not bundle_binary.exists():
+        pytest.skip("Swift helper not built; run `python -m audio_capture.build`")
+
+    result = subprocess.run(
+        ["uv", "build", "--wheel", "-o", str(tmp_path)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"uv build failed:\n{result.stdout}\n{result.stderr}")
+
+    wheels = list(tmp_path.glob("*.whl"))
+    assert len(wheels) == 1, f"expected one wheel, found {wheels}"
+    wheel_path = wheels[0]
+
+    binary_in_wheel = "audio_capture/CaptureAudio.app/Contents/MacOS/capture_audio"
+    with zipfile.ZipFile(wheel_path) as zf:
+        names = zf.namelist()
+        assert binary_in_wheel in names, (
+            f"{binary_in_wheel} missing from wheel; zipfile contains: "
+            f"{[n for n in names if 'audio_capture' in n][:10]}"
+        )
+        unix_mode = (zf.getinfo(binary_in_wheel).external_attr >> 16) & 0o777
+        assert unix_mode & 0o111, (
+            f"helper binary in wheel lacks any execute bit: mode={oct(unix_mode)}"
+        )
