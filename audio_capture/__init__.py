@@ -30,6 +30,7 @@ Building from source:
 from __future__ import annotations
 
 import contextlib
+import platform
 import queue
 import re
 import struct
@@ -47,6 +48,31 @@ import numpy as np
 
 SOURCE_SYSTEM = 1
 SOURCE_MICROPHONE = 2
+
+_REQUIRED_MACOS_MAJOR = 13
+
+
+def check_macos_version() -> None:
+    """Raise ``RuntimeError`` unless the host is macOS 13.0+.
+
+    Used by both `AudioCapture.__enter__` and the recorder/live-audio
+    entry points so the error message stays in one place. Looks at
+    ``sys.platform`` and ``platform.mac_ver()`` so a macOS 12 host (where
+    ``sys.platform`` is still ``darwin``) gets the advertised error
+    instead of a deeper subprocess-launch failure.
+    """
+    if sys.platform != "darwin":
+        raise RuntimeError("chirp record requires macOS 13 or later")
+    version_string = platform.mac_ver()[0]
+    if not version_string:
+        raise RuntimeError("chirp record requires macOS 13 or later")
+    try:
+        major = int(version_string.split(".", 1)[0])
+    except (TypeError, ValueError):
+        raise RuntimeError("chirp record requires macOS 13 or later") from None
+    if major < _REQUIRED_MACOS_MAJOR:
+        raise RuntimeError("chirp record requires macOS 13 or later")
+
 
 _FRAME_HEADER_SIZE = 1 + 8 + 4
 # Sanity cap on a single frame's payload; well above any realistic 16 kHz
@@ -83,6 +109,14 @@ def _resolve_binary_path() -> contextlib.AbstractContextManager[Path]:
     return resources.as_file(binary_resource)
 
 
+def _resolve_launcher_path() -> contextlib.AbstractContextManager[Path]:
+    package_files = resources.files("audio_capture")
+    launcher_resource = (
+        package_files / "CaptureAudio.app" / "Contents" / "MacOS" / "disclaim_launcher"
+    )
+    return resources.as_file(launcher_resource)
+
+
 def _read_frame(
     stdout: IO[bytes],
 ) -> tuple[int, int, np.ndarray] | None:
@@ -114,11 +148,13 @@ class AudioCapture:
         self._cleaned_up = False
         self._atexit_finalizer: weakref.finalize | None = None
         self._binary_resource_ctx: contextlib.AbstractContextManager[Path] | None = None
+        self._launcher_resource_ctx: contextlib.AbstractContextManager[Path] | None = (
+            None
+        )
         self.mic_device_name: str | None = None
 
     def __enter__(self) -> AudioCapture:
-        if sys.platform != "darwin":
-            raise RuntimeError("audio_capture requires macOS 13+")
+        check_macos_version()
         ctx = _resolve_binary_path()
         binary_path = ctx.__enter__()
         self._binary_resource_ctx = ctx
@@ -129,8 +165,24 @@ class AudioCapture:
                     "python -m audio_capture.build"
                 )
 
+            launcher_ctx = _resolve_launcher_path()
+            launcher_path = launcher_ctx.__enter__()
+            self._launcher_resource_ctx = launcher_ctx
+            if not launcher_path.exists():
+                launcher_ctx.__exit__(None, None, None)
+                self._launcher_resource_ctx = None
+                raise FileNotFoundError(
+                    "disclaim_launcher binary not found. Build it with: "
+                    "python -m audio_capture.build"
+                )
+
+            # Launching the helper through `disclaim_launcher` breaks the
+            # macOS TCC responsibility chain so screen-recording / mic
+            # prompts attribute to the bundled `CaptureAudio.app` (and a
+            # Chirp row appears in System Settings) instead of inheriting
+            # the parent terminal's TCC state.
             self._proc = subprocess.Popen(
-                [str(binary_path)],
+                [str(launcher_path), str(binary_path)],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -144,6 +196,9 @@ class AudioCapture:
                 self._cleanup_after_failed_start()
                 raise
         except BaseException:
+            if self._launcher_resource_ctx is not None:
+                self._launcher_resource_ctx.__exit__(None, None, None)
+                self._launcher_resource_ctx = None
             if self._binary_resource_ctx is not None:
                 self._binary_resource_ctx.__exit__(None, None, None)
                 self._binary_resource_ctx = None
@@ -296,6 +351,9 @@ class AudioCapture:
             self._stderr_thread.join(timeout=_STDERR_JOIN_TIMEOUT)
         if self._atexit_finalizer is not None:
             self._atexit_finalizer.detach()
+        if self._launcher_resource_ctx is not None:
+            self._launcher_resource_ctx.__exit__(None, None, None)
+            self._launcher_resource_ctx = None
         if self._binary_resource_ctx is not None:
             self._binary_resource_ctx.__exit__(None, None, None)
             self._binary_resource_ctx = None
@@ -375,4 +433,5 @@ __all__ = [
     "AudioCaptureStartTimeout",
     "SOURCE_MICROPHONE",
     "SOURCE_SYSTEM",
+    "check_macos_version",
 ]

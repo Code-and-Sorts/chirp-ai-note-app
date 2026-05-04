@@ -194,3 +194,59 @@ def test_close_is_idempotent() -> None:
         time.sleep(0.05)
         stream.close()
         stream.close()
+
+
+def test_capture_error_is_set_when_mixer_thread_crashes() -> None:
+    stream, _frame_queue, _level_queue, stop_event = _make_stream()
+
+    class CrashingCapture:
+        mic_device_name = "MockMic"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def frames(self):
+            for index in range(2):
+                yield (
+                    SOURCE_SYSTEM,
+                    index * 32_000,
+                    np.full(512, 0.1, dtype=np.float32),
+                )
+            raise RuntimeError("mixer-boom")
+
+    with mock.patch("recorder.live_audio.AudioCapture", return_value=CrashingCapture()):
+        stream.start()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and stream.capture_error is None:
+            time.sleep(0.01)
+        stop_event.set()
+        stream.stop()
+
+    assert isinstance(stream.capture_error, RuntimeError)
+    assert "mixer-boom" in str(stream.capture_error)
+    assert stop_event.is_set()
+
+
+def test_audio_frame_timestamps_are_synthesized_from_frame_index() -> None:
+    # Mixer-thread scheduling latency must NOT leak into AudioFrame.timestamp:
+    # downstream VAD / chunking expects timestamps that advance by exactly
+    # frame_duration (32 ms) regardless of when the mixer happened to publish.
+    stream, frame_queue, _level_queue, stop_event = _make_stream()
+    fake = _FakeAudioCapture(_paired_frames(6))
+
+    with mock.patch("recorder.live_audio.AudioCapture", return_value=fake):
+        stream.start()
+        _wait_for_queue(frame_queue, expected=5, timeout=2.0)
+        stop_event.set()
+        stream.stop()
+
+    timestamps: list[float] = []
+    while not frame_queue.empty():
+        timestamps.append(frame_queue.get_nowait().timestamp)
+
+    assert len(timestamps) >= 5
+    for index, ts in enumerate(timestamps):
+        assert ts == pytest.approx(index * 0.032, abs=1e-9)

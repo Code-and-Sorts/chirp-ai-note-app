@@ -3,7 +3,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import queue
-import sys
 import threading
 import time
 import wave
@@ -12,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from audio_capture import AudioCapture
+from audio_capture import AudioCapture, check_macos_version
 from config.settings import ChirpSettings
 from recorder.audio_mixer import (
     SOURCE_MICROPHONE,
@@ -63,6 +62,12 @@ class LiveAudioStream:
         self._cap_ctx: AudioCapture | None = None
         self._cap: AudioCapture | None = None
         self._mixer_thread: threading.Thread | None = None
+        self._frame_index = 0
+        self._capture_error: BaseException | None = None
+
+    @property
+    def capture_error(self) -> BaseException | None:
+        return self._capture_error
 
     @property
     def sample_rate(self) -> int:
@@ -77,8 +82,7 @@ class LiveAudioStream:
         return self._frame_duration
 
     def start(self):
-        if sys.platform != "darwin":
-            raise RuntimeError("chirp record requires macOS 13 or later")
+        check_macos_version()
 
         self._sample_rate = _LIVE_SAMPLE_RATE
         self.channels = _LIVE_CHANNELS
@@ -86,6 +90,8 @@ class LiveAudioStream:
         self._frame_duration = self.frame_ms / 1000.0
         self._frames.clear()
         self._debug_frames.clear()
+        self._frame_index = 0
+        self._capture_error = None
         self._start_time = time.monotonic()
         self._recorded_at = datetime.now()
 
@@ -111,7 +117,6 @@ class LiveAudioStream:
             sample_rate=_LIVE_SAMPLE_RATE,
             gap_ms=100,
         )
-        start_time = self._start_time or time.monotonic()
         try:
             for source, timestamp_us, samples in cap.frames():
                 if self.stop_event.is_set():
@@ -120,19 +125,27 @@ class LiveAudioStream:
                     continue
                 mixer.feed(source, timestamp_us, samples)
                 for _ts_us, mixed in mixer.drain():
-                    self._publish_mixed_frame(mixed, start_time)
-        except Exception:
+                    self._publish_mixed_frame(mixed)
+        except Exception as exc:
+            # Stash the error and flip stop_event so the live session can
+            # surface it instead of completing with a silently truncated
+            # recording.
             logger.exception("audio-capture-mixer thread crashed")
+            self._capture_error = exc
             self.stop_event.set()
 
-    def _publish_mixed_frame(self, mixed: np.ndarray, start_time: float) -> None:
+    def _publish_mixed_frame(self, mixed: np.ndarray) -> None:
         if mixed.size:
             peak = min(1.0, float(np.max(np.abs(mixed))))
         else:
             peak = 0.0
         clipped = np.clip(mixed, -1.0, 1.0)
         int16_bytes = (clipped * 32767).astype(np.int16).tobytes()
-        timestamp_seconds = time.monotonic() - start_time
+        # Synthesize a monotonic per-frame timestamp so VAD / chunker
+        # cadence reflects the audio timeline rather than mixer-thread
+        # scheduling latency.
+        timestamp_seconds = self._frame_index * self._frame_duration
+        self._frame_index += 1
         frame = AudioFrame(
             data=int16_bytes,
             timestamp=timestamp_seconds,

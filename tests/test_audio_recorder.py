@@ -286,12 +286,17 @@ class TestAudioRecorder:
         assert recorder.is_recording is False
         assert list(tmp_path.iterdir()) == []
 
-    def test_start_recording_unwinds_when_capture_worker_crashes(
+    def test_start_recording_surfaces_worker_crash_after_partial_capture(
         self, tmp_path, mock_settings, mock_device_manager
     ):
+        # Feeds 4 paired sys+mic chunks (drives the mixer to produce
+        # output frames into self.frames) and *then* raises mid-iteration.
+        # Without crash propagation the recorder would silently truncate
+        # and return success — this test pins the new behavior of raising
+        # and discarding the partial recording.
         recorder = AudioRecorder(mock_settings, mock_device_manager)
 
-        class CrashingFrames:
+        class CrashAfterPartial:
             def __init__(self):
                 self.mic_device_name = "MockMic"
 
@@ -302,17 +307,38 @@ class TestAudioRecorder:
                 return None
 
             def frames(self):
-                yield (SOURCE_SYSTEM, 0, np.full(512, 0.1, dtype=np.float32))
+                for i in range(4):
+                    ts = i * 32_000
+                    yield (
+                        SOURCE_SYSTEM,
+                        ts,
+                        np.full(512, 0.1, dtype=np.float32),
+                    )
+                    yield (
+                        SOURCE_MICROPHONE,
+                        ts,
+                        np.full(512, 0.2, dtype=np.float32),
+                    )
+                # Give the worker a moment to drain the mixer before crashing
+                # so self.frames is non-empty when the exception fires.
+                time.sleep(0.05)
                 raise RuntimeError("worker-boom")
 
         with patch(
-            "recorder.audio_recorder.AudioCapture", return_value=CrashingFrames()
+            "recorder.audio_recorder.AudioCapture",
+            return_value=CrashAfterPartial(),
         ):
-            with pytest.raises(RuntimeError, match="No audio data recorded"):
+            with pytest.raises(
+                RuntimeError, match="audio capture worker crashed mid-recording"
+            ) as excinfo:
                 recorder.start_recording(title="worker-crash")
 
+        assert isinstance(excinfo.value.__cause__, RuntimeError)
+        assert "worker-boom" in str(excinfo.value.__cause__)
         assert recorder.is_recording is False
-        assert list(tmp_path.iterdir()) == []
+        assert list(tmp_path.iterdir()) == [], (
+            "partial recording must be discarded, not silently truncated"
+        )
 
 
 class TestAudioRecorderPause:

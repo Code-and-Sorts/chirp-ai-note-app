@@ -140,6 +140,12 @@ class LiveTranscriptionSession:
         if not self.audio_stream:
             raise RecordingError("Audio stream not initialized")
 
+        capture_error = self.audio_stream.capture_error
+        if capture_error is not None:
+            raise RecordingError(
+                f"audio capture worker crashed mid-recording: {capture_error}"
+            ) from capture_error
+
         notes_root = self.settings.directories.notes_root
         notes_root.mkdir(parents=True, exist_ok=True)
 

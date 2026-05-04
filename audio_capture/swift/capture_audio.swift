@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import Darwin
 import Foundation
@@ -290,14 +291,18 @@ func runMain() {
     }
 
     writeStderr("capture: awaiting_permission\n")
+    flushStderr()
+    // CGRequestScreenCaptureAccess is the documented way to surface the
+    // Screen Recording TCC prompt and register this bundle with the
+    // privacy database. Without it, SCShareableContent silently fails on
+    // a fresh bucket and the user never sees the app appear in System
+    // Settings → Privacy & Security → Screen Recording.
+    if !CGRequestScreenCaptureAccess() {
+        failStartup("screen_recording_denied")
+    }
     do {
         try session.startSystemAudio()
     } catch {
-        // SCStream surfaces user-declined screen-recording permission as
-        // SCStreamError code -3801 (.userDeclined). Anything else is a
-        // genuine startup failure and should be reported distinctly so the
-        // Python wrapper does not steer users toward System Settings for
-        // non-permission problems.
         let nsError = error as NSError
         if nsError.code == -3801 {
             failStartup("screen_recording_denied")

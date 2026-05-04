@@ -1,5 +1,4 @@
 import logging
-import sys
 import threading
 import tomllib
 import wave
@@ -11,7 +10,7 @@ from threading import Timer
 import numpy as np
 import tomli_w
 
-from audio_capture import AudioCapture
+from audio_capture import AudioCapture, check_macos_version
 from config.settings import ChirpSettings
 from recorder.audio_mixer import StereoToMonoMixer
 from recorder.device_manager import DeviceManager
@@ -45,6 +44,7 @@ class AudioRecorder:
         self.slug: str | None = None
         self._paused: bool = False
         self._capture_thread: threading.Thread | None = None
+        self._capture_error: BaseException | None = None
 
     def start_recording(
         self,
@@ -56,8 +56,8 @@ class AudioRecorder:
         if self.is_recording:
             raise RuntimeError("Recording already in progress")
 
-        if sys.platform != "darwin":
-            raise RuntimeError("chirp record requires macOS 13 or later")
+        check_macos_version()
+        self._capture_error = None
 
         notes_root = self.settings.directories.notes_root
         notes_root.mkdir(parents=True, exist_ok=True)
@@ -136,6 +136,14 @@ class AudioRecorder:
             self._cleanup_recording()
             self.is_recording = False
 
+        if self._capture_error is not None:
+            import shutil
+
+            shutil.rmtree(note_dir, ignore_errors=True)
+            raise RuntimeError(
+                "audio capture worker crashed mid-recording; recording discarded"
+            ) from self._capture_error
+
         if not self.frames:
             import shutil
 
@@ -177,8 +185,12 @@ class AudioRecorder:
                         continue
                     self.frames.append(mixed)
                     self.current_level = min(1.0, float(np.max(np.abs(mixed))))
-        except Exception:
+        except Exception as exc:
+            # Stash the error so `start_recording` re-raises it instead of
+            # silently truncating the partial recording. is_recording is
+            # flipped so the main wait loop exits promptly.
             logger.exception("audio-recorder-capture worker crashed")
+            self._capture_error = exc
             self.is_recording = False
 
     def _stop_recording_timer(self):
