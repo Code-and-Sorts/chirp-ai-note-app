@@ -1166,10 +1166,13 @@ def devices():
                     "[red]❌ capture_audio probe returned unexpected state[/red]"
                     " — rebuild with python -m audio_capture.build"
                 )
-        except (FileNotFoundError, RuntimeError):
+        except FileNotFoundError:
             console.print(
-                "[red]❌ capture_audio binary missing[/red]"
-                " — run python -m audio_capture.build"
+                "[red]❌ capture_audio binary missing[/red] — run python -m audio_capture.build"
+            )
+        except RuntimeError as exc:
+            console.print(
+                f"[red]❌ permission probe failed[/red]: {exc} — try rebuilding with python -m audio_capture.build"
             )
     else:
         console.print(

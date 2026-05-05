@@ -168,11 +168,17 @@ def _screen_recording_permission() -> DependencyStatus:
         )
     try:
         perms = audio_capture.check_permissions()
-    except (FileNotFoundError, RuntimeError):
+    except FileNotFoundError:
         return DependencyStatus(
             name="screen recording permission",
             installed=False,
             detail="capture_audio binary not built — run python -m audio_capture.build",
+        )
+    except RuntimeError as exc:
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=False,
+            detail=f"permission probe failed: {exc} — try rebuilding with python -m audio_capture.build",
         )
     state = perms.get("screen_recording", "undetermined")
     if state == "granted":
@@ -329,6 +335,7 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
     console.print(" [dim]installing dependencies via homebrew...[/dim]")
     console.print()
 
+    denied_user_action_required = False
     tasks: list[tuple[str, list[str]]] = []
     for status in statuses:
         if status.installed or not status.required:
@@ -345,6 +352,7 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
                 "[yellow]![/yellow] screen recording permission must be granted manually — "
                 "open System Settings → Privacy & Security → Screen Recording, then re-run."
             )
+            denied_user_action_required = True
         elif status.name == "screen recording permission":
             tasks.append(
                 ("capture_audio", [sys.executable, "-m", "audio_capture.build"])
@@ -361,6 +369,12 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
                 f"   [dim]{out.strip().splitlines()[-1] if out else ''}[/dim]"
             )
             return False
+
+    if denied_user_action_required:
+        console.print(
+            "[red]init incomplete[/red] — grant screen recording permission and re-run."
+        )
+        return False
 
     return True
 

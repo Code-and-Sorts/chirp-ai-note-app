@@ -484,25 +484,27 @@ def _atexit_cleanup(proc: subprocess.Popen[bytes]) -> None:
 
 def check_permissions() -> dict[str, str]:
     try:
-        with _resolve_binary_path() as binary_path:
-            if not binary_path.exists():
-                raise FileNotFoundError(
-                    "capture_audio binary not found. Build it with: "
-                    "python -m audio_capture.build"
-                )
-            result = subprocess.run(
-                [str(binary_path), "--check-permissions"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-                check=False,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"capture_audio --check-permissions failed: {result.stderr}"
-                )
+        ctx = _resolve_binary_path()
     except RuntimeError as exc:
         raise FileNotFoundError(str(exc)) from exc
+    with ctx as binary_path:
+        if not binary_path.exists():
+            raise FileNotFoundError(
+                "capture_audio binary not found. Build it with: "
+                "python -m audio_capture.build"
+            )
+        result = subprocess.run(
+            [str(binary_path), "--check-permissions"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"capture_audio --check-permissions exited {result.returncode}: "
+            f"{result.stderr.strip()!r}"
+        )
 
     permissions: dict[str, str] = {}
     for line in result.stdout.splitlines():

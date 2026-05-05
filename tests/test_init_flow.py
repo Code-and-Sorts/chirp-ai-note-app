@@ -535,7 +535,8 @@ def test_verify_handles_runtime_error_from_check_permissions(tmp_path, monkeypat
 
     perm = next(s for s in statuses if s.name == "screen recording permission")
     assert perm.installed is False
-    assert "capture_audio binary not built" in perm.detail
+    assert "permission probe failed" in perm.detail
+    assert "malformed permission line in helper output: 'garbage'" in perm.detail
 
 
 def test_verify_guards_against_unexpected_permission_state(tmp_path, monkeypatch):
@@ -558,6 +559,7 @@ def test_verify_guards_against_unexpected_permission_state(tmp_path, monkeypatch
 
 def test_install_missing_surfaces_denied_permission_without_dispatching(monkeypatch):
     monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
 
     run_calls: list[list[str]] = []
 
@@ -579,6 +581,7 @@ def test_install_missing_surfaces_denied_permission_without_dispatching(monkeypa
     result = init_flow.install_missing(console, statuses)
 
     assert len(run_calls) == 0, f"expected zero dispatches, got: {run_calls}"
-    assert result is True
+    assert result is False
     output = console.file.getvalue()
     assert "screen recording permission must be granted manually" in output
+    assert "init incomplete" in output

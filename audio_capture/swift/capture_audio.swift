@@ -272,15 +272,6 @@ func installSignalHandlers() {
 }
 
 func runMain() {
-    try? FileManager.default.createDirectory(
-        at: permissionSentinelURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-    )
-    // Write the sentinel before capture starts — once macOS prompts the user (now
-    // or later in this session), future probes can read sentinel-present + preflight-false
-    // as "denied" instead of "undetermined".
-    FileManager.default.createFile(atPath: permissionSentinelURL.path, contents: nil)
-
     signal(SIGPIPE, SIG_IGN)
     installSignalHandlers()
 
@@ -301,6 +292,14 @@ func runMain() {
 
     writeStderr("capture: awaiting_permission\n")
     flushStderr()
+    // Write the sentinel before the screen-recording prompt fires — once macOS
+    // shows it, future probes can read sentinel-present + preflight-false as
+    // "denied" instead of "undetermined".
+    try? FileManager.default.createDirectory(
+        at: permissionSentinelURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    FileManager.default.createFile(atPath: permissionSentinelURL.path, contents: nil)
     // CGRequestScreenCaptureAccess is the documented way to surface the
     // Screen Recording TCC prompt and register this bundle with the
     // privacy database. Without it, SCShareableContent silently fails on
