@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Callable
 from datetime import datetime
@@ -13,6 +14,8 @@ from rich.console import Console
 
 from config.settings import ChirpSettings
 from notes_chat.types import Chunk, NoteMeta
+
+logger = logging.getLogger(__name__)
 
 console = Console()
 
@@ -97,15 +100,16 @@ class IndexManager:
                 "removed": len(removed_files),
             }
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - build_index orchestrates many subsystems
+            logger.debug("Index build failed: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
 
     def _reset_index(self):
         """Reset the entire index."""
         try:
             self.chroma_client.delete_collection("notes")
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - chromadb raises various internal exceptions
+            logger.debug("Could not delete chroma collection: %s", exc)
 
         self.collection = self.chroma_client.get_or_create_collection(
             name="notes", metadata={"hnsw:space": "cosine"}
@@ -141,7 +145,7 @@ class IndexManager:
             with open(self.manifest_file) as f:
                 data = json.load(f)
                 return data if isinstance(data, dict) else {}
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError):
             return {}
 
     def _save_manifest(self, manifest: dict[str, Any]):
@@ -182,7 +186,8 @@ class IndexManager:
 
             return True
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - add_to_index: chromadb, embeddings, or IO
+            logger.debug("Failed to index %s: %s", file_path.name, e)
             console.print(f"[red]Failed to index {file_path.name}: {e}[/red]")
             return False
 
@@ -192,7 +197,8 @@ class IndexManager:
             results = self.collection.get(where={"path": file_path})
             if results["ids"]:
                 self.collection.delete(ids=results["ids"])
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - chromadb raises various internal exceptions
+            logger.debug("Failed to remove %s: %s", Path(file_path).name, e)
             console.print(
                 f"[yellow]Failed to remove {Path(file_path).name}: {e}[/yellow]"
             )
@@ -232,7 +238,7 @@ class IndexManager:
                 size=stat.st_size,
             )
 
-        except Exception as e:
+        except (OSError, ValueError, AttributeError, re.error) as e:
             console.print(
                 f"[yellow]Failed to extract metadata from {file_path.name}: {e}[/yellow]"
             )
@@ -338,7 +344,7 @@ class IndexManager:
 
             return embeddings
 
-        except Exception as e:
+        except requests.RequestException as e:
             console.print(f"[red]Failed to get embeddings: {e}[/red]")
             return None
 
@@ -359,7 +365,8 @@ class IndexManager:
             from notes_chat.bm25 import rebuild_bm25_index
 
             rebuild_bm25_index(self.collection, self.bm25_file)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes
+            logger.debug("Failed to rebuild BM25 index: %s", e)
             console.print(f"[yellow]Failed to rebuild BM25 index: {e}[/yellow]")
 
 

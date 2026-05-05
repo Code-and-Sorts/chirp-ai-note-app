@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import Darwin
 import Foundation
@@ -290,14 +291,18 @@ func runMain() {
     }
 
     writeStderr("capture: awaiting_permission\n")
+    flushStderr()
+    // CGRequestScreenCaptureAccess is the documented way to surface the
+    // Screen Recording TCC prompt and register this bundle with the
+    // privacy database. Without it, SCShareableContent silently fails on
+    // a fresh bucket and the user never sees the app appear in System
+    // Settings → Privacy & Security → Screen Recording.
+    if !CGRequestScreenCaptureAccess() {
+        failStartup("screen_recording_denied")
+    }
     do {
         try session.startSystemAudio()
     } catch {
-        // SCStream surfaces user-declined screen-recording permission as
-        // SCStreamError code -3801 (.userDeclined). Anything else is a
-        // genuine startup failure and should be reported distinctly so the
-        // Python wrapper does not steer users toward System Settings for
-        // non-permission problems.
         let nsError = error as NSError
         if nsError.code == -3801 {
             failStartup("screen_recording_denied")
@@ -320,6 +325,138 @@ func runMain() {
     flushStderr()
 
     RunLoop.main.run()
+}
+
+// MARK: - Disclaim shim
+//
+// Without `responsibility_spawnattrs_setdisclaim`, macOS TCC inherits the
+// "responsible process" from this binary's parent (the terminal that ran
+// Python). Screen-recording / mic prompts then attribute to the terminal,
+// not the bundled Chirp helper, and Chirp never appears in System Settings
+// → Privacy & Security.
+//
+// To break the inheritance chain we re-spawn ourselves with the disclaim
+// attribute set. The first invocation (no `CHIRP_CAPTURE_DISCLAIMED` env
+// var) is just a launcher: it `posix_spawn`s a second copy of this same
+// binary with the disclaim flag, forwards termination signals to the
+// child, and propagates the child's exit status. The second invocation
+// (env var set) skips this block and runs `runMain()`.
+//
+// Consolidating this into the Swift helper means the toolchain stays
+// `swiftc`-only — no separate `clang` step in the Makefile — and the
+// bundle ships one executable instead of two.
+
+@_silgen_name("responsibility_spawnattrs_setdisclaim")
+func responsibility_spawnattrs_setdisclaim(
+    _ attrs: UnsafeMutablePointer<posix_spawnattr_t?>,
+    _ disclaim: Int32
+) -> Int32
+
+private let disclaimSentinelEnv = "CHIRP_CAPTURE_DISCLAIMED"
+private let childKillGraceSeconds: UInt32 = 2
+
+private var disclaimedChildPid: pid_t = 0
+
+private func disclaimEscalateToSigkill(_ sig: Int32) {
+    if disclaimedChildPid > 0 {
+        kill(disclaimedChildPid, SIGKILL)
+    }
+}
+
+private func disclaimForwardSignal(_ sig: Int32) {
+    if disclaimedChildPid > 0 {
+        kill(disclaimedChildPid, sig)
+        // Arm an alarm so we SIGKILL the child if it ignores the
+        // forwarded signal — otherwise Python's later SIGKILL would only
+        // kill this launcher shim and orphan the child.
+        signal(SIGALRM, disclaimEscalateToSigkill)
+        alarm(childKillGraceSeconds)
+    }
+}
+
+private func runDisclaimer() -> Int32 {
+    var attrs: posix_spawnattr_t? = nil
+    if posix_spawnattr_init(&attrs) != 0 {
+        writeStderr("disclaim: posix_spawnattr_init failed\n")
+        return 1
+    }
+    defer { posix_spawnattr_destroy(&attrs) }
+
+    if responsibility_spawnattrs_setdisclaim(&attrs, 1) != 0 {
+        // Non-fatal: continue without disclaim. TCC attribution will
+        // fall back to the parent process; capture may still work if
+        // the parent already holds the necessary grants.
+        writeStderr("disclaim: setdisclaim failed; TCC may attribute to parent\n")
+    }
+
+    let argv = CommandLine.arguments.map { strdup($0) }
+    var argvPointers: [UnsafeMutablePointer<CChar>?] = argv + [nil]
+
+    let allowedEnvKeys: Set<String> = [
+        "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME",
+        disclaimSentinelEnv,
+    ]
+    let parentEnv = ProcessInfo.processInfo.environment
+    var childEnv: [String: String] = [:]
+    for key in allowedEnvKeys {
+        if let value = parentEnv[key] {
+            childEnv[key] = value
+        }
+    }
+    childEnv[disclaimSentinelEnv] = "1"
+    let envStrings = childEnv.map { strdup("\($0.key)=\($0.value)") }
+    var envPointers: [UnsafeMutablePointer<CChar>?] = envStrings + [nil]
+
+    defer {
+        argv.forEach { free($0) }
+        envStrings.forEach { free($0) }
+    }
+
+    var pid: pid_t = 0
+    let executablePath = CommandLine.arguments[0]
+    let spawnRc = argvPointers.withUnsafeMutableBufferPointer { argvBuf in
+        envPointers.withUnsafeMutableBufferPointer { envBuf in
+            posix_spawn(
+                &pid, executablePath, nil, &attrs,
+                argvBuf.baseAddress, envBuf.baseAddress
+            )
+        }
+    }
+
+    if spawnRc != 0 {
+        let message = String(cString: strerror(spawnRc))
+        writeStderr("disclaim: posix_spawn failed: \(message)\n")
+        return 1
+    }
+
+    disclaimedChildPid = pid
+    signal(SIGTERM, disclaimForwardSignal)
+    signal(SIGINT, disclaimForwardSignal)
+    signal(SIGHUP, disclaimForwardSignal)
+    signal(SIGQUIT, disclaimForwardSignal)
+
+    var status: Int32 = 0
+    while waitpid(pid, &status, 0) < 0 {
+        if errno != EINTR {
+            return 1
+        }
+    }
+
+    if (status & 0x7f) == 0 {
+        return (status >> 8) & 0xff  // WIFEXITED → WEXITSTATUS
+    }
+    let termSig = status & 0x7f
+    if termSig != 0 && termSig != 0x7f {
+        // WIFSIGNALED — re-raise the same signal so the parent observes
+        // the same exit cause.
+        signal(termSig, SIG_DFL)
+        kill(getpid(), termSig)
+    }
+    return 1
+}
+
+if ProcessInfo.processInfo.environment[disclaimSentinelEnv] == nil {
+    exit(runDisclaimer())
 }
 
 runMain()

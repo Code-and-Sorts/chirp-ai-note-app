@@ -216,3 +216,4 @@ transcription-out/*.json.gz
 notes-out/*.md
 config/user_config.yaml
 .notes_index/*
+.claude/.DS_Store

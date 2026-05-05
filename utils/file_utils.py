@@ -93,7 +93,7 @@ def _build_record(entry: Path) -> NoteRecord | None:
         try:
             with meta_path.open("rb") as fh:
                 meta_data = tomllib.load(fh)
-        except Exception:
+        except (tomllib.TOMLDecodeError, OSError):
             meta_data = {}
 
     created_at = _resolve_created_at(meta_data, entry)
@@ -147,7 +147,7 @@ def move_file(src: Path, dst: Path) -> bool:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
         return True
-    except Exception:
+    except OSError:
         return False
 
 
@@ -156,7 +156,7 @@ def copy_file(src: Path, dst: Path) -> bool:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(dst))
         return True
-    except Exception:
+    except OSError:
         return False
 
 
@@ -170,7 +170,7 @@ def ensure_directory(directory: Path) -> bool:
     try:
         directory.mkdir(parents=True, exist_ok=True)
         return True
-    except Exception:
+    except OSError:
         return False
 
 
@@ -186,7 +186,8 @@ def clean_old_files(directory: Path, days_old: int = 30) -> int:
             try:
                 file_path.unlink()
                 deleted_count += 1
-            except Exception:
+            except OSError:
+                # One file failing should not stop the bulk delete; counter just doesn't increment.
                 pass
 
     return deleted_count

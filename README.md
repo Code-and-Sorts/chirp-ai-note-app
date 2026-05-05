@@ -19,11 +19,11 @@ Chirp is a local-first CLI for recording meetings, transcribing audio, generatin
 
 ## Prerequisites
 
-Chirp currently targets **macOS** for audio capture.
+Chirp currently targets **macOS 13.0 (Ventura) or later** for audio capture. The bundled `CaptureAudio.app` helper uses ScreenCaptureKit's audio-only mode, which requires macOS 13+.
 
+- macOS 13.0+
 - Python 3.11+
 - [Ollama](https://ollama.com) for note generation and retrieval
-- [BlackHole 2ch](https://existential.audio/blackhole/) for system-audio capture
 - Homebrew if you want `chirp init` to install missing macOS dependencies for you
 
 ## Install
@@ -129,19 +129,17 @@ chirp search "owner: .*" --regex --json
 
 ## Setup details
 
-`chirp init` is the recommended setup path. It verifies Homebrew, `ffmpeg`, BlackHole, Ollama, and your configured models, then helps install or pull anything missing.
+`chirp init` is the recommended setup path. It verifies Homebrew, `ffmpeg`, Ollama, and your configured models, then helps install or pull anything missing. The bundled `CaptureAudio.app` records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
 
 If you prefer to set things up manually on macOS:
 
 1. Install dependencies:
 
    ```bash
-   brew install portaudio ffmpeg ollama blackhole-2ch
+   brew install ffmpeg ollama
    ```
 
-2. Create a **Multi-Output Device** in Audio MIDI Setup with your speakers plus BlackHole.
-3. Create an **Aggregate Device** with your microphone plus BlackHole.
-4. Start Ollama:
+2. Start Ollama:
 
    ```bash
    ollama serve
@@ -149,11 +147,10 @@ If you prefer to set things up manually on macOS:
    ollama pull nomic-embed-text
    ```
 
-5. Re-check your environment:
+3. Re-check your environment:
 
    ```bash
    chirp init --recheck
-   chirp devices
    ```
 
 ## Configuration and storage
@@ -181,11 +178,8 @@ chirp index --force
 
 ## Troubleshooting
 
-**BlackHole not detected**
-Install it with `brew install blackhole-2ch`, then confirm your Audio MIDI setup and run `chirp init --recheck` or `chirp devices`.
-
 **Recording fails immediately**
-Check macOS microphone permissions and confirm your default input / aggregate device settings.
+Grant Chirp access to **Screen Recording** and **Microphone** in `System Settings → Privacy & Security`, then retry. The first run will prompt for both; later denials require toggling the entries manually.
 
 **Transcription or notes generation fails**
 Make sure Ollama is running and the configured models are installed. `chirp init --recheck` will show what is missing.

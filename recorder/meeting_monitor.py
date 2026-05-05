@@ -66,7 +66,10 @@ class MeetingMonitor:
 
                 time.sleep(60)
 
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - monitor loop must survive callback/popup errors
+                import logging
+
+                logging.getLogger(__name__).debug("Meeting monitor loop error: %s", exc)
                 time.sleep(60)
                 continue
 

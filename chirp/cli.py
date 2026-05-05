@@ -1,3 +1,4 @@
+import logging
 import math
 import sys
 from collections import deque
@@ -16,6 +17,8 @@ from typer.core import TyperGroup
 from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingError
 from config.settings import ChirpSettings, get_settings
 from utils.file_utils import NoteRecord, list_notes
+
+logger = logging.getLogger(__name__)
 
 VISIBLE_COMMAND_ORDER = (
     "record",
@@ -114,7 +117,7 @@ def _resolve_mic_name(device_manager) -> str:
             (d["name"] for d in devices_info if d["index"] == default_idx),
             "default",
         )
-    except Exception:
+    except (OSError, RuntimeError):
         return "default"
 
 
@@ -376,7 +379,8 @@ def record(
     except ConfigurationError as e:
         console.print(f"[red]Configuration error: {str(e)}[/red]")
         raise typer.Exit(1)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - top-level CLI handler; all specific errors caught above
+        logger.debug("Unexpected error in record command: %s", e, exc_info=True)
         console.print(f"[red]Unexpected error: {str(e)}[/red]")
         raise typer.Exit(1)
 
@@ -779,7 +783,8 @@ def _reindex_after_edit(settings: ChirpSettings, record: NoteRecord) -> None:
                 index_manager._save_manifest(manifest)
             index_manager._rebuild_bm25()
             console.print(f"[dim green]✓ Re-indexed {notes_path.name}[/dim green]")
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # noqa: BLE001 - defensive auto-index; IndexManager can raise many types
+        logger.debug("Auto-indexing failed for %s: %s", notes_path.name, exc)
         console.print(
             f"[dim yellow]Auto-indexing failed for "
             f"{notes_path.name}: {exc}[/dim yellow]"
@@ -829,7 +834,8 @@ def _drop_from_index(settings: ChirpSettings, notes_path: Path) -> None:
         manifest.pop(str(notes_path), None)
         index_manager._save_manifest(manifest)
         index_manager._rebuild_bm25()
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # noqa: BLE001 - defensive auto-index; IndexManager can raise many types
+        logger.debug("Failed to update index after delete: %s", exc)
         console.print(f"[dim yellow]Failed to update index: {exc}[/dim yellow]")
 
 
@@ -1137,19 +1143,7 @@ def devices():
     console.print(output_table)
 
     console.print()
-    if device_manager.check_blackhole_available():
-        console.print("[green]BlackHole detected and ready[/green]")
-    elif device_manager.check_aggregate_available():
-        console.print("[green]Aggregate device detected and ready[/green]")
-    elif device_manager.get_default_input_device() is not None:
-        console.print(
-            "[green]Default input device detected (microphone recording ready)[/green]"
-        )
-        console.print(
-            "[dim]For system audio capture, install BlackHole: https://existential.audio/blackhole/[/dim]"
-        )
-    else:
-        console.print("[red]No suitable input device found[/red]")
-        console.print("Install BlackHole from: https://existential.audio/blackhole/")
-        console.print("Or create an Aggregate Device in Audio MIDI Setup")
+    console.print(
+        "System audio is captured via the bundled CaptureAudio.app; no virtual driver required."
+    )
     console.print("[dim]Run 'chirp init' for first-run setup.[/dim]")

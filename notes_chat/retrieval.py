@@ -79,7 +79,8 @@ def retrieve_context(
             "chunks_retrieved": len(merged_chunks),
         }
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - retrieve_context orchestrates many subsystems
+        logger.debug("retrieve_context failed: %s", e, exc_info=True)
         return {"success": False, "error": str(e)}
 
 
@@ -132,7 +133,7 @@ def _search_chroma(
 
         return chroma_results
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - chromadb raises various internal exceptions
         logger.debug("Chroma search failed: %s", e, exc_info=True)
         return []
 
@@ -149,7 +150,7 @@ def _search_bm25(
             (chunk_id, score, {"source": "bm25"}) for chunk_id, score in bm25_results
         ]
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - BM25 can raise many types on corrupt index
         logger.debug("BM25 search failed: %s", e, exc_info=True)
         return []
 
@@ -384,7 +385,7 @@ def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
 
         return f"Try a broader search or check notes from {latest_date.strftime('%Y-%m-%d')}"
 
-    except Exception:
+    except OSError:
         return "Try a broader search or different keywords"
 
 
@@ -405,5 +406,5 @@ def _get_query_embedding(config: ChirpSettings, query: str) -> list[float] | Non
         ):
             return embedding
         return None
-    except Exception:
+    except requests.RequestException:
         return None

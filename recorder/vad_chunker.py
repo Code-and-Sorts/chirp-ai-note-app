@@ -91,7 +91,7 @@ class VADChunker(threading.Thread):
         try:
             result = self.vad(frame.data, self.sample_rate)
             return float(result) >= self.speech_threshold
-        except Exception:
+        except (RuntimeError, ValueError, TypeError):
             return False
 
     def _update_state(self, frame: AudioFrame, is_speech: bool):

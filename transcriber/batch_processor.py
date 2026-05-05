@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from utils.file_utils import (
     list_notes,
 )
 from utils.popup_manager import PopupManager
+
+logger = logging.getLogger(__name__)
 
 
 class Stage(Enum):
@@ -142,7 +145,8 @@ def _audio_duration_seconds(transcriber: WhisperTranscriber, audio: Path) -> flo
             rate = fh.getframerate()
             if rate > 0:
                 return frames / float(rate)
-    except Exception:
+    except (OSError, wave.Error):
+        # Probe is best-effort; fall through to the 0.0 default.
         pass
 
     return 0.0
@@ -254,7 +258,8 @@ class BatchProcessor:
             live.update(ctx.view.render())
             try:
                 runner(ctx)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - pipeline stage; any stage can fail for many reasons
+                logger.debug("Pipeline stage %s failed: %s", stage, exc)
                 ctx.view.fail(stage, str(exc))
                 live.update(ctx.view.render())
                 return False
@@ -388,7 +393,7 @@ def _read_meta(meta_path: Path) -> dict[str, Any]:
     try:
         with meta_path.open("rb") as fh:
             return dict(tomllib.load(fh))
-    except Exception:
+    except (OSError, tomllib.TOMLDecodeError):
         return {}
 
 
