@@ -15,4 +15,6 @@ completed.
   Create a new command that tracks todo list items. Should be able to extract todos from meeting notes and also manually add todos. Should have due dates (if requested in the meeting or manually added) and have the ability to check them off. Should also be able to review and undo checked off todo items.
 - [ ] **Explore implementing agent skills**
   Investigate adding a feature to define agent skills with chirp
+- [ ] **Linting rules**
+  Revisit current linting rules. Some rules to explore and research
 <!-- todo-list:end -->
