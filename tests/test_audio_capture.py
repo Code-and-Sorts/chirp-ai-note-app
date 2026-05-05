@@ -503,6 +503,62 @@ def test_built_bundle_binary_is_executable(tmp_path: Path) -> None:
     assert os.access(bundle_binary, os.X_OK)
 
 
+def test_check_permissions_raises_on_malformed_line(tmp_path: Path) -> None:
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\necho stub\n")
+    fake_binary.chmod(0o755)
+
+    result = subprocess.CompletedProcess(
+        args=["capture_audio", "--check-permissions"],
+        returncode=0,
+        stdout="permission: garbage_no_equals",
+        stderr="",
+    )
+    with (
+        mock.patch(
+            "audio_capture.subprocess.run",
+            return_value=result,
+        ),
+        mock.patch(
+            "audio_capture._resolve_binary_path",
+            return_value=contextlib.nullcontext(fake_binary),
+        ),
+    ):
+        from audio_capture import check_permissions
+
+        with pytest.raises(RuntimeError) as excinfo:
+            check_permissions()
+        assert "malformed" in str(excinfo.value)
+
+
+def test_check_permissions_raises_on_missing_keys(tmp_path: Path) -> None:
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\necho stub\n")
+    fake_binary.chmod(0o755)
+
+    result = subprocess.CompletedProcess(
+        args=["capture_audio", "--check-permissions"],
+        returncode=0,
+        stdout="permission: screen_recording=granted",
+        stderr="",
+    )
+    with (
+        mock.patch(
+            "audio_capture.subprocess.run",
+            return_value=result,
+        ),
+        mock.patch(
+            "audio_capture._resolve_binary_path",
+            return_value=contextlib.nullcontext(fake_binary),
+        ),
+    ):
+        from audio_capture import check_permissions
+
+        with pytest.raises(RuntimeError) as excinfo:
+            check_permissions()
+        assert "expected screen_recording and microphone" in str(excinfo.value)
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only wheel build")
 def test_wheel_bundles_executable_helper(tmp_path: Path) -> None:

@@ -276,6 +276,9 @@ func runMain() {
         at: permissionSentinelURL.deletingLastPathComponent(),
         withIntermediateDirectories: true
     )
+    // Write the sentinel before capture starts — once macOS prompts the user (now
+    // or later in this session), future probes can read sentinel-present + preflight-false
+    // as "denied" instead of "undetermined".
     FileManager.default.createFile(atPath: permissionSentinelURL.path, contents: nil)
 
     signal(SIGPIPE, SIG_IGN)
@@ -362,6 +365,13 @@ private let disclaimSentinelEnv = "CHIRP_CAPTURE_DISCLAIMED"
 private let childKillGraceSeconds: UInt32 = 2
 
 private var disclaimedChildPid: pid_t = 0
+
+// Sentinel marking that macOS has already shown the screen-recording permission
+// dialog to this user. Lets --check-permissions distinguish "denied" from
+// "never asked" — CGPreflightScreenCaptureAccess() returns Bool only.
+let permissionSentinelURL: URL = FileManager.default
+    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("Chirp/.permission-prompted")
 
 private func disclaimEscalateToSigkill(_ sig: Int32) {
     if disclaimedChildPid > 0 {
@@ -460,10 +470,6 @@ private func runDisclaimer() -> Int32 {
     }
     return 1
 }
-
-let permissionSentinelURL: URL = FileManager.default
-    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("Chirp/.permission-prompted")
 
 if CommandLine.arguments.contains("--check-permissions") {
     let screenRecordingState: String

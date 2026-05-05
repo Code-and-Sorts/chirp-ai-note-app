@@ -483,23 +483,27 @@ def _atexit_cleanup(proc: subprocess.Popen[bytes]) -> None:
 
 
 def check_permissions() -> dict[str, str]:
-    """Probe macOS permission state for the bundled CaptureAudio.app.
+    try:
+        with _resolve_binary_path() as binary_path:
+            if not binary_path.exists():
+                raise FileNotFoundError(
+                    "capture_audio binary not found. Build it with: "
+                    "python -m audio_capture.build"
+                )
+            result = subprocess.run(
+                [str(binary_path), "--check-permissions"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"capture_audio --check-permissions failed: {result.stderr}"
+                )
+    except RuntimeError as exc:
+        raise FileNotFoundError(str(exc)) from exc
 
-    Runs the helper binary with --check-permissions, parses its two
-    `permission:` lines, and returns the parsed mapping.
-
-    Raises:
-        FileNotFoundError: if the binary is missing (with the existing
-            build-instruction message from `_resolve_binary_path`).
-    """
-    with _resolve_binary_path() as binary_path:
-        result = subprocess.run(
-            [str(binary_path), "--check-permissions"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=True,
-        )
     permissions: dict[str, str] = {}
     for line in result.stdout.splitlines():
         if line.startswith("permission: "):

@@ -168,7 +168,7 @@ def _screen_recording_permission() -> DependencyStatus:
         )
     try:
         perms = audio_capture.check_permissions()
-    except FileNotFoundError:
+    except (FileNotFoundError, RuntimeError):
         return DependencyStatus(
             name="screen recording permission",
             installed=False,
@@ -187,11 +187,17 @@ def _screen_recording_permission() -> DependencyStatus:
             installed=False,
             detail="denied — open System Settings → Privacy & Security → Screen Recording",
         )
+    if state == "undetermined":
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=True,
+            required=False,
+            detail="will prompt on first record",
+        )
     return DependencyStatus(
         name="screen recording permission",
-        installed=True,
-        required=False,
-        detail="will prompt on first record",
+        installed=False,
+        detail=f"unexpected permission state {state!r} — rebuild the helper",
     )
 
 
@@ -332,10 +338,14 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
             tasks.append(("ollama service", [brew, "services", "start", "ollama"]))
         elif status.name == "ffmpeg":
             tasks.append(("ffmpeg", [brew, "install", "ffmpeg"]))
-        elif (
-            status.name == "screen recording permission"
-            and "binary not built" in status.detail
+        elif status.name == "screen recording permission" and status.detail.startswith(
+            "denied"
         ):
+            console.print(
+                "[yellow]![/yellow] screen recording permission must be granted manually — "
+                "open System Settings → Privacy & Security → Screen Recording, then re-run."
+            )
+        elif status.name == "screen recording permission":
             tasks.append(
                 ("capture_audio", [sys.executable, "-m", "audio_capture.build"])
             )

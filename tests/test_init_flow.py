@@ -501,3 +501,84 @@ def test_install_missing_dispatches_build_for_missing_binary(tmp_path, monkeypat
     assert _sys.executable in args and "-m" in args and "audio_capture.build" in args, (
         f"expected audio_capture.build dispatch, got: {args}"
     )
+
+
+def test_verify_handles_undetermined_screen_recording(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(
+        init_flow.audio_capture,
+        "check_permissions",
+        lambda: {"screen_recording": "undetermined", "microphone": "granted"},
+    )
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+
+    settings = _fake_settings(tmp_path)
+    statuses = init_flow.verify(settings, _console())
+
+    perm = next(s for s in statuses if s.name == "screen recording permission")
+    assert perm.installed is True
+    assert perm.required is False
+    assert perm.detail == "will prompt on first record"
+
+
+def test_verify_handles_runtime_error_from_check_permissions(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+
+    def _raise():
+        raise RuntimeError("malformed permission line in helper output: 'garbage'")
+
+    monkeypatch.setattr(init_flow.audio_capture, "check_permissions", _raise)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+
+    settings = _fake_settings(tmp_path)
+    statuses = init_flow.verify(settings, _console())
+
+    perm = next(s for s in statuses if s.name == "screen recording permission")
+    assert perm.installed is False
+    assert "capture_audio binary not built" in perm.detail
+
+
+def test_verify_guards_against_unexpected_permission_state(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(
+        init_flow.audio_capture,
+        "check_permissions",
+        lambda: {"screen_recording": "BUSTED", "microphone": "granted"},
+    )
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+
+    settings = _fake_settings(tmp_path)
+    statuses = init_flow.verify(settings, _console())
+
+    perm = next(s for s in statuses if s.name == "screen recording permission")
+    assert perm.installed is False
+    assert "unexpected permission state" in perm.detail
+    assert "BUSTED" in perm.detail
+
+
+def test_install_missing_surfaces_denied_permission_without_dispatching(monkeypatch):
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(args, timeout=10.0):
+        run_calls.append(list(args))
+        return 0, ""
+
+    monkeypatch.setattr(init_flow, "_run", _fake_run)
+
+    statuses = [
+        init_flow.DependencyStatus(
+            name="screen recording permission",
+            installed=False,
+            detail="denied — open System Settings → Privacy & Security → Screen Recording",
+        )
+    ]
+
+    console = _console()
+    result = init_flow.install_missing(console, statuses)
+
+    assert len(run_calls) == 0, f"expected zero dispatches, got: {run_calls}"
+    assert result is True
+    output = console.file.getvalue()
+    assert "screen recording permission must be granted manually" in output
