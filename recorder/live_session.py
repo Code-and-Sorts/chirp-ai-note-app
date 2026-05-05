@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import queue
+import shutil
 import threading
 import time
 import wave
@@ -25,6 +27,8 @@ from recorder.live_dashboard import LiveDashboard
 from recorder.live_transcriber import LiveTranscriber
 from recorder.live_types import DashboardEvent, SpeechChunk
 from utils.file_utils import AUDIO_FILENAME, META_FILENAME, slugify
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -144,10 +148,6 @@ class LiveTranscriptionSession:
             raise RecordingError("Audio stream not initialized")
 
         capture_error = self.audio_stream.capture_error
-        if capture_error is not None:
-            raise RecordingError(
-                f"audio capture worker crashed mid-recording: {capture_error}"
-            ) from capture_error
 
         notes_root = self.settings.directories.notes_root
         notes_root.mkdir(parents=True, exist_ok=True)
@@ -159,6 +159,12 @@ class LiveTranscriptionSession:
         note_dir = notes_root / slug
         note_dir.mkdir(parents=True, exist_ok=True)
         audio_path = note_dir / AUDIO_FILENAME
+
+        if capture_error is not None:
+            logger.error("live capture failed mid-recording", exc_info=capture_error)
+            self.audio_stream.close()
+            shutil.rmtree(note_dir, ignore_errors=True)
+            raise RecordingError("live capture failed mid-recording") from capture_error
 
         self.audio_stream.save_recording(audio_path, title=self.title)
         self.audio_stream.close()

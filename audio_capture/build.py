@@ -59,6 +59,8 @@ def main() -> int:
 
     env = os.environ.copy()
     arch = env.get("ARCH")
+    if arch is not None and arch not in {"arm64", "x86_64"}:
+        raise ValueError(f"Unsupported ARCH={arch!r}; expected one of arm64, x86_64")
     make_args = ["make", "-C", str(SWIFT_DIR), "build"]
     if arch:
         make_args.append(f"ARCH={arch}")

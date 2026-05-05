@@ -9,9 +9,12 @@ PLIST_SOURCE := Info.plist
 PYPROJECT := ../../pyproject.toml
 VERSION := $(shell awk -F'"' '/^version[[:space:]]*=/ {print $$2; exit}' $(PYPROJECT))
 
-.PHONY: build clean
+.PHONY: build clean codesign
 
-build: $(BINARY) $(PLIST_DEST)
+build: $(BINARY) $(PLIST_DEST) codesign
+
+codesign:
+	codesign --force --deep --sign - $(BUNDLE)
 
 $(MACOS_DIR):
 	mkdir -p $(MACOS_DIR)

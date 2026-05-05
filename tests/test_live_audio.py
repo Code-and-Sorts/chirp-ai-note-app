@@ -23,24 +23,6 @@ from recorder.live_audio import LiveAudioStream
 from recorder.live_types import AudioFrame
 
 
-@pytest.fixture(autouse=True)
-def _force_darwin_platform(request: pytest.FixtureRequest) -> Iterator[None]:
-    if "real_platform" in request.keywords:
-        yield
-        return
-    # `check_macos_version()` looks at both `sys.platform` and
-    # `platform.mac_ver()`. Stub both so the version gate passes on
-    # non-Darwin CI runners.
-    with (
-        mock.patch.object(sys, "platform", "darwin"),
-        mock.patch(
-            "audio_capture.platform.mac_ver",
-            return_value=("13.0.0", ("", "", ""), ""),
-        ),
-    ):
-        yield
-
-
 def _make_stream(
     debug_dir: Path | None = None,
 ) -> tuple[
@@ -236,7 +218,9 @@ def test_close_is_idempotent() -> None:
 
     with mock.patch("recorder.live_audio.AudioCapture", return_value=fake):
         stream.start()
-        time.sleep(0.05)
+        assert stream._mixer_thread is not None and stream._mixer_thread.is_alive(), (
+            "mixer thread must be alive before testing idempotent close"
+        )
         stream.close()
         stream.close()
 
@@ -276,10 +260,10 @@ def test_capture_error_is_set_when_mixer_thread_crashes() -> None:
 
 
 def test_mixer_thread_sets_stop_event_on_clean_helper_eof() -> None:
-    # `cap.frames()` can exhaust cleanly when the helper closes stdout
-    # and exits 0. The mixer thread must still flip stop_event so a
-    # live session without a duration cap doesn't wait forever after
-    # the helper has already stopped emitting.
+    # H6: when `cap.frames()` exhausts cleanly (helper closes stdout,
+    # exits 0) while stop_event is not yet set, the mixer thread records
+    # a sentinel capture_error and sets stop_event so the session doesn't
+    # wait forever.
     stream, _frame_queue, _level_queue, stop_event = _make_stream()
     fake = _FakeAudioCapture(_paired_frames(2), block_after_drain=False)
 
@@ -291,7 +275,8 @@ def test_mixer_thread_sets_stop_event_on_clean_helper_eof() -> None:
         stream.stop()
 
     assert stop_event.is_set()
-    assert stream.capture_error is None
+    assert isinstance(stream.capture_error, RuntimeError)
+    assert "clean EOF" in str(stream.capture_error)
 
 
 def test_mic_device_name_is_exposed_from_audio_capture() -> None:

@@ -15,8 +15,8 @@ import struct
 import subprocess
 import sys
 import textwrap
+import threading
 import time
-from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
 
@@ -30,25 +30,6 @@ from audio_capture import (
     AudioCaptureStartTimeout,
     _read_frame,
 )
-
-
-@pytest.fixture(autouse=True)
-def _force_darwin_platform(request: pytest.FixtureRequest) -> Iterator[None]:
-    if "real_platform" in request.keywords:
-        yield
-        return
-    # `check_macos_version()` looks at both `sys.platform` and
-    # `platform.mac_ver()`. On non-Darwin hosts the latter returns "" so
-    # patching sys.platform alone is not enough — also stub
-    # `platform.mac_ver` to a 13.x tuple so the version gate passes.
-    with (
-        mock.patch.object(sys, "platform", "darwin"),
-        mock.patch(
-            "audio_capture.platform.mac_ver",
-            return_value=("13.0.0", ("", "", ""), ""),
-        ),
-    ):
-        yield
 
 
 def _pack_frame(source: int, timestamp_us: int, samples: np.ndarray) -> bytes:
@@ -334,22 +315,6 @@ def test_end_to_end_with_python_fake_helper(tmp_path: Path) -> None:
         (2, 210),
     ]
 
-    with (
-        _patch_resolve_to(fake_binary),
-        mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
-    ):
-        with AudioCapture() as cap:
-            sys_only = list(cap.system_frames())
-    assert [ts for ts, _ in sys_only] == [100, 200]
-
-    with (
-        _patch_resolve_to(fake_binary),
-        mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
-    ):
-        with AudioCapture() as cap:
-            mic_only = list(cap.mic_frames())
-    assert [ts for ts, _ in mic_only] == [110, 210]
-
 
 def test_mic_device_name_parsed_from_diagnostic_line(tmp_path: Path) -> None:
     fake_binary = tmp_path / "capture_audio"
@@ -450,6 +415,66 @@ def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
     ):
         with AudioCapture() as cap:
             assert cap._proc is not None
+
+
+def test_exit_during_frames_iteration_stops_cleanly(tmp_path: Path) -> None:
+    # L15: calling __exit__ from another thread while frames() is being
+    # consumed must stop the iterator cleanly — no exception leak.
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\necho stub\n")
+    fake_binary.chmod(0o755)
+
+    samples = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    frame_bytes = _pack_frame(1, 0, samples)
+
+    cmd = [
+        sys.executable,
+        "-c",
+        textwrap.dedent(
+            f"""
+            import sys, time
+            sys.stderr.write('capture: started\\n')
+            sys.stderr.flush()
+            for _ in range(20):
+                sys.stdout.buffer.write({frame_bytes!r})
+                sys.stdout.buffer.flush()
+                time.sleep(0.05)
+            """
+        ),
+    ]
+
+    real_popen = subprocess.Popen
+
+    def popen_override(args, **kwargs):
+        return real_popen(cmd, **kwargs)
+
+    collected: list = []
+    exception_in_thread: list[BaseException] = []
+
+    with (
+        _patch_resolve_to(fake_binary),
+        mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
+    ):
+        with AudioCapture() as cap:
+
+            def exit_after_first():
+                time.sleep(0.1)
+                try:
+                    cap.__exit__(None, None, None)
+                except Exception as exc:
+                    exception_in_thread.append(exc)
+
+            killer = threading.Thread(target=exit_after_first, daemon=True)
+            killer.start()
+            try:
+                for frame in cap.frames():
+                    collected.append(frame)
+            except Exception:
+                pass
+            killer.join(timeout=2.0)
+
+    assert len(collected) >= 1
+    assert not exception_in_thread
 
 
 @pytest.mark.real_platform

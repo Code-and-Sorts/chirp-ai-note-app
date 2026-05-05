@@ -63,13 +63,16 @@ def test_run_raises_recording_error_when_audio_stream_capture_error_set(
         session.stop_event.set()
 
         with pytest.raises(
-            RecordingError, match="audio capture worker crashed mid-recording"
+            RecordingError, match="live capture failed mid-recording"
         ) as excinfo:
             session.run()
 
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert "helper-boom-mid-stream" in str(excinfo.value.__cause__)
     fake_stream.save_recording.assert_not_called()
+    assert list(tmp_path.iterdir()) == [], (
+        "note dir should be cleaned up on capture failure"
+    )
 
 
 def test_run_succeeds_when_audio_stream_capture_error_is_none(
@@ -102,3 +105,40 @@ def test_run_succeeds_when_audio_stream_capture_error_is_none(
 
     fake_stream.save_recording.assert_called_once()
     assert result.audio_path.parent.parent == tmp_path
+
+
+def test_run_does_not_call_saver_or_transcriber_on_capture_error(
+    tmp_path: Path,
+) -> None:
+    # M18: when audio_stream.capture_error is set before (or during) run(),
+    # run() must raise RecordingError and leave saver/transcriber uncalled.
+    settings = _build_settings(tmp_path)
+    fake_stream = _make_fake_stream(capture_error=RuntimeError("pre-set-capture-error"))
+    saver = mock.MagicMock()
+    transcriber_mock = mock.MagicMock()
+    transcriber_mock.total_words = 0
+    transcriber_mock.segments = []
+
+    with (
+        mock.patch("recorder.live_session.LiveAudioStream", return_value=fake_stream),
+        mock.patch("recorder.live_session.LiveDashboard"),
+        mock.patch(
+            "recorder.live_session.LiveTranscriber", return_value=transcriber_mock
+        ),
+        mock.patch("recorder.vad_chunker.VADChunker"),
+    ):
+        session = LiveTranscriptionSession(
+            settings=settings,
+            device_manager=mock.MagicMock(),
+            console=mock.MagicMock(),
+            duration_minutes=None,
+            title="abort-test",
+        )
+        session.stop_event.set()
+
+        with pytest.raises(RecordingError, match="live capture failed mid-recording"):
+            session.run()
+
+    fake_stream.save_recording.assert_not_called()
+    saver.assert_not_called()
+    transcriber_mock.export_transcript.assert_not_called()

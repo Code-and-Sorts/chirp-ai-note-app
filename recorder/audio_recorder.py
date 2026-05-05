@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
+import time
 import tomllib
 import wave
 from collections.abc import Callable
@@ -14,7 +16,12 @@ import numpy as np
 import tomli_w
 
 from audio_capture import AudioCapture, check_macos_version
+from chirp.exceptions import RecordingError
 from config.settings import ChirpSettings
+from recorder._audio_utils import (
+    float32_to_int16_bytes,
+    warn_if_audio_settings_overridden,
+)
 from recorder.audio_mixer import StereoToMonoMixer
 from recorder.meeting_monitor import MeetingMonitor
 from utils.file_utils import (
@@ -41,13 +48,8 @@ class AudioRecorder:
     def __init__(self, settings: ChirpSettings, device_manager: DeviceManager):
         self.settings = settings
         self.device_manager = device_manager
-        self.is_recording = False
-        # int16 PCM bytes per drained frame. Storing the int16 view rather
-        # than the float32 ndarray halves the in-memory footprint of long
-        # recordings (~115 MB/hour at 16 kHz mono vs. ~230 MB/hour for
-        # float32) — important because settings.monitoring caps sessions
-        # at 8 hours by default.
-        self.frames: list[bytes] = []
+        self._is_recording_event = threading.Event()
+        self._frame_count: int = 0
         self.recording_thread: Timer | None = None
         self.monitor: MeetingMonitor | None = None
         self.start_time: datetime | None = None
@@ -55,9 +57,31 @@ class AudioRecorder:
         self.current_level: float = 0.0
         self.note_dir: Path | None = None
         self.slug: str | None = None
-        self._paused: bool = False
+        self._paused_event = threading.Event()
         self._capture_thread: threading.Thread | None = None
         self._capture_error: BaseException | None = None
+
+    @property
+    def is_recording(self) -> bool:
+        return self._is_recording_event.is_set()
+
+    @is_recording.setter
+    def is_recording(self, value: bool) -> None:
+        if value:
+            self._is_recording_event.set()
+        else:
+            self._is_recording_event.clear()
+
+    @property
+    def _paused(self) -> bool:
+        return self._paused_event.is_set()
+
+    @_paused.setter
+    def _paused(self, value: bool) -> None:
+        if value:
+            self._paused_event.set()
+        else:
+            self._paused_event.clear()
 
     def start_recording(
         self,
@@ -70,7 +94,13 @@ class AudioRecorder:
             raise RuntimeError("Recording already in progress")
 
         check_macos_version()
-        _warn_if_audio_settings_overridden(self.settings)
+        warn_if_audio_settings_overridden(
+            self.settings,
+            logger=logger,
+            component="audio_recorder",
+            output_sample_rate=OUTPUT_SAMPLE_RATE,
+            output_channels=OUTPUT_CHANNELS,
+        )
         self._capture_error = None
 
         notes_root = self.settings.directories.notes_root
@@ -83,88 +113,97 @@ class AudioRecorder:
         note_dir.mkdir(parents=True, exist_ok=True)
         audio_path = note_dir / AUDIO_FILENAME
 
-        self.frames = []
-        self.is_recording = True
-        self._paused = False
+        self._frame_count = 0
+        self._is_recording_event.set()
+        self._paused_event.clear()
         self.current_level = 0.0
         self.start_time = recorded_date
         self.title = effective_title
         self.note_dir = note_dir
         self.slug = slug
 
+        cap = AudioCapture()
         try:
-            with AudioCapture() as cap:
-                mic_name = cap.mic_device_name or "default"
+            cap.__enter__()
+        except Exception:
+            shutil.rmtree(note_dir, ignore_errors=True)
+            self._is_recording_event.clear()
+            raise
 
-                self._write_initial_meta(
-                    note_dir=note_dir,
-                    title=effective_title,
-                    recorded_at=recorded_date,
-                    mic=mic_name,
-                    tags=list(tags or []),
+        wave_file = wave.open(str(audio_path), "wb")
+        wave_file.setnchannels(OUTPUT_CHANNELS)
+        wave_file.setsampwidth(OUTPUT_SAMPLE_WIDTH_BYTES)
+        wave_file.setframerate(OUTPUT_SAMPLE_RATE)
+
+        try:
+            mic_name = cap.mic_device_name or "default"
+
+            self._write_initial_meta(
+                note_dir=note_dir,
+                title=effective_title,
+                recorded_at=recorded_date,
+                mic=mic_name,
+                tags=list(tags or []),
+            )
+
+            self.monitor = MeetingMonitor(
+                self.settings.monitoring,
+                self.start_time,
+                self._on_warning,
+                self._should_stop_recording,
+            )
+            self.monitor.start()
+
+            if duration_minutes:
+                self.recording_thread = Timer(
+                    duration_minutes * 60, self._stop_recording_timer
                 )
+                self.recording_thread.start()
 
-                self.monitor = MeetingMonitor(
-                    self.settings.monitoring,
-                    self.start_time,
-                    self._on_warning,
-                    self._should_stop_recording,
-                )
-                self.monitor.start()
+            self._capture_thread = threading.Thread(
+                target=self._capture_worker,
+                args=(cap, wave_file),
+                name="audio-recorder-capture",
+                daemon=True,
+            )
+            self._capture_thread.start()
 
-                if duration_minutes:
-                    self.recording_thread = Timer(
-                        duration_minutes * 60, self._stop_recording_timer
-                    )
-                    self.recording_thread.start()
-
-                self._capture_thread = threading.Thread(
-                    target=self._capture_worker,
-                    args=(cap,),
-                    name="audio-recorder-capture",
-                    daemon=True,
-                )
-                self._capture_thread.start()
-
-                try:
-                    while self.is_recording:
-                        threading.Event().wait(0.1)
-                        if level_callback is not None:
-                            try:
-                                level_callback(self.current_level)
-                            except Exception:
-                                logger.debug(
-                                    "Level callback failed, disabling", exc_info=True
-                                )
-                                level_callback = None
-                except KeyboardInterrupt:
-                    self.is_recording = False
+            try:
+                while self.is_recording:
+                    time.sleep(0.1)
+                    if level_callback is not None:
+                        try:
+                            level_callback(self.current_level)
+                        except Exception:
+                            logger.debug(
+                                "Level callback failed, disabling", exc_info=True
+                            )
+                            level_callback = None
+            except KeyboardInterrupt:
+                self._is_recording_event.clear()
         except KeyboardInterrupt:
             pass
         except Exception:
-            import shutil
-
             shutil.rmtree(note_dir, ignore_errors=True)
             raise
         finally:
-            self._cleanup_recording()
-            self.is_recording = False
+            wave_file.close()
+            self._cleanup_recording(cap)
+            self._is_recording_event.clear()
 
         if self._capture_error is not None:
-            import shutil
-
             shutil.rmtree(note_dir, ignore_errors=True)
-            raise RuntimeError(
-                "audio capture worker crashed mid-recording; recording discarded"
+            logger.error(
+                "audio capture worker crashed mid-recording",
+                exc_info=self._capture_error,
+            )
+            raise RecordingError(
+                "audio capture worker crashed mid-recording"
             ) from self._capture_error
 
-        if not self.frames:
-            import shutil
-
+        if self._frame_count == 0:
             shutil.rmtree(note_dir, ignore_errors=True)
             raise RuntimeError("No audio data recorded")
-
-        self._save_recording(audio_path)
 
         duration_s = get_recording_duration(self.start_time) if self.start_time else 0.0
         self._update_meta_duration(note_dir, duration_s)
@@ -172,20 +211,20 @@ class AudioRecorder:
         return slug
 
     def stop_recording(self):
-        self.is_recording = False
+        self._is_recording_event.clear()
 
     def pause(self) -> None:
-        self._paused = True
+        self._paused_event.set()
         self.current_level = 0.0
 
     def resume(self) -> None:
-        self._paused = False
+        self._paused_event.clear()
 
     @property
     def is_paused(self) -> bool:
-        return getattr(self, "_paused", False)
+        return self._paused_event.is_set()
 
-    def _capture_worker(self, cap: AudioCapture) -> None:
+    def _capture_worker(self, cap: AudioCapture, wave_file: wave.Wave_write) -> None:
         mixer = StereoToMonoMixer(
             frame_ms=32, sample_rate=OUTPUT_SAMPLE_RATE, gap_ms=100
         )
@@ -195,30 +234,31 @@ class AudioRecorder:
                     break
                 mixer.feed(source, timestamp_us, samples)
                 for _, mixed in mixer.drain():
-                    if self._paused:
+                    if self._paused_event.is_set():
                         continue
-                    self._append_mixed_frame(mixed)
-            # Flush any sub-frame tail — helper chunks are arbitrary-sized,
-            # so a clean EOF often leaves <512 samples buffered per source.
-            tail = mixer.flush()
-            if tail is not None and not self._paused:
-                _, mixed = tail
-                self._append_mixed_frame(mixed)
+                    self._append_mixed_frame(mixed, wave_file)
+            for _, mixed in mixer.flush():
+                if not self._paused_event.is_set():
+                    self._append_mixed_frame(mixed, wave_file)
         except Exception as exc:
-            # Stash the error so `start_recording` re-raises it instead of
-            # silently truncating the partial recording.
-            logger.exception("audio-recorder-capture worker crashed")
+            logger.error("audio-recorder-capture worker crashed", exc_info=True)
             self._capture_error = exc
+            self._is_recording_event.clear()
+        else:
+            if self.is_recording:
+                self._capture_error = RuntimeError(
+                    "audio capture ended unexpectedly (clean EOF)"
+                )
+                self._is_recording_event.clear()
         finally:
-            # `cap.frames()` can also exhaust cleanly on helper EOF; flip
-            # the flag in `finally` so the main wait loop exits in both
-            # crash and clean-EOF paths instead of polling forever.
-            self.is_recording = False
+            self._is_recording_event.clear()
 
     def _stop_recording_timer(self):
-        self.is_recording = False
+        self._is_recording_event.clear()
 
-    def _cleanup_recording(self):
+    def _cleanup_recording(self, cap: AudioCapture) -> None:
+        cap.__exit__(None, None, None)
+
         if self._capture_thread is not None:
             if self._capture_thread.ident is not None:
                 self._capture_thread.join(timeout=2.0)
@@ -232,21 +272,13 @@ class AudioRecorder:
             self.recording_thread.cancel()
             self.recording_thread = None
 
-    def _append_mixed_frame(self, mixed: np.ndarray) -> None:
-        clipped = np.clip(mixed, -1.0, 1.0)
-        int16 = (clipped * 32767).astype(np.int16, copy=False)
-        self.frames.append(int16.tobytes())
+    def _append_mixed_frame(
+        self, mixed: np.ndarray, wave_file: wave.Wave_write
+    ) -> None:
+        int16_bytes = float32_to_int16_bytes(mixed)
+        wave_file.writeframes(int16_bytes)
+        self._frame_count += 1
         self.current_level = min(1.0, float(np.max(np.abs(mixed))))
-
-    def _save_recording(self, file_path: Path) -> None:
-        if not self.frames:
-            raise RuntimeError("No audio data recorded")
-
-        with wave.open(str(file_path), "wb") as wave_file:
-            wave_file.setnchannels(OUTPUT_CHANNELS)
-            wave_file.setsampwidth(OUTPUT_SAMPLE_WIDTH_BYTES)
-            wave_file.setframerate(OUTPUT_SAMPLE_RATE)
-            wave_file.writeframes(b"".join(self.frames))
 
     def _write_initial_meta(
         self,
@@ -294,30 +326,6 @@ class AudioRecorder:
             "duration": get_recording_duration(self.start_time),
             "start_time": self.start_time,
         }
-
-
-def _warn_if_audio_settings_overridden(settings: ChirpSettings) -> None:
-    """Log a one-line warning when configured audio format != recorder output.
-
-    The bundled CaptureAudio.app helper is hardcoded to 16 kHz mono. If a
-    user has overridden `settings.audio.sample_rate` or `.channels` to a
-    different value, the recorder will silently produce 16 kHz mono
-    anyway. Surface that mismatch so the discrepancy is visible to
-    operators reading logs rather than baked into the WAV.
-    """
-    sample_rate = settings.audio.sample_rate
-    channels = settings.audio.channels
-    if sample_rate != OUTPUT_SAMPLE_RATE or channels != OUTPUT_CHANNELS:
-        logger.warning(
-            "audio_recorder: settings.audio.sample_rate=%s channels=%s "
-            "differ from recorder output (%s Hz, %s channel%s); produced "
-            "WAV will be 16 kHz mono regardless",
-            sample_rate,
-            channels,
-            OUTPUT_SAMPLE_RATE,
-            OUTPUT_CHANNELS,
-            "" if OUTPUT_CHANNELS == 1 else "s",
-        )
 
 
 def _read_meta(meta_path: Path) -> dict:

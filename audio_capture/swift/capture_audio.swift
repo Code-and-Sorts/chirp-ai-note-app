@@ -392,9 +392,19 @@ private func runDisclaimer() -> Int32 {
     let argv = CommandLine.arguments.map { strdup($0) }
     var argvPointers: [UnsafeMutablePointer<CChar>?] = argv + [nil]
 
-    var environment = ProcessInfo.processInfo.environment
-    environment[disclaimSentinelEnv] = "1"
-    let envStrings = environment.map { strdup("\($0.key)=\($0.value)") }
+    let allowedEnvKeys: Set<String> = [
+        "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME",
+        disclaimSentinelEnv,
+    ]
+    let parentEnv = ProcessInfo.processInfo.environment
+    var childEnv: [String: String] = [:]
+    for key in allowedEnvKeys {
+        if let value = parentEnv[key] {
+            childEnv[key] = value
+        }
+    }
+    childEnv[disclaimSentinelEnv] = "1"
+    let envStrings = childEnv.map { strdup("\($0.key)=\($0.value)") }
     var envPointers: [UnsafeMutablePointer<CChar>?] = envStrings + [nil]
 
     defer {

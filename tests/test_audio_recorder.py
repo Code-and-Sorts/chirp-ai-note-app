@@ -1,4 +1,3 @@
-import sys
 import threading
 import time
 import tomllib
@@ -10,6 +9,7 @@ import numpy as np
 import pytest
 
 from audio_capture import SOURCE_MICROPHONE, SOURCE_SYSTEM
+from chirp.exceptions import RecordingError
 from recorder.audio_recorder import AudioRecorder
 
 
@@ -58,16 +58,20 @@ class FakeAudioCapture:
         mic_device_name: str | None = "MockMic",
         per_frame_delay_s: float = 0.0,
         on_frame: Callable[[int], None] | None = None,
+        block_after_drain: bool = False,
     ) -> None:
         self._frames = frames
         self.mic_device_name = mic_device_name
         self._per_frame_delay_s = per_frame_delay_s
         self._on_frame = on_frame
+        self._block_after_drain = block_after_drain
+        self._exit_event = threading.Event()
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        self._exit_event.set()
         return None
 
     def frames(self) -> Iterator[tuple[int, int, np.ndarray]]:
@@ -77,26 +81,8 @@ class FakeAudioCapture:
             if self._on_frame is not None:
                 self._on_frame(index)
             yield frame
-
-
-@pytest.fixture(autouse=True)
-def _force_darwin_platform(request: pytest.FixtureRequest):
-    # AudioRecorder.start_recording calls audio_capture.check_macos_version()
-    # via its module-level rebind in `recorder.audio_recorder`. Stub
-    # `sys.platform` and `platform.mac_ver` so the version gate passes
-    # on non-Darwin CI runners. Tests that need real platform detection
-    # can opt out via `@pytest.mark.real_platform`.
-    if "real_platform" in request.keywords:
-        yield
-        return
-    with (
-        patch.object(sys, "platform", "darwin"),
-        patch(
-            "audio_capture.platform.mac_ver",
-            return_value=("13.0.0", ("", "", ""), ""),
-        ),
-    ):
-        yield
+        if self._block_after_drain:
+            self._exit_event.wait(timeout=5.0)
 
 
 @pytest.fixture
@@ -165,14 +151,23 @@ class TestAudioRecorder:
         assert meta["title"] == "Existing"
         assert meta["duration_s"] == pytest.approx(123.4)
 
-    def test_save_recording_no_frames_raises_error(
+    def test_zero_frames_clean_eof_raises_recording_error(
         self, tmp_path, mock_settings, mock_device_manager
     ):
+        # A FakeAudioCapture that yields zero frames finishes immediately
+        # (clean EOF). H6: the worker treats clean EOF while still recording
+        # as an unexpected end, so RecordingError is raised with the
+        # "audio capture worker crashed mid-recording" message.
         recorder = AudioRecorder(mock_settings, mock_device_manager)
-        recorder.frames = []
+        fake_cap = FakeAudioCapture(frames=[], mic_device_name="MockMic")
 
-        with pytest.raises(RuntimeError, match="No audio data recorded"):
-            recorder._save_recording(tmp_path / "audio.wav")
+        with patch("recorder.audio_recorder.AudioCapture", return_value=fake_cap):
+            with pytest.raises(
+                RecordingError, match="audio capture worker crashed mid-recording"
+            ):
+                recorder.start_recording(title="zero-frames")
+
+        assert recorder.is_recording is False
 
     def test_start_recording_cleans_up_note_dir_when_no_audio_captured(
         self, tmp_path, mock_settings, mock_device_manager
@@ -181,31 +176,41 @@ class TestAudioRecorder:
 
         fake_cap = FakeAudioCapture(frames=[], mic_device_name="MockMic")
 
-        def stop_recorder_after_start():
-            time.sleep(0.05)
-            recorder.is_recording = False
-
-        stopper = threading.Thread(target=stop_recorder_after_start, daemon=True)
-
         with patch("recorder.audio_recorder.AudioCapture", return_value=fake_cap):
-            stopper.start()
-            with pytest.raises(RuntimeError, match="No audio data recorded"):
+            with pytest.raises(
+                RecordingError, match="audio capture worker crashed mid-recording"
+            ):
                 recorder.start_recording(title="empty")
-        stopper.join(timeout=1.0)
 
         created_dirs = list(tmp_path.iterdir())
         assert created_dirs == [], "empty note dir should have been cleaned up"
 
-    def test_start_recording_writes_int16_wav_at_16khz(
-        self, tmp_path, mock_settings, mock_device_manager
+    @pytest.mark.parametrize(
+        "mic_device_name,expected_meta_mic",
+        [
+            ("MockMic", "MockMic"),
+            ("Studio Mic Pro", "Studio Mic Pro"),
+            (None, "default"),
+        ],
+    )
+    def test_start_recording_writes_wav_and_meta(
+        self,
+        tmp_path,
+        mock_settings,
+        mock_device_manager,
+        mic_device_name,
+        expected_meta_mic,
     ):
         recorder = AudioRecorder(mock_settings, mock_device_manager)
-        frames = _paired_float_frames(pair_count=5)
-        fake_cap = FakeAudioCapture(frames=frames, mic_device_name="MockMic")
+        pair_count = 5
+        frames = _paired_float_frames(pair_count=pair_count)
+        fake_cap = FakeAudioCapture(
+            frames=frames, mic_device_name=mic_device_name, block_after_drain=True
+        )
 
         def stop_when_frames_recorded():
             for _ in range(50):
-                if len(recorder.frames) >= 5:
+                if recorder._frame_count >= pair_count:
                     break
                 time.sleep(0.02)
             recorder.is_recording = False
@@ -216,6 +221,7 @@ class TestAudioRecorder:
             stopper.start()
             slug = recorder.start_recording(title="wav-shape")
         stopper.join(timeout=2.0)
+        assert not stopper.is_alive(), "stopper thread did not finish"
 
         wav_path = tmp_path / slug / "audio.wav"
         assert wav_path.exists()
@@ -225,61 +231,15 @@ class TestAudioRecorder:
             assert wave_file.getnchannels() == 1
             assert wave_file.getnframes() > 0
 
-    def test_start_recording_uses_mic_device_name_from_audio_capture(
-        self, tmp_path, mock_settings, mock_device_manager
-    ):
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
-        frames = _paired_float_frames(pair_count=2)
-        fake_cap = FakeAudioCapture(frames=frames, mic_device_name="Studio Mic Pro")
-
-        def stop_when_frames_recorded():
-            for _ in range(50):
-                if len(recorder.frames) >= 2:
-                    break
-                time.sleep(0.02)
-            recorder.is_recording = False
-
-        stopper = threading.Thread(target=stop_when_frames_recorded, daemon=True)
-
-        with patch("recorder.audio_recorder.AudioCapture", return_value=fake_cap):
-            stopper.start()
-            slug = recorder.start_recording(title="mic-name")
-        stopper.join(timeout=2.0)
-
         with (tmp_path / slug / "meta.toml").open("rb") as fh:
             meta = tomllib.load(fh)
-        assert meta["mic"] == "Studio Mic Pro"
-
-    def test_start_recording_falls_back_to_default_when_mic_device_name_none(
-        self, tmp_path, mock_settings, mock_device_manager
-    ):
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
-        frames = _paired_float_frames(pair_count=2)
-        fake_cap = FakeAudioCapture(frames=frames, mic_device_name=None)
-
-        def stop_when_frames_recorded():
-            for _ in range(50):
-                if len(recorder.frames) >= 2:
-                    break
-                time.sleep(0.02)
-            recorder.is_recording = False
-
-        stopper = threading.Thread(target=stop_when_frames_recorded, daemon=True)
-
-        with patch("recorder.audio_recorder.AudioCapture", return_value=fake_cap):
-            stopper.start()
-            slug = recorder.start_recording(title="mic-fallback")
-        stopper.join(timeout=2.0)
-
-        with (tmp_path / slug / "meta.toml").open("rb") as fh:
-            meta = tomllib.load(fh)
-        assert meta["mic"] == "default"
+        assert meta["mic"] == expected_meta_mic
 
     def test_start_recording_raises_on_non_macos(
         self, mock_settings, mock_device_manager
     ):
         recorder = AudioRecorder(mock_settings, mock_device_manager)
-        with patch.object(sys, "platform", "linux"):
+        with patch("sys.platform", "linux"):
             with pytest.raises(
                 RuntimeError, match="chirp record requires macOS 13 or later"
             ):
@@ -309,26 +269,27 @@ class TestAudioRecorder:
     def test_start_recording_unblocks_when_helper_eofs_cleanly(
         self, tmp_path, mock_settings, mock_device_manager
     ):
-        # Helper closes stdout and exits 0; cap.frames() exhausts cleanly
-        # without raising. The worker must flip is_recording=False so
-        # start_recording's main wait loop exits instead of polling
-        # forever.
+        # H6: clean EOF while is_recording is still set is treated as an
+        # unexpected end, so RecordingError is raised. The note dir is
+        # cleaned up and is_recording is False.
         recorder = AudioRecorder(mock_settings, mock_device_manager)
         frames = _paired_float_frames(pair_count=3)
         fake_cap = FakeAudioCapture(frames=frames, mic_device_name="MockMic")
 
         with patch("recorder.audio_recorder.AudioCapture", return_value=fake_cap):
-            slug = recorder.start_recording(title="clean-eof")
+            with pytest.raises(
+                RecordingError, match="audio capture worker crashed mid-recording"
+            ):
+                recorder.start_recording(title="clean-eof")
 
-        assert slug is not None
         assert recorder.is_recording is False
-        assert (tmp_path / slug / "audio.wav").exists()
+        assert list(tmp_path.iterdir()) == []
 
     def test_start_recording_surfaces_worker_crash_after_partial_capture(
         self, tmp_path, mock_settings, mock_device_manager
     ):
         # Feeds 4 paired sys+mic chunks (drives the mixer to produce
-        # output frames into self.frames) and *then* raises mid-iteration.
+        # output frames) and *then* raises mid-iteration.
         # Without crash propagation the recorder would silently truncate
         # and return success — this test pins the new behavior of raising
         # and discarding the partial recording.
@@ -358,7 +319,7 @@ class TestAudioRecorder:
                         np.full(512, 0.2, dtype=np.float32),
                     )
                 # Give the worker a moment to drain the mixer before crashing
-                # so self.frames is non-empty when the exception fires.
+                # so _frame_count is non-zero when the exception fires.
                 time.sleep(0.05)
                 raise RuntimeError("worker-boom")
 
@@ -367,7 +328,7 @@ class TestAudioRecorder:
             return_value=CrashAfterPartial(),
         ):
             with pytest.raises(
-                RuntimeError, match="audio capture worker crashed mid-recording"
+                RecordingError, match="audio capture worker crashed mid-recording"
             ) as excinfo:
                 recorder.start_recording(title="worker-crash")
 
@@ -400,15 +361,13 @@ class TestAudioRecorderPause:
             mic_device_name="MockMic",
             per_frame_delay_s=0.01,
             on_frame=on_frame,
+            block_after_drain=True,
         )
 
         def stop_after_capture_completes():
-            for _ in range(100):
-                time.sleep(0.02)
-                if not (
-                    recorder._capture_thread and recorder._capture_thread.is_alive()
-                ):
-                    break
+            # All 16 raw frames (8 pairs × 2) have 0.01s delays each,
+            # so iteration takes ≈ 0.16s. Wait a generous 0.5s then stop.
+            time.sleep(0.5)
             recorder.is_recording = False
 
         stopper = threading.Thread(target=stop_after_capture_completes, daemon=True)
@@ -417,6 +376,47 @@ class TestAudioRecorderPause:
             stopper.start()
             slug = recorder.start_recording(title="pause-test")
         stopper.join(timeout=3.0)
+        assert not stopper.is_alive(), "stopper thread did not finish"
 
         assert slug is not None
-        assert 0 < len(recorder.frames) < pair_count
+        assert 0 < recorder._frame_count < pair_count
+
+
+class TestPartialRecordingTruncationCrash:
+    def test_partial_wav_not_left_on_disk_after_crash(
+        self, tmp_path, mock_settings, mock_device_manager
+    ):
+        # M19: FakeAudioCapture yields several normal frames then raises.
+        # The note dir (including the partial WAV) must be deleted.
+        recorder = AudioRecorder(mock_settings, mock_device_manager)
+
+        class CrashMidStream:
+            def __init__(self):
+                self.mic_device_name = "MockMic"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+            def frames(self):
+                for i in range(3):
+                    ts = i * 32_000
+                    yield (SOURCE_SYSTEM, ts, np.full(512, 0.1, dtype=np.float32))
+                    yield (SOURCE_MICROPHONE, ts, np.full(512, 0.2, dtype=np.float32))
+                raise RuntimeError("mid-stream-crash")
+
+        with patch(
+            "recorder.audio_recorder.AudioCapture",
+            return_value=CrashMidStream(),
+        ):
+            with pytest.raises(
+                RecordingError, match="audio capture worker crashed mid-recording"
+            ) as excinfo:
+                recorder.start_recording(title="partial-crash")
+
+        assert "mid-stream-crash" in str(excinfo.value.__cause__)
+        assert list(tmp_path.iterdir()) == [], (
+            "note dir must be removed after a mid-stream crash"
+        )

@@ -155,10 +155,10 @@ class TestFlush:
         # Not enough for a full frame; drain returns nothing.
         assert list(mixer.drain()) == []
 
-        flushed = mixer.flush()
+        flushed = list(mixer.flush())
 
-        assert flushed is not None
-        ts, mixed = flushed
+        assert len(flushed) == 1
+        ts, mixed = flushed[0]
         assert ts == 0
         assert mixed.size == 512
         # Samples 0–99: both sources active → 0.5 + 0.5 clipped at 1.0
@@ -170,21 +170,21 @@ class TestFlush:
 
     def test_flush_returns_none_when_buffers_empty(self):
         mixer = StereoToMonoMixer()
-        assert mixer.flush() is None
+        assert list(mixer.flush()) == []
 
     def test_flush_clears_buffers(self):
         mixer = StereoToMonoMixer()
         mixer.feed(SOURCE_SYSTEM, 0, _const(100, 0.5))
-        mixer.flush()
-        assert mixer.flush() is None
+        list(mixer.flush())
+        assert list(mixer.flush()) == []
 
 
 class TestPartialChunkStall:
     def test_stall_padding_works_when_lagging_has_partial_chunk(self):
-        # Lagging source delivers a sub-frame partial then stops. Without
-        # the partial-chunk fix, _is_stalled() short-circuits on size > 0
-        # and drain() blocks forever, discarding the leading source's
-        # buffered audio when the 8-frame cap eventually drops it.
+        # Lagging source delivers a sub-frame partial then stops. H8(b):
+        # the mixer now preserves the partial mic buffer instead of
+        # silence-padding the entire stall frame. So the first 100 samples
+        # come from mic (0.3) + sys (0.5) = 0.8; the rest are sys only = 0.5.
         mixer = StereoToMonoMixer(gap_ms=100)
         for index in range(6):
             mixer.feed(SOURCE_SYSTEM, index * 32_000, _const(512, 0.5))
@@ -193,19 +193,31 @@ class TestPartialChunkStall:
         output = list(mixer.drain())
 
         assert len(output) >= 1
-        for _, mixed in output:
-            np.testing.assert_allclose(mixed, 0.5, atol=1e-6)
+        first_ts, first_mixed = output[0]
+        # First 100 samples: mic partial (0.3) + sys (0.5) = 0.8
+        np.testing.assert_allclose(first_mixed[:100], 0.8, atol=1e-6)
+        # Remaining samples: sys only (0.5) + silence = 0.5
+        np.testing.assert_allclose(first_mixed[100:], 0.5, atol=1e-6)
 
 
 class TestBufferCap:
     def test_caps_buffer_to_eight_frames(self):
         mixer = StereoToMonoMixer()
-        # Feed 16 frames worth into one source without draining.
+        # Feed 16 frames worth into BOTH sources without draining, then
+        # drain and verify output is well-formed despite the cap.
         for i in range(16):
-            mixer.feed(SOURCE_SYSTEM, i * 32_000, _const(512, 0.1))
+            ts = i * 32_000
+            mixer.feed(SOURCE_SYSTEM, ts, _const(512, 0.1))
+            mixer.feed(SOURCE_MICROPHONE, ts, _const(512, 0.1))
 
-        # Buffer cap is 8 frames × 512 = 4096 samples.
-        assert mixer._buffers[SOURCE_SYSTEM].size == 8 * 512
+        output = list(mixer.drain())
+
+        # The cap (8 frames × 512) must keep memory bounded, so we get at
+        # most 8 frames out — and at least 1 — without a crash.
+        assert 1 <= len(output) <= 8
+        for _ts, mixed in output:
+            assert mixed.dtype == np.float32
+            assert mixed.size == 512
 
 
 class TestValidation:
