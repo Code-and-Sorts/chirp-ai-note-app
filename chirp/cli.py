@@ -1143,19 +1143,7 @@ def devices():
     console.print(output_table)
 
     console.print()
-    if device_manager.check_blackhole_available():
-        console.print("[green]BlackHole detected and ready[/green]")
-    elif device_manager.check_aggregate_available():
-        console.print("[green]Aggregate device detected and ready[/green]")
-    elif device_manager.get_default_input_device() is not None:
-        console.print(
-            "[green]Default input device detected (microphone recording ready)[/green]"
-        )
-        console.print(
-            "[dim]For system audio capture, install BlackHole: https://existential.audio/blackhole/[/dim]"
-        )
-    else:
-        console.print("[red]No suitable input device found[/red]")
-        console.print("Install BlackHole from: https://existential.audio/blackhole/")
-        console.print("Or create an Aggregate Device in Audio MIDI Setup")
+    console.print(
+        "System audio is captured via the bundled CaptureAudio.app; no virtual driver required."
+    )
     console.print("[dim]Run 'chirp init' for first-run setup.[/dim]")

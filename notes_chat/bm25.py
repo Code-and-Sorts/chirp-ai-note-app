@@ -32,8 +32,17 @@ class BM25Index:
                 corpus = [doc.split() for doc in data["corpus"]]
                 self._tokenized_corpus = corpus
                 self.bm25 = BM25Okapi(corpus)
-        except (OSError, json.JSONDecodeError, ValueError, KeyError):
+        except (
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+            KeyError,
+            AttributeError,
+            TypeError,
+        ):
             # Cache miss / corruption / schema drift — caller will rebuild the index.
+            # AttributeError and TypeError cover schema-drifted JSON (e.g., [] instead
+            # of dict, or null values in corpus).
             pass
 
     def vocabulary(self) -> dict[str, int]:

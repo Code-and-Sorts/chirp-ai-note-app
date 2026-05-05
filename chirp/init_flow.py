@@ -1,10 +1,10 @@
 """`chirp init` — smart 4-phase first-run setup.
 
-Phase 1: verify homebrew, ffmpeg, BlackHole 2ch, Ollama, and the configured
-models. Print a check table and ask whether to install what's missing.
+Phase 1: verify homebrew, ffmpeg, Ollama, and the configured models. Print a
+check table and ask whether to install what's missing.
 
 Phase 2: install missing dependencies via Homebrew (macOS only) and start
-Ollama. Offer to open Audio MIDI Setup for the Multi-Output Device step.
+Ollama.
 
 Phase 3: let the user pick chat + embedding models from a short list, with
 sensible defaults (``llama3.1:8b``, ``nomic-embed-text``).
@@ -108,24 +108,6 @@ def _ffmpeg_installed() -> DependencyStatus:
     return DependencyStatus("ffmpeg", True, detail)
 
 
-def _blackhole_installed() -> DependencyStatus:
-    if platform.system() != "Darwin":
-        return DependencyStatus(
-            "BlackHole 2ch",
-            True,
-            "skipped — not macOS",
-            required=False,
-        )
-    code, out = _run(["system_profiler", "SPAudioDataType"], timeout=8.0)
-    if code == 0 and "BlackHole" in out:
-        return DependencyStatus("BlackHole 2ch", True, "installed")
-    return DependencyStatus(
-        "BlackHole 2ch",
-        False,
-        "not found — needed for system-audio capture",
-    )
-
-
 def _ollama_installed() -> DependencyStatus:
     path = _which("ollama")
     if not path:
@@ -185,7 +167,6 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
     statuses = [
         _brew_installed(),
         _ffmpeg_installed(),
-        _blackhole_installed(),
         _ollama_installed(),
     ]
 
@@ -305,11 +286,7 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
     for status in statuses:
         if status.installed or not status.required:
             continue
-        if status.name == "BlackHole 2ch":
-            tasks.append(
-                ("blackhole-2ch", [brew, "install", "--cask", "blackhole-2ch"])
-            )
-        elif status.name == "Ollama":
+        if status.name == "Ollama":
             tasks.append(("ollama", [brew, "install", "ollama"]))
             tasks.append(("ollama service", [brew, "services", "start", "ollama"]))
         elif status.name == "ffmpeg":
@@ -327,48 +304,7 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
             )
             return False
 
-    if any(s.name == "BlackHole 2ch" and not s.installed for s in statuses):
-        _prompt_blackhole_routing(console)
     return True
-
-
-def _prompt_blackhole_routing(console: Console) -> None:
-    """Phase 2 BlackHole routing prompt — macOS only.
-
-    Renders the wireframe block and offers `[o]` to open Audio MIDI Setup
-    or `[s]` to skip.
-    """
-    if platform.system() != "Darwin":
-        return
-
-    console.print()
-    console.print(
-        " [yellow bold]![/yellow bold] BlackHole needs a one-time audio routing step:"
-    )
-    console.print("   open [bold]Audio MIDI Setup[/bold] and create a")
-    console.print("   [bold]Multi-Output Device[/bold] = Speakers + BlackHole 2ch")
-    console.print()
-    console.print("   [dim](chirp can open it for you)[/dim]")
-
-    while True:
-        prompt = Text()
-        prompt.append("   ")
-        prompt.append("›", style="green")
-        prompt.append(" [o] open Audio MIDI Setup   [s] skip, I'll do it ")
-        try:
-            answer = console.input(prompt).strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            console.print()
-            return
-        if answer in ("o", "open"):
-            _run(["open", "-a", "Audio MIDI Setup"])
-            return
-        if answer in ("s", "skip"):
-            console.print(
-                "   [dim](skipped — run `chirp devices` later to verify routing)[/dim]"
-            )
-            return
-        console.print("   [dim]please type o or s[/dim]")
 
 
 def pick_models(console: Console) -> tuple[str, str]:

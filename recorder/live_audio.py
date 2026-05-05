@@ -114,40 +114,60 @@ class LiveAudioStream:
         self._start_time = time.monotonic()
         self._recorded_at = datetime.now()
 
-        tmp_fd, tmp_name = tempfile.mkstemp(suffix=".wav")
-        os.close(tmp_fd)
-        self._temp_wav_path = Path(tmp_name)
-        wav = wave.open(tmp_name, "wb")
-        wav.setnchannels(_LIVE_CHANNELS)
-        wav.setsampwidth(2)
-        wav.setframerate(self._sample_rate)
-        self._wave = wav
-
-        cap_ctx = AudioCapture()
-        cap = cap_ctx.__enter__()
+        self._temp_wav_path = None
+        self._wave = None
         try:
-            self._cap_ctx = cap_ctx
-            self._cap = cap
-            self._mic_device_name = cap.mic_device_name
-
-            thread = threading.Thread(
-                target=self._mixer_loop,
-                name="audio-capture-mixer",
-                daemon=True,
-            )
-            self._mixer_thread = thread
-            thread.start()
-        except BaseException:
-            # If anything between AudioCapture entry and thread start fails
-            # (e.g., thread exhaustion), the helper subprocess would
-            # otherwise leak because nothing else calls __exit__. Tear
-            # the context down before re-raising.
+            tmp_fd, tmp_name = tempfile.mkstemp(suffix=".wav")
+            os.close(tmp_fd)
+            self._temp_wav_path = Path(tmp_name)
+            wav = wave.open(tmp_name, "wb")
+            wav.setnchannels(_LIVE_CHANNELS)
+            wav.setsampwidth(2)
+            wav.setframerate(self._sample_rate)
+            self._wave = wav
+            cap_ctx = AudioCapture()
+            cap = cap_ctx.__enter__()
             try:
-                cap_ctx.__exit__(None, None, None)
-            finally:
-                self._cap_ctx = None
-                self._cap = None
-                self._mixer_thread = None
+                self._cap_ctx = cap_ctx
+                self._cap = cap
+                self._mic_device_name = cap.mic_device_name
+
+                thread = threading.Thread(
+                    target=self._mixer_loop,
+                    name="audio-capture-mixer",
+                    daemon=True,
+                )
+                self._mixer_thread = thread
+                thread.start()
+            except BaseException:
+                # If anything between AudioCapture entry and thread start fails
+                # (e.g., thread exhaustion), the helper subprocess would
+                # otherwise leak because nothing else calls __exit__. Tear
+                # the context down before re-raising.
+                try:
+                    cap_ctx.__exit__(None, None, None)
+                finally:
+                    self._cap_ctx = None
+                    self._cap = None
+                    self._mixer_thread = None
+                raise
+        except BaseException:
+            # If temp WAV creation or AudioCapture entry fails, clean up resources
+            # created before the failure point to prevent file/handle leaks.
+            if self._wave is not None:
+                try:
+                    self._wave.close()
+                except OSError:
+                    # Best-effort cleanup on startup failure.
+                    pass
+                self._wave = None
+            if self._temp_wav_path is not None:
+                try:
+                    self._temp_wav_path.unlink(missing_ok=True)
+                except OSError:
+                    # May already be gone or on a vanishing volume.
+                    pass
+                self._temp_wav_path = None
             raise
 
     def _mixer_loop(self) -> None:

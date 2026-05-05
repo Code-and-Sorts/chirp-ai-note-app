@@ -10,8 +10,8 @@ class DeviceManager:
     Manages audio devices using PyAudio.
 
     Uses the system's default input device for recording. Helper methods
-    are provided to detect and verify specific device types (BlackHole,
-    aggregate devices) for diagnostics and user feedback.
+    are provided to detect and verify specific device types for diagnostics
+    and user feedback.
     """
 
     def __init__(self):

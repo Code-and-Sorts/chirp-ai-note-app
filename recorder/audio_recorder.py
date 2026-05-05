@@ -130,10 +130,16 @@ class AudioRecorder:
             self._is_recording_event.clear()
             raise
 
-        wave_file = wave.open(str(audio_path), "wb")
-        wave_file.setnchannels(OUTPUT_CHANNELS)
-        wave_file.setsampwidth(OUTPUT_SAMPLE_WIDTH_BYTES)
-        wave_file.setframerate(OUTPUT_SAMPLE_RATE)
+        try:
+            wave_file = wave.open(str(audio_path), "wb")
+            wave_file.setnchannels(OUTPUT_CHANNELS)
+            wave_file.setsampwidth(OUTPUT_SAMPLE_WIDTH_BYTES)
+            wave_file.setframerate(OUTPUT_SAMPLE_RATE)
+        except Exception:
+            cap.__exit__(None, None, None)
+            shutil.rmtree(note_dir, ignore_errors=True)
+            self._is_recording_event.clear()
+            raise
 
         try:
             mic_name = cap.mic_device_name or "default"
@@ -185,8 +191,8 @@ class AudioRecorder:
             shutil.rmtree(note_dir, ignore_errors=True)
             raise
         finally:
-            wave_file.close()
             self._cleanup_recording(cap)
+            wave_file.close()
             self._is_recording_event.clear()
 
         if self._capture_error is not None:
