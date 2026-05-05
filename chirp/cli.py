@@ -14,6 +14,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
+import audio_capture
 from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingError
 from config.settings import ChirpSettings, get_settings
 from utils.file_utils import NoteRecord, list_notes
@@ -1146,4 +1147,20 @@ def devices():
     console.print(
         "System audio is captured via the bundled CaptureAudio.app; no virtual driver required."
     )
+    try:
+        perms = audio_capture.check_permissions()
+        if perms["screen_recording"] == "granted":
+            console.print("[green]✅ capture ready[/green]")
+        elif perms["screen_recording"] == "undetermined":
+            console.print("[yellow]— capture will prompt on first record[/yellow]")
+        else:
+            console.print(
+                "[red]❌ screen recording permission denied[/red]"
+                " — open System Settings → Privacy & Security → Screen Recording"
+            )
+    except FileNotFoundError:
+        console.print(
+            "[red]❌ capture_audio binary missing[/red]"
+            " — run python -m audio_capture.build"
+        )
     console.print("[dim]Run 'chirp init' for first-run setup.[/dim]")

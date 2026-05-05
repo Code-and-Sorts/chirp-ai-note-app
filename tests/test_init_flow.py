@@ -367,3 +367,137 @@ def test_merge_config_backs_up_corrupt_file(tmp_path):
         new = tomllib.load(fh)
     assert new["models"]["llm"] == "new-llm"
     assert new["notes_chat"]["emb_model"] == "new-embed"
+
+
+def _stub_verify_deps(monkeypatch):
+    monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
+    monkeypatch.setattr(
+        init_flow,
+        "_brew_installed",
+        lambda: init_flow.DependencyStatus("homebrew", True, "/usr/bin/brew"),
+    )
+    monkeypatch.setattr(
+        init_flow,
+        "_ffmpeg_installed",
+        lambda: init_flow.DependencyStatus("ffmpeg", True, "7.1.1"),
+    )
+    monkeypatch.setattr(
+        init_flow,
+        "_ollama_installed",
+        lambda: init_flow.DependencyStatus("Ollama", True, "running · 0.1"),
+    )
+    monkeypatch.setattr(
+        init_flow, "_ollama_models", lambda: ["llama3.1:8b", "nomic-embed-text"]
+    )
+
+
+def test_verify_includes_screen_recording_permission_last(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(
+        init_flow.audio_capture,
+        "check_permissions",
+        lambda: {"screen_recording": "granted", "microphone": "granted"},
+    )
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+
+    settings = _fake_settings(tmp_path)
+    statuses = init_flow.verify(settings, _console())
+
+    assert statuses[-1].name == "screen recording permission"
+    assert statuses[-1].installed is True
+    assert statuses[-1].detail == "granted"
+
+
+def test_verify_handles_denied_screen_recording(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(
+        init_flow.audio_capture,
+        "check_permissions",
+        lambda: {"screen_recording": "denied", "microphone": "granted"},
+    )
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+
+    settings = _fake_settings(tmp_path)
+    statuses = init_flow.verify(settings, _console())
+
+    perm = next(s for s in statuses if s.name == "screen recording permission")
+    assert perm.installed is False
+    assert (
+        "denied — open System Settings → Privacy & Security → Screen Recording"
+        in perm.detail
+    )
+
+
+def test_verify_handles_missing_binary(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+
+    def _raise():
+        raise FileNotFoundError(
+            "capture_audio binary not found. Build it with: python -m audio_capture.build"
+        )
+
+    monkeypatch.setattr(init_flow.audio_capture, "check_permissions", _raise)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+
+    settings = _fake_settings(tmp_path)
+    statuses = init_flow.verify(settings, _console())
+
+    perm = next(s for s in statuses if s.name == "screen recording permission")
+    assert perm.installed is False
+    assert (
+        "capture_audio binary not built — run python -m audio_capture.build"
+        in perm.detail
+    )
+
+
+def test_verify_screen_recording_skipped_on_non_darwin(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+
+    called = []
+
+    def _track():
+        called.append(True)
+        return {}
+
+    monkeypatch.setattr(init_flow.audio_capture, "check_permissions", _track)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+
+    settings = _fake_settings(tmp_path)
+    statuses = init_flow.verify(settings, _console())
+
+    perm = next(s for s in statuses if s.name == "screen recording permission")
+    assert perm.installed is True
+    assert perm.required is False
+    assert "not applicable on Linux" in perm.detail
+    assert called == [], "check_permissions must not be called on non-Darwin"
+
+
+def test_install_missing_dispatches_build_for_missing_binary(tmp_path, monkeypatch):
+    import sys as _sys
+
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
+
+    run_calls: list[list[str]] = []
+
+    def _fake_run(args, timeout=10.0):
+        run_calls.append(list(args))
+        return 0, ""
+
+    monkeypatch.setattr(init_flow, "_run", _fake_run)
+
+    statuses = [
+        init_flow.DependencyStatus(
+            name="screen recording permission",
+            installed=False,
+            detail="capture_audio binary not built — run python -m audio_capture.build",
+        )
+    ]
+
+    init_flow.install_missing(_console(), statuses)
+
+    assert len(run_calls) == 1, f"expected exactly one dispatch, got: {run_calls}"
+    args = run_calls[0]
+    assert _sys.executable in args and "-m" in args and "audio_capture.build" in args, (
+        f"expected audio_capture.build dispatch, got: {args}"
+    )

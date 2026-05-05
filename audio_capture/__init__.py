@@ -482,6 +482,41 @@ def _atexit_cleanup(proc: subprocess.Popen[bytes]) -> None:
         pass
 
 
+def check_permissions() -> dict[str, str]:
+    """Probe macOS permission state for the bundled CaptureAudio.app.
+
+    Runs the helper binary with --check-permissions, parses its two
+    `permission:` lines, and returns the parsed mapping.
+
+    Raises:
+        FileNotFoundError: if the binary is missing (with the existing
+            build-instruction message from `_resolve_binary_path`).
+    """
+    with _resolve_binary_path() as binary_path:
+        result = subprocess.run(
+            [str(binary_path), "--check-permissions"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=True,
+        )
+    permissions: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if line.startswith("permission: "):
+            payload = line[len("permission: ") :]
+            if "=" not in payload:
+                raise RuntimeError(
+                    f"malformed permission line in helper output: {result.stdout!r}"
+                )
+            key, _, value = payload.partition("=")
+            permissions[key] = value
+    if "screen_recording" not in permissions or "microphone" not in permissions:
+        raise RuntimeError(
+            f"expected screen_recording and microphone permission lines; got: {result.stdout!r}"
+        )
+    return permissions
+
+
 __all__ = [
     "AudioCapture",
     "AudioCaptureCorrupt",
@@ -490,4 +525,5 @@ __all__ = [
     "SOURCE_MICROPHONE",
     "SOURCE_SYSTEM",
     "check_macos_version",
+    "check_permissions",
 ]

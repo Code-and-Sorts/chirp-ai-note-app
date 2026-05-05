@@ -22,6 +22,7 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -40,6 +41,7 @@ from rich.progress import (
 )
 from rich.text import Text
 
+import audio_capture
 from config.settings import ChirpSettings
 
 
@@ -156,6 +158,43 @@ def _model_installed(tag: str, available: list[str]) -> bool:
     return any(name.startswith(f"{base}:") for name in available)
 
 
+def _screen_recording_permission() -> DependencyStatus:
+    if platform.system() != "Darwin":
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=True,
+            required=False,
+            detail=f"not applicable on {platform.system()}",
+        )
+    try:
+        perms = audio_capture.check_permissions()
+    except FileNotFoundError:
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=False,
+            detail="capture_audio binary not built — run python -m audio_capture.build",
+        )
+    state = perms.get("screen_recording", "undetermined")
+    if state == "granted":
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=True,
+            detail="granted",
+        )
+    if state == "denied":
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=False,
+            detail="denied — open System Settings → Privacy & Security → Screen Recording",
+        )
+    return DependencyStatus(
+        name="screen recording permission",
+        installed=True,
+        required=False,
+        detail="will prompt on first record",
+    )
+
+
 def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
     """Run phase 1 — returns the ordered status list and prints the table."""
     console.print()
@@ -200,6 +239,8 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
                 required=False,
             )
         )
+
+    statuses.append(_screen_recording_permission())
 
     for status in statuses:
         _print_status(console, status)
@@ -291,6 +332,13 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
             tasks.append(("ollama service", [brew, "services", "start", "ollama"]))
         elif status.name == "ffmpeg":
             tasks.append(("ffmpeg", [brew, "install", "ffmpeg"]))
+        elif (
+            status.name == "screen recording permission"
+            and "binary not built" in status.detail
+        ):
+            tasks.append(
+                ("capture_audio", [sys.executable, "-m", "audio_capture.build"])
+            )
 
     for label, args in tasks:
         with console.status(f"[yellow]⠹[/yellow] {label} — installing..."):

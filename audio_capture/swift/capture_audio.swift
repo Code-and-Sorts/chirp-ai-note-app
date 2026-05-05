@@ -272,6 +272,12 @@ func installSignalHandlers() {
 }
 
 func runMain() {
+    try? FileManager.default.createDirectory(
+        at: permissionSentinelURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    FileManager.default.createFile(atPath: permissionSentinelURL.path, contents: nil)
+
     signal(SIGPIPE, SIG_IGN)
     installSignalHandlers()
 
@@ -453,6 +459,36 @@ private func runDisclaimer() -> Int32 {
         kill(getpid(), termSig)
     }
     return 1
+}
+
+let permissionSentinelURL: URL = FileManager.default
+    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("Chirp/.permission-prompted")
+
+if CommandLine.arguments.contains("--check-permissions") {
+    let screenRecordingState: String
+    if CGPreflightScreenCaptureAccess() {
+        screenRecordingState = "granted"
+    } else if FileManager.default.fileExists(atPath: permissionSentinelURL.path) {
+        screenRecordingState = "denied"
+    } else {
+        screenRecordingState = "undetermined"
+    }
+
+    let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    let microphoneState: String
+    switch micStatus {
+    case .authorized:
+        microphoneState = "granted"
+    case .notDetermined:
+        microphoneState = "undetermined"
+    default:
+        microphoneState = "denied"
+    }
+
+    print("permission: screen_recording=\(screenRecordingState)")
+    print("permission: microphone=\(microphoneState)")
+    exit(0)
 }
 
 if ProcessInfo.processInfo.environment[disclaimSentinelEnv] == nil {
