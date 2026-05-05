@@ -148,9 +148,9 @@ class WhisperTranscriber:
                 if on_segment and segment_text:
                     try:
                         on_segment(segment_data)
-                    except Exception:
+                    except Exception as exc:  # noqa: BLE001 - arbitrary user callback
                         logging.getLogger(__name__).warning(
-                            "on_segment callback failed", exc_info=True
+                            "on_segment callback failed: %s", exc, exc_info=True
                         )
 
             full_text = " ".join(transcript_text_parts).strip()
@@ -208,7 +208,7 @@ class WhisperTranscriber:
                 "error": None,
             }
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - transcription can fail in many ways; return structured error
             end_time = datetime.now()
             processing_time = (end_time - start_time).total_seconds()
             error_metadata = {
@@ -242,7 +242,7 @@ class WhisperTranscriber:
             try:
                 result = self.transcribe_file(audio_file)
                 results.append(result)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - batch transcription; return error per file
                 audio_metadata = self._read_audio_metadata(audio_file)
                 recording_datetime = self._get_recording_datetime(
                     audio_file, audio_metadata
@@ -292,7 +292,7 @@ class WhisperTranscriber:
                 with meta_path.open("rb") as fh:
                     data = tomllib.load(fh)
                     return dict(data) if isinstance(data, dict) else None
-            except Exception:
+            except (OSError, tomllib.TOMLDecodeError):
                 pass
 
         return None

@@ -1,3 +1,4 @@
+import logging
 import sys
 import threading
 import time
@@ -13,6 +14,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from config.settings import ChirpSettings
 from notes_chat.prompting import enhanced_search_and_answer_stream
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 
@@ -65,7 +67,7 @@ class InteractiveChatSession:
             self._hint_timer = None
         try:
             self._session.app.invalidate()
-        except Exception:
+        except (RuntimeError, AttributeError):
             pass
 
     def _show_hint_then_auto_clear(self):
@@ -76,7 +78,7 @@ class InteractiveChatSession:
         self._hint_timer.start()
         try:
             self._session.app.invalidate()
-        except Exception:
+        except (RuntimeError, AttributeError):
             pass
 
     def _toolbar(self):
@@ -136,11 +138,11 @@ class InteractiveChatSession:
                 try:
                     sys.stdout.write("\r\x1b[2K")
                     sys.stdout.flush()
-                except Exception:
+                except OSError:
                     pass
                 console.print("\n[dim]Goodbye![/dim]")
                 return
-            except Exception as e:
+            except (KeyboardInterrupt, RuntimeError, ValueError) as e:
                 console.print(f"[red]Error: {e}[/red]")
 
     def _handle_slash(self, command: str) -> bool:
@@ -264,7 +266,8 @@ class InteractiveChatSession:
             if from_cache:
                 console.print("[dim]cached[/dim]")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - LLM streaming or UI; many failure modes
+            logger.debug("Query failed: %s", e, exc_info=True)
             if progress:
                 progress.stop()
             if live is not None:

@@ -461,7 +461,7 @@ def test_exit_during_frames_iteration_stops_cleanly(tmp_path: Path) -> None:
                 time.sleep(0.1)
                 try:
                     cap.__exit__(None, None, None)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - test contract: collect any race exception
                     exception_in_thread.append(exc)
 
             killer = threading.Thread(target=exit_after_first, daemon=True)
@@ -469,7 +469,7 @@ def test_exit_during_frames_iteration_stops_cleanly(tmp_path: Path) -> None:
             try:
                 for frame in cap.frames():
                     collected.append(frame)
-            except Exception:
+            except Exception:  # noqa: BLE001 - test contract: frames() may raise on concurrent exit
                 pass
             killer.join(timeout=2.0)
 

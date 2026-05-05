@@ -1,8 +1,11 @@
 import json
+import logging
 import re
 from pathlib import Path
 
 from rank_bm25 import BM25Okapi
+
+logger = logging.getLogger(__name__)
 
 
 class BM25Index:
@@ -29,7 +32,7 @@ class BM25Index:
                 corpus = [doc.split() for doc in data["corpus"]]
                 self._tokenized_corpus = corpus
                 self.bm25 = BM25Okapi(corpus)
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError, KeyError):
             pass
 
     def vocabulary(self) -> dict[str, int]:
@@ -95,8 +98,8 @@ def rebuild_bm25_index(chroma_collection, bm25_file: Path):
         with open(bm25_file, "w") as f:
             json.dump(bm25_data, f, indent=2)
 
-    except Exception as e:
-        print(f"Failed to rebuild BM25 index: {e}")
+    except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes
+        logger.warning("Failed to rebuild BM25 index: %s", e)
 
 
 def _tokenize_document(text: str) -> list[str]:

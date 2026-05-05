@@ -1,8 +1,12 @@
+import logging
+
 import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from notes_chat.config import get_notes_config
+
+logger = logging.getLogger(__name__)
 
 console = Console()
 app = typer.Typer()
@@ -50,7 +54,8 @@ def index(
             )
             raise typer.Exit(1)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - top-level CLI handler for index build
+        logger.debug("Index build failed: %s", e, exc_info=True)
         console.print(f"[red]Index build failed: {e}[/red]")
         raise typer.Exit(1)
 
@@ -158,7 +163,8 @@ def ask(
             joined = ", ".join(context_result["sources"])
             console.print(f"\n[dim]sources: {joined}[/dim]")
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - top-level CLI handler for ask command
+        logger.debug("Query failed: %s", e, exc_info=True)
         console.print(f"[red]Query failed: {e}[/red]")
         raise typer.Exit(1)
 

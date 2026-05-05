@@ -272,7 +272,7 @@ class AudioCapture:
                 for raw in iter(stderr.readline, b""):
                     line = raw.decode("utf-8", errors="replace").rstrip("\n")
                     q.put(line)
-            except Exception as exc:
+            except OSError as exc:
                 q.put(f"[audio_capture drain error] {exc}")
 
         thread = threading.Thread(
@@ -477,7 +477,7 @@ def _atexit_cleanup(proc: subprocess.Popen[bytes]) -> None:
                 except subprocess.TimeoutExpired:
                     # Best-effort wait at interpreter exit; force-continue cleanup.
                     pass
-    except Exception:
+    except Exception:  # noqa: BLE001 - atexit handler; logger may be torn down at shutdown
         # Swallow all errors during interpreter shutdown; cleanup is best-effort.
         pass
 

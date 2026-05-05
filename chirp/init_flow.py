@@ -145,7 +145,7 @@ def _ollama_installed() -> DependencyStatus:
             True,
             "installed but not responding on :11434",
         )
-    except Exception:
+    except requests.exceptions.RequestException:
         return DependencyStatus(
             "Ollama",
             True,
@@ -161,7 +161,7 @@ def _ollama_models() -> list[str]:
         if resp.status_code != 200:
             return []
         return [m["name"] for m in resp.json().get("models", [])]
-    except Exception:
+    except requests.exceptions.RequestException:
         return []
 
 
@@ -526,7 +526,7 @@ def _merge_config(
         try:
             with config_path.open("rb") as fh:
                 existing = dict(tomllib.load(fh))
-        except Exception as exc:
+        except (OSError, tomllib.TOMLDecodeError) as exc:
             backup = _backup_unparsable_config(config_path)
             if console is not None:
                 console.print(

@@ -243,7 +243,7 @@ class LiveAudioStream:
         if self._wave is not None:
             try:
                 self._wave.close()
-            except Exception:
+            except OSError:
                 pass
             self._wave = None
 
@@ -284,12 +284,12 @@ class LiveAudioStream:
         if self._wave is not None:
             try:
                 self._wave.close()
-            except Exception:
+            except OSError:
                 pass
             self._wave = None
         if self._temp_wav_path is not None:
             try:
                 self._temp_wav_path.unlink(missing_ok=True)
-            except Exception:
+            except OSError:
                 pass
             self._temp_wav_path = None

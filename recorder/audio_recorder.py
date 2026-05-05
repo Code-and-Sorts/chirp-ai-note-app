@@ -174,10 +174,8 @@ class AudioRecorder:
                     if level_callback is not None:
                         try:
                             level_callback(self.current_level)
-                        except Exception:
-                            logger.debug(
-                                "Level callback failed, disabling", exc_info=True
-                            )
+                        except Exception as exc:  # noqa: BLE001 - arbitrary user callback
+                            logger.debug("Level callback failed, disabling: %s", exc)
                             level_callback = None
             except KeyboardInterrupt:
                 self._is_recording_event.clear()
@@ -334,7 +332,7 @@ def _read_meta(meta_path: Path) -> dict:
     try:
         with meta_path.open("rb") as fh:
             return tomllib.load(fh)
-    except Exception:
+    except (OSError, tomllib.TOMLDecodeError):
         return {}
 
 

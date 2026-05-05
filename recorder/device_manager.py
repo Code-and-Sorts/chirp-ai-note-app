@@ -1,4 +1,8 @@
+import logging
+
 import pyaudio
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceManager:
@@ -17,8 +21,8 @@ class DeviceManager:
     def _initialize_audio(self):
         try:
             self.audio = pyaudio.PyAudio()
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize PyAudio: {str(e)}")
+        except Exception as e:  # noqa: BLE001 - PyAudio can raise many types on init failure
+            raise RuntimeError(f"Failed to initialize PyAudio: {str(e)}") from e
 
     def close(self):
         if self.audio:
@@ -54,7 +58,8 @@ class DeviceManager:
                         "host_api": device_info.get("hostApi", 0),
                     }
                 )
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - PyAudio can raise many types per-device
+                logger.debug("get_device_info_by_index(%d) failed: %s", i, exc)
                 continue
 
         return devices
@@ -106,7 +111,8 @@ class DeviceManager:
             )
             stream.close()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - PyAudio can raise many types on stream open
+            logger.debug("_test_device_input(%d) failed: %s", device_index, exc)
             return False
 
     def check_blackhole_available(self) -> bool:
@@ -123,7 +129,8 @@ class DeviceManager:
             default_device = self.audio.get_default_input_device_info()
             device_index = default_device.get("index")
             return int(device_index) if device_index is not None else None
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - PyAudio can raise many types on device query
+            logger.debug("get_default_input_device failed: %s", exc)
             return None
 
     def get_default_output_device(self) -> int | None:
@@ -134,7 +141,8 @@ class DeviceManager:
             default_device = self.audio.get_default_output_device_info()
             device_index = default_device.get("index")
             return int(device_index) if device_index is not None else None
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - PyAudio can raise many types on device query
+            logger.debug("get_default_output_device failed: %s", exc)
             return None
 
     def get_device_info(self, device_index: int) -> dict | None:
@@ -144,7 +152,8 @@ class DeviceManager:
         try:
             device_info = self.audio.get_device_info_by_index(device_index)
             return dict(device_info) if device_info else None
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - PyAudio can raise many types on device query
+            logger.debug("get_device_info(%d) failed: %s", device_index, exc)
             return None
 
     def test_device(
@@ -168,7 +177,8 @@ class DeviceManager:
             )
             stream.close()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - PyAudio can raise many types on stream open
+            logger.debug("test_device(%d) stream open failed: %s", device_index, exc)
             return False
 
     def find_device_by_name(self, name: str) -> int | None:
@@ -224,7 +234,10 @@ class DeviceManager:
             )
             stream.close()
             return True
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - PyAudio can raise many types on stream open
+            logger.debug(
+                "_test_sample_rate(%d, %d) failed: %s", device_index, sample_rate, exc
+            )
             return False
 
     def test_pyaudio(self) -> bool:
@@ -233,5 +246,6 @@ class DeviceManager:
                 return False
             device_count = self.audio.get_device_count()
             return bool(device_count > 0)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - PyAudio can raise many types
+            logger.debug("test_pyaudio failed: %s", exc)
             return False
