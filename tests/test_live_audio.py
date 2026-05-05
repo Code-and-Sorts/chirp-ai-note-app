@@ -28,7 +28,16 @@ def _force_darwin_platform(request: pytest.FixtureRequest) -> Iterator[None]:
     if "real_platform" in request.keywords:
         yield
         return
-    with mock.patch.object(sys, "platform", "darwin"):
+    # `check_macos_version()` looks at both `sys.platform` and
+    # `platform.mac_ver()`. Stub both so the version gate passes on
+    # non-Darwin CI runners.
+    with (
+        mock.patch.object(sys, "platform", "darwin"),
+        mock.patch(
+            "audio_capture.platform.mac_ver",
+            return_value=("13.0.0", ("", "", ""), ""),
+        ),
+    ):
         yield
 
 
@@ -183,6 +192,42 @@ def test_start_raises_on_non_macos() -> None:
     with mock.patch.object(sys, "platform", "linux"):
         with pytest.raises(RuntimeError, match="macOS"):
             stream.start()
+
+
+def test_start_cleans_up_audio_capture_when_thread_start_fails() -> None:
+    # If anything between AudioCapture entry and mixer-thread start fails
+    # (e.g., thread exhaustion), `start()` must call __exit__ on the
+    # context so the helper subprocess doesn't leak.
+    stream, _frame_queue, _level_queue, _stop_event = _make_stream()
+    fake = _ExitTrackingFakeCapture(_paired_frames(2))
+
+    with (
+        mock.patch("recorder.live_audio.AudioCapture", return_value=fake),
+        mock.patch(
+            "recorder.live_audio.threading.Thread",
+            side_effect=RuntimeError("can't start new thread"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="can't start new thread"):
+            stream.start()
+
+    assert fake.exit_calls == 1
+    assert stream._cap_ctx is None
+    assert stream._cap is None
+    assert stream._mixer_thread is None
+
+
+class _ExitTrackingFakeCapture(_FakeAudioCapture):
+    def __init__(
+        self,
+        frames: list[tuple[int, int, np.ndarray]],
+    ) -> None:
+        super().__init__(frames, block_after_drain=False)
+        self.exit_calls = 0
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.exit_calls += 1
+        return super().__exit__(exc_type, exc, tb)
 
 
 def test_close_is_idempotent() -> None:

@@ -42,7 +42,12 @@ class AudioRecorder:
         self.settings = settings
         self.device_manager = device_manager
         self.is_recording = False
-        self.frames: list[np.ndarray] = []
+        # int16 PCM bytes per drained frame. Storing the int16 view rather
+        # than the float32 ndarray halves the in-memory footprint of long
+        # recordings (~115 MB/hour at 16 kHz mono vs. ~230 MB/hour for
+        # float32) — important because settings.monitoring caps sessions
+        # at 8 hours by default.
+        self.frames: list[bytes] = []
         self.recording_thread: Timer | None = None
         self.monitor: MeetingMonitor | None = None
         self.start_time: datetime | None = None
@@ -192,15 +197,13 @@ class AudioRecorder:
                 for _, mixed in mixer.drain():
                     if self._paused:
                         continue
-                    self.frames.append(mixed)
-                    self.current_level = min(1.0, float(np.max(np.abs(mixed))))
+                    self._append_mixed_frame(mixed)
             # Flush any sub-frame tail — helper chunks are arbitrary-sized,
             # so a clean EOF often leaves <512 samples buffered per source.
             tail = mixer.flush()
             if tail is not None and not self._paused:
                 _, mixed = tail
-                self.frames.append(mixed)
-                self.current_level = min(1.0, float(np.max(np.abs(mixed))))
+                self._append_mixed_frame(mixed)
         except Exception as exc:
             # Stash the error so `start_recording` re-raises it instead of
             # silently truncating the partial recording.
@@ -229,19 +232,21 @@ class AudioRecorder:
             self.recording_thread.cancel()
             self.recording_thread = None
 
+    def _append_mixed_frame(self, mixed: np.ndarray) -> None:
+        clipped = np.clip(mixed, -1.0, 1.0)
+        int16 = (clipped * 32767).astype(np.int16, copy=False)
+        self.frames.append(int16.tobytes())
+        self.current_level = min(1.0, float(np.max(np.abs(mixed))))
+
     def _save_recording(self, file_path: Path) -> None:
         if not self.frames:
             raise RuntimeError("No audio data recorded")
-
-        mixed = np.concatenate(self.frames)
-        clipped = np.clip(mixed, -1.0, 1.0)
-        int16_samples = (clipped * 32767).astype(np.int16, copy=False)
 
         with wave.open(str(file_path), "wb") as wave_file:
             wave_file.setnchannels(OUTPUT_CHANNELS)
             wave_file.setsampwidth(OUTPUT_SAMPLE_WIDTH_BYTES)
             wave_file.setframerate(OUTPUT_SAMPLE_RATE)
-            wave_file.writeframes(int16_samples.tobytes())
+            wave_file.writeframes(b"".join(self.frames))
 
     def _write_initial_meta(
         self,

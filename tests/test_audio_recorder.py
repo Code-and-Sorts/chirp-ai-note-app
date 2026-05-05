@@ -79,6 +79,26 @@ class FakeAudioCapture:
             yield frame
 
 
+@pytest.fixture(autouse=True)
+def _force_darwin_platform(request: pytest.FixtureRequest):
+    # AudioRecorder.start_recording calls audio_capture.check_macos_version()
+    # via its module-level rebind in `recorder.audio_recorder`. Stub
+    # `sys.platform` and `platform.mac_ver` so the version gate passes
+    # on non-Darwin CI runners. Tests that need real platform detection
+    # can opt out via `@pytest.mark.real_platform`.
+    if "real_platform" in request.keywords:
+        yield
+        return
+    with (
+        patch.object(sys, "platform", "darwin"),
+        patch(
+            "audio_capture.platform.mac_ver",
+            return_value=("13.0.0", ("", "", ""), ""),
+        ),
+    ):
+        yield
+
+
 @pytest.fixture
 def mock_settings(tmp_path):
     return _build_settings(tmp_path)

@@ -125,24 +125,35 @@ def _read_frame(
     stdout: IO[bytes],
 ) -> tuple[int, int, np.ndarray] | None:
     header = stdout.read(_FRAME_HEADER_SIZE)
-    if len(header) < _FRAME_HEADER_SIZE:
+    if len(header) == 0:
+        # Clean EOF — helper closed stdout cleanly between frames.
         return None
+    if len(header) < _FRAME_HEADER_SIZE:
+        # Partial header is a framing-protocol violation, not EOF: the
+        # helper writes a complete header before any payload bytes, so
+        # 1–12 bytes here means the stream was cut mid-frame.
+        raise AudioCaptureCorrupt(
+            "capture_audio frame header truncated: got "
+            f"{len(header)} of {_FRAME_HEADER_SIZE} bytes"
+        )
     source = header[0]
     timestamp_us = struct.unpack("<Q", header[1:9])[0]
     length = struct.unpack("<I", header[9:13])[0]
     if length == 0:
         return source, timestamp_us, np.zeros(0, dtype=np.float32)
     if length > _MAX_FRAME_PAYLOAD_BYTES:
-        # Surface corruption as an explicit error rather than mapping it
-        # to EOF; otherwise a wedged helper that emits a bogus length and
-        # then exits 0 looks indistinguishable from a clean stream end.
         raise AudioCaptureCorrupt(
             f"capture_audio frame payload length {length} exceeds "
             f"the {_MAX_FRAME_PAYLOAD_BYTES} byte cap; framing is corrupt"
         )
     payload = stdout.read(length)
     if len(payload) < length:
-        return None
+        # Same reasoning as the partial-header branch: a short payload
+        # after a valid header means truncation mid-frame, not EOF.
+        raise AudioCaptureCorrupt(
+            f"capture_audio frame payload truncated: got "
+            f"{len(payload)} of {length} bytes"
+        )
     audio = np.frombuffer(payload, dtype=np.float32)
     return source, timestamp_us, audio
 

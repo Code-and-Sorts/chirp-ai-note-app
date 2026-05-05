@@ -37,7 +37,17 @@ def _force_darwin_platform(request: pytest.FixtureRequest) -> Iterator[None]:
     if "real_platform" in request.keywords:
         yield
         return
-    with mock.patch.object(sys, "platform", "darwin"):
+    # `check_macos_version()` looks at both `sys.platform` and
+    # `platform.mac_ver()`. On non-Darwin hosts the latter returns "" so
+    # patching sys.platform alone is not enough — also stub
+    # `platform.mac_ver` to a 13.x tuple so the version gate passes.
+    with (
+        mock.patch.object(sys, "platform", "darwin"),
+        mock.patch(
+            "audio_capture.platform.mac_ver",
+            return_value=("13.0.0", ("", "", ""), ""),
+        ),
+    ):
         yield
 
 
@@ -74,14 +84,20 @@ def test_read_frame_returns_none_on_eof() -> None:
     assert _read_frame(io.BytesIO(b"")) is None
 
 
-def test_read_frame_returns_none_on_partial_header() -> None:
-    assert _read_frame(io.BytesIO(b"\x01\x00\x00\x00\x00")) is None
+def test_read_frame_raises_on_partial_header() -> None:
+    # Truncation between bytes 1–12 is a framing-protocol violation, not
+    # EOF: the helper writes a complete header before any payload bytes.
+    with pytest.raises(AudioCaptureCorrupt):
+        _read_frame(io.BytesIO(b"\x01\x00\x00\x00\x00"))
 
 
-def test_read_frame_returns_none_on_partial_payload() -> None:
+def test_read_frame_raises_on_partial_payload() -> None:
+    # Header advertises 16 bytes; only 4 follow. Same reasoning: a short
+    # payload after a valid header means truncation mid-frame.
     header = struct.pack("<BQI", 1, 0, 16)
     stream = io.BytesIO(header + b"\x00\x00\x00\x00")
-    assert _read_frame(stream) is None
+    with pytest.raises(AudioCaptureCorrupt):
+        _read_frame(stream)
 
 
 def test_read_frame_raises_on_oversized_length() -> None:

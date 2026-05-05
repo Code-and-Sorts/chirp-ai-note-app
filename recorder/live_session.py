@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    # Imported only for type hints. `recorder.device_manager` pulls in
+    # PyAudio at import time, which would defeat platform-neutral imports
+    # of this module on hosts without PyAudio.
+    from recorder.device_manager import DeviceManager
     from recorder.vad_chunker import VADChunker
 
 import tomli_w
@@ -16,7 +20,6 @@ from rich.console import Console
 
 from chirp.exceptions import RecordingError
 from config.settings import ChirpSettings
-from recorder.device_manager import DeviceManager
 from recorder.live_audio import LiveAudioStream
 from recorder.live_dashboard import LiveDashboard
 from recorder.live_transcriber import LiveTranscriber

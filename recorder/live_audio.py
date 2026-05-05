@@ -132,17 +132,30 @@ class LiveAudioStream:
 
         cap_ctx = AudioCapture()
         cap = cap_ctx.__enter__()
-        self._cap_ctx = cap_ctx
-        self._cap = cap
-        self._mic_device_name = cap.mic_device_name
+        try:
+            self._cap_ctx = cap_ctx
+            self._cap = cap
+            self._mic_device_name = cap.mic_device_name
 
-        thread = threading.Thread(
-            target=self._mixer_loop,
-            name="audio-capture-mixer",
-            daemon=True,
-        )
-        self._mixer_thread = thread
-        thread.start()
+            thread = threading.Thread(
+                target=self._mixer_loop,
+                name="audio-capture-mixer",
+                daemon=True,
+            )
+            self._mixer_thread = thread
+            thread.start()
+        except BaseException:
+            # If anything between AudioCapture entry and thread start fails
+            # (e.g., thread exhaustion), the helper subprocess would
+            # otherwise leak because nothing else calls __exit__. Tear
+            # the context down before re-raising.
+            try:
+                cap_ctx.__exit__(None, None, None)
+            finally:
+                self._cap_ctx = None
+                self._cap = None
+                self._mixer_thread = None
+            raise
 
     def _mixer_loop(self) -> None:
         cap = self._cap
