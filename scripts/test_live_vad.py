@@ -47,7 +47,7 @@ def main():
         print(f"  Sample rate: {audio_stream.sample_rate} Hz")
         print(f"  Channels: {audio_stream.channels}")
         print(f"  Frame duration: {audio_stream.frame_duration * 1000:.1f} ms\n")
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         print(f"Failed to start audio: {exc}")
         return 1
 

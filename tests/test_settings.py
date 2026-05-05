@@ -12,7 +12,7 @@ class TestChirpSettings:
         assert settings.models.whisper == "large-v3-turbo"
         assert settings.models.llm == "llama3.1:8b"
         assert settings.audio.sample_rate == 16000
-        assert settings.audio.channels == 2
+        assert settings.audio.channels == 1
 
     def test_directories_config_paths(self):
         settings = ChirpSettings()

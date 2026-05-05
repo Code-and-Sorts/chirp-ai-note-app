@@ -80,7 +80,7 @@ class LiveTranscriber(threading.Thread):
 
             try:
                 self._process_chunk(chunk)
-            except Exception as exc:  # pragma: no cover - diagnostic
+            except Exception as exc:  # noqa: BLE001 - process_chunk can raise any type; publish and continue
                 self._publish_event(
                     "error",
                     {

@@ -212,7 +212,7 @@ def suggest_close_keywords(bm25_path: Path, query: str) -> list[tuple[str, int]]
     try:
         index = BM25Index(bm25_path)
         vocab = index.vocabulary()
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError):
         return []
     if not vocab:
         return []

@@ -38,7 +38,7 @@ class PopupManager:
                 return self._show_macos_notification(title, message)
             else:
                 return self._show_generic_notification(title, message)
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             return False
 
     def _show_macos_notification(self, title: str, message: str) -> bool:

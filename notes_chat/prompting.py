@@ -1,10 +1,13 @@
 import json
+import logging
 from collections.abc import Generator
 from typing import Any
 
 import requests
 
 from config.settings import ChirpSettings
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based ONLY on the provided meeting notes and transcripts.
 
@@ -117,7 +120,8 @@ def generate_answer(
             "success": False,
             "error": "Cannot connect to Ollama. Is it running? Try: ollama serve",
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - fallback after specific request handlers
+        logger.debug("Failed to generate answer: %s", e)
         return {"success": False, "error": f"Failed to generate answer: {e}"}
 
 
@@ -173,7 +177,8 @@ def generate_conversational_response(
             "success": False,
             "error": "Cannot connect to Ollama. Is it running? Try: ollama serve",
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - fallback after specific request handlers
+        logger.debug("Failed to generate response: %s", e)
         return {"success": False, "error": f"Failed to generate response: {e}"}
 
 
@@ -239,7 +244,8 @@ def orchestrate_search(config: ChirpSettings, question: str) -> dict[str, Any]:
             "success": False,
             "error": "Cannot connect to Ollama. Is it running? Try: ollama serve",
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - fallback after specific request handlers
+        logger.debug("Failed to orchestrate search: %s", e)
         return {"success": False, "error": f"Failed to orchestrate search: {e}"}
 
 
@@ -280,7 +286,8 @@ def stream_llm_response(
 
     except requests.exceptions.ConnectionError:
         yield "Error: Cannot connect to Ollama. Is it running?"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - fallback after specific request handlers
+        logger.debug("LLM stream failed: %s", e)
         yield f"Error: {e}"
 
 
@@ -417,7 +424,8 @@ Answer:"""
 
         return {"success": False, "error": "Empty response"}
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - fast_search_and_answer: many LLM/retrieval failure modes
+        logger.debug("Fast search failed: %s", e)
         return {"success": False, "error": f"Fast search failed: {e}"}
 
 
@@ -499,7 +507,8 @@ Provide a direct answer based on the context."""
 
         return fast_search_and_answer(config, question)
 
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - enhanced search fallback; many failure modes
+        logger.debug("Enhanced search fell back to fast search: %s", exc)
         return fast_search_and_answer(config, question)
 
 
@@ -558,8 +567,8 @@ def enhanced_search_and_answer_stream(
                         "search_strategy": "fast search",
                     }
                 return
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - fast-path stream fallback; many failure modes
+            logger.debug("Fast-path stream failed, falling through: %s", exc)
 
     yield {"type": "thinking", "message": "Analyzing question..."}
     try:
@@ -588,7 +597,8 @@ def enhanced_search_and_answer_stream(
                         "type": "error",
                         "message": "Could not find relevant information",
                     }
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - fallback stream search; many failure modes
+                logger.debug("Fallback stream search failed: %s", exc)
                 yield {"type": "error", "message": "Search failed"}
             return
 
@@ -676,7 +686,8 @@ Provide a direct answer based on the context."""
         else:
             yield {"type": "error", "message": "Empty response received"}
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - enhanced stream search; many failure modes
+        logger.debug("Enhanced stream search failed: %s", e)
         yield {"type": "error", "message": f"Enhanced search failed: {e}"}
 
 
@@ -767,5 +778,6 @@ def validate_ollama_connection(config: ChirpSettings) -> dict[str, Any]:
             "success": False,
             "error": "Cannot connect to Ollama. Is it running? Try: ollama serve",
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - fallback after specific request handlers
+        logger.debug("Failed to validate Ollama: %s", e)
         return {"success": False, "error": f"Failed to validate Ollama: {e}"}

@@ -17,7 +17,7 @@ class JSONCompressor:
                 f.write(json_bytes)
 
             return True
-        except Exception:
+        except OSError:
             return False
 
     @staticmethod
@@ -32,7 +32,7 @@ class JSONCompressor:
             json_str = json_bytes.decode("utf-8")
             data = json.loads(json_str)
             return dict(data) if isinstance(data, dict) else {}
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
             raise RuntimeError(f"Failed to decompress JSON file: {str(e)}")
 
     @staticmethod
@@ -49,12 +49,12 @@ class JSONCompressor:
         try:
             with open(json_path, encoding="utf-8") as f:
                 original_size = len(f.read().encode("utf-8"))
-        except Exception:
+        except OSError:
             original_size = 0
 
         try:
             compressed_size = json_path.stat().st_size
-        except Exception:
+        except OSError:
             compressed_size = 0
 
         return {"original": original_size, "compressed": compressed_size}

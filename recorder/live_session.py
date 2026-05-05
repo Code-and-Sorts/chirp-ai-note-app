@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import queue
+import shutil
 import threading
 import time
 import wave
@@ -9,6 +11,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    # Imported only for type hints. `recorder.device_manager` pulls in
+    # PyAudio at import time, which would defeat platform-neutral imports
+    # of this module on hosts without PyAudio.
+    from recorder.device_manager import DeviceManager
     from recorder.vad_chunker import VADChunker
 
 import tomli_w
@@ -16,12 +22,13 @@ from rich.console import Console
 
 from chirp.exceptions import RecordingError
 from config.settings import ChirpSettings
-from recorder.device_manager import DeviceManager
 from recorder.live_audio import LiveAudioStream
 from recorder.live_dashboard import LiveDashboard
 from recorder.live_transcriber import LiveTranscriber
 from recorder.live_types import DashboardEvent, SpeechChunk
 from utils.file_utils import AUDIO_FILENAME, META_FILENAME, slugify
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -140,6 +147,8 @@ class LiveTranscriptionSession:
         if not self.audio_stream:
             raise RecordingError("Audio stream not initialized")
 
+        capture_error = self.audio_stream.capture_error
+
         notes_root = self.settings.directories.notes_root
         notes_root.mkdir(parents=True, exist_ok=True)
 
@@ -150,6 +159,12 @@ class LiveTranscriptionSession:
         note_dir = notes_root / slug
         note_dir.mkdir(parents=True, exist_ok=True)
         audio_path = note_dir / AUDIO_FILENAME
+
+        if capture_error is not None:
+            logger.error("live capture failed mid-recording", exc_info=capture_error)
+            self.audio_stream.close()
+            shutil.rmtree(note_dir, ignore_errors=True)
+            raise RecordingError("live capture failed mid-recording") from capture_error
 
         self.audio_stream.save_recording(audio_path, title=self.title)
         self.audio_stream.close()
@@ -286,10 +301,14 @@ class LiveTranscriptionSession:
     def _write_live_meta(self, note_dir: Path, title: str) -> None:
         from datetime import datetime
 
+        mic = "default"
+        if self.audio_stream is not None:
+            mic = self.audio_stream.mic_device_name or "default"
+
         meta = {
             "title": title,
             "date": datetime.now().isoformat(),
-            "mic": "default",
+            "mic": mic,
             "tags": list(self.tags),
         }
         meta_path = note_dir / META_FILENAME

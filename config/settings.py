@@ -50,8 +50,15 @@ class VadParameters(BaseModel):
 
 
 class AudioConfig(BaseModel):
+    # The bundled CaptureAudio.app helper produces 16 kHz mono float32
+    # frames; the recorder paths write 16 kHz mono int16 WAVs. The fields
+    # here describe the recorder's effective output format so the value
+    # `chirp config` displays matches what's actually written to disk.
+    # Overrides are not honored — both AudioRecorder.start_recording and
+    # LiveAudioStream.start log a warning when a non-default value is
+    # configured.
     sample_rate: int = 16000
-    channels: int = 2
+    channels: int = 1
     chunk_size: int = 1024
     format: str = "wav"
     vad_enabled: bool = True

@@ -40,11 +40,6 @@ def test_model_installed_matches_latest_and_base():
 def test_verify_reports_missing_everything(tmp_path, monkeypatch):
     monkeypatch.setattr(init_flow, "_which", lambda _cmd: None)
     monkeypatch.setattr(init_flow, "_ollama_models", lambda: [])
-    monkeypatch.setattr(
-        init_flow,
-        "_blackhole_installed",
-        lambda: init_flow.DependencyStatus("BlackHole 2ch", False, "not found"),
-    )
 
     console = _console()
     settings = _fake_settings(tmp_path)
@@ -54,7 +49,6 @@ def test_verify_reports_missing_everything(tmp_path, monkeypatch):
     names = [s.name for s in statuses]
     assert "homebrew" in names
     assert "ffmpeg" in names
-    assert "BlackHole 2ch" in names
     assert "Ollama" in names
     missing_required = [s for s in statuses if s.required and not s.installed]
     assert missing_required, "verify should report missing pieces"
@@ -70,11 +64,6 @@ def test_run_init_recheck_short_circuits(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         init_flow, "_ollama_models", lambda: ["llama3.1:8b", "nomic-embed-text"]
-    )
-    monkeypatch.setattr(
-        init_flow,
-        "_blackhole_installed",
-        lambda: init_flow.DependencyStatus("BlackHole 2ch", True, "installed"),
     )
     monkeypatch.setattr(
         init_flow,
@@ -152,55 +141,6 @@ def test_run_init_phases_run_in_order(tmp_path, monkeypatch):
     code = init_flow.run_init(_fake_settings(tmp_path), _console())
     assert code == 0
     assert calls == ["verify", "install", "keep_or_pick", "finalize"]
-
-
-def test_blackhole_prompt_open_action(monkeypatch):
-    """`o` answer triggers `open -a "Audio MIDI Setup"`."""
-    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        init_flow, "_run", lambda args, timeout=10.0: captured.append(args) or (0, "")
-    )
-
-    console = _console()
-    answers = iter(["o"])
-    monkeypatch.setattr(console, "input", lambda *args, **kwargs: next(answers))
-
-    init_flow._prompt_blackhole_routing(console)
-    assert captured == [["open", "-a", "Audio MIDI Setup"]]
-
-
-def test_blackhole_prompt_skip_action(monkeypatch):
-    """`s` answer skips the open call."""
-    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        init_flow, "_run", lambda args, timeout=10.0: captured.append(args) or (0, "")
-    )
-
-    console = _console()
-    answers = iter(["s"])
-    monkeypatch.setattr(console, "input", lambda *args, **kwargs: next(answers))
-
-    init_flow._prompt_blackhole_routing(console)
-    assert captured == []
-
-
-def test_blackhole_prompt_noop_on_non_macos(monkeypatch):
-    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        init_flow, "_run", lambda args, timeout=10.0: captured.append(args) or (0, "")
-    )
-
-    console = _console()
-
-    def boom(*args, **kwargs):
-        raise AssertionError("input should not be requested on Linux")
-
-    monkeypatch.setattr(console, "input", boom)
-    init_flow._prompt_blackhole_routing(console)
-    assert captured == []
 
 
 def test_keep_or_pick_keeps_when_user_accepts_default(tmp_path, monkeypatch):
@@ -341,11 +281,6 @@ def _stub_for_clean_box(monkeypatch):
     )
     monkeypatch.setattr(
         init_flow,
-        "_blackhole_installed",
-        lambda: init_flow.DependencyStatus("BlackHole 2ch", True, "installed"),
-    )
-    monkeypatch.setattr(
-        init_flow,
         "_ffmpeg_installed",
         lambda: init_flow.DependencyStatus("ffmpeg", True, "7.1.1"),
     )
@@ -367,13 +302,6 @@ def test_run_init_rerun_is_idempotent_and_preserves_user_keys(tmp_path, monkeypa
 
     monkeypatch.setattr(init_flow.ChirpSettings, "get_config_path", lambda: config_path)
     _stub_for_clean_box(monkeypatch)
-
-    blackhole_calls = {"count": 0}
-
-    def boom_blackhole(_console):
-        blackhole_calls["count"] += 1
-
-    monkeypatch.setattr(init_flow, "_prompt_blackhole_routing", boom_blackhole)
 
     pick_calls = {"count": 0}
 
@@ -410,7 +338,6 @@ def test_run_init_rerun_is_idempotent_and_preserves_user_keys(tmp_path, monkeypa
 
     code = init_flow.run_init(settings, console2)
     assert code == 0
-    assert blackhole_calls["count"] == 0  # nothing missing → no prompt
     assert pick_calls["count"] == 0  # user kept current models on both runs
     assert config_path.stat().st_mtime == first_mtime  # no rewrite
 

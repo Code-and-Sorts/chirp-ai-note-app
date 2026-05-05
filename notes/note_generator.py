@@ -1,3 +1,4 @@
+import logging
 import tomllib
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
@@ -13,6 +14,8 @@ from notes.constants import DEFAULT_MEETING_NAME
 from notes.template_engine import TemplateEngine
 from utils.file_utils import META_FILENAME, NOTES_FILENAME, NoteRecord, list_notes
 from utils.popup_manager import PopupManager
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are Chirp, the user's meeting note co-pilot.
 Your sole purpose is to transform raw meeting transcripts into structured meeting notes.
@@ -263,7 +266,7 @@ class NoteGenerator:
             try:
                 with meta_path.open("rb") as fh:
                     meta = dict(tomllib.load(fh))
-            except Exception:
+            except (OSError, tomllib.TOMLDecodeError):
                 meta = {}
 
         meta["whisper_model"] = self.settings.models.whisper
@@ -345,7 +348,8 @@ Return ONLY the XML document, no additional text before or after."""
         try:
             response = self._call_ollama(prompt)
             return self._parse_xml_response(response)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - topic extraction is best-effort; many failure modes
+            logger.debug("Topic extraction failed: %s", exc)
             return None
 
     def _call_ollama(self, prompt: str) -> str:
@@ -466,7 +470,7 @@ Return ONLY the XML document, no additional text before or after."""
 
         except ET.ParseError:
             return self._parse_fallback_response(response)
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError):
             return None
 
     def _parse_fallback_response(self, response: str) -> dict[str, Any]:
@@ -509,7 +513,8 @@ Return ONLY the XML document, no additional text before or after."""
                 self.console.print(
                     f"[dim green]✓ Auto-indexed {notes_path.name}[/dim green]"
                 )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - defensive auto-index; IndexManager can raise many types
+            logger.debug("Auto-indexing failed for %s: %s", notes_path.name, exc)
             self.console.print(
                 f"[dim yellow]Auto-indexing failed for {notes_path.name}: {exc}[/dim yellow]"
             )

@@ -82,7 +82,7 @@ class ManualNoteManager:
 
                 with meta_path.open("rb") as fh:
                     meta = tomllib.load(fh)
-            except Exception:
+            except (OSError, tomllib.TOMLDecodeError):
                 continue
             if meta.get("title") == title:
                 return candidate.name

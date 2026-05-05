@@ -1,7 +1,10 @@
 import hashlib
 import json
+import logging
 
 from notes_chat.config import get_notes_config
+
+logger = logging.getLogger(__name__)
 
 
 def get_cached_answer(question: str, retrieved_ids: list[str]) -> str | None:
@@ -20,7 +23,8 @@ def get_cached_answer(question: str, retrieved_ids: list[str]) -> str | None:
         answer = data.get("answer")
         return answer if isinstance(answer, str) else None
 
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - get_notes_config or chromadb can raise many types
+        logger.debug("get_cached_answer failed: %s", exc)
         return None
 
 
@@ -45,7 +49,8 @@ def cache_answer(question: str, retrieved_ids: list[str], answer: str) -> bool:
 
         return True
 
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - get_notes_config or IO can raise many types
+        logger.debug("cache_answer failed: %s", exc)
         return False
 
 
@@ -69,5 +74,6 @@ def clear_cache() -> bool:
 
         return True
 
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - get_notes_config or IO can raise many types
+        logger.debug("clear_cache failed: %s", exc)
         return False

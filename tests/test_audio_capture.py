@@ -15,8 +15,8 @@ import struct
 import subprocess
 import sys
 import textwrap
+import threading
 import time
-from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
 
@@ -25,19 +25,11 @@ import pytest
 
 from audio_capture import (
     AudioCapture,
+    AudioCaptureCorrupt,
     AudioCaptureCrashed,
     AudioCaptureStartTimeout,
     _read_frame,
 )
-
-
-@pytest.fixture(autouse=True)
-def _force_darwin_platform(request: pytest.FixtureRequest) -> Iterator[None]:
-    if "real_platform" in request.keywords:
-        yield
-        return
-    with mock.patch.object(sys, "platform", "darwin"):
-        yield
 
 
 def _pack_frame(source: int, timestamp_us: int, samples: np.ndarray) -> bytes:
@@ -73,14 +65,31 @@ def test_read_frame_returns_none_on_eof() -> None:
     assert _read_frame(io.BytesIO(b"")) is None
 
 
-def test_read_frame_returns_none_on_partial_header() -> None:
-    assert _read_frame(io.BytesIO(b"\x01\x00\x00\x00\x00")) is None
+def test_read_frame_raises_on_partial_header() -> None:
+    # Truncation between bytes 1–12 is a framing-protocol violation, not
+    # EOF: the helper writes a complete header before any payload bytes.
+    with pytest.raises(AudioCaptureCorrupt):
+        _read_frame(io.BytesIO(b"\x01\x00\x00\x00\x00"))
 
 
-def test_read_frame_returns_none_on_partial_payload() -> None:
+def test_read_frame_raises_on_partial_payload() -> None:
+    # Header advertises 16 bytes; only 4 follow. Same reasoning: a short
+    # payload after a valid header means truncation mid-frame.
     header = struct.pack("<BQI", 1, 0, 16)
     stream = io.BytesIO(header + b"\x00\x00\x00\x00")
-    assert _read_frame(stream) is None
+    with pytest.raises(AudioCaptureCorrupt):
+        _read_frame(stream)
+
+
+def test_read_frame_raises_on_oversized_length() -> None:
+    # Bogus length prefix > 8 MiB cap. Must surface as corruption rather
+    # than be silently mapped to EOF — otherwise a wedged helper that
+    # exits 0 after writing a corrupt header looks like a clean stream
+    # end and the caller accepts a truncated capture.
+    header = struct.pack("<BQI", 1, 0, 9 * 1024 * 1024)
+    stream = io.BytesIO(header)
+    with pytest.raises(AudioCaptureCorrupt):
+        _read_frame(stream)
 
 
 def _spawn_fake_helper(
@@ -220,7 +229,11 @@ def test_frames_raises_on_nonzero_exit(tmp_path: Path) -> None:
     frame_bytes = _pack_frame(1, 1000, samples)
 
     cmd = _spawn_fake_helper(
-        stderr_lines=["capture: started", "error: screen_recording_denied"],
+        stderr_lines=[
+            "capture: started",
+            'capture: microphone=enabled device="MockMic"',
+            "error: screen_recording_denied",
+        ],
         frames=[frame_bytes],
         exit_code=1,
     )
@@ -276,7 +289,10 @@ def test_end_to_end_with_python_fake_helper(tmp_path: Path) -> None:
     ]
 
     cmd = _spawn_fake_helper(
-        stderr_lines=["capture: started"],
+        stderr_lines=[
+            "capture: started",
+            'capture: microphone=enabled device="MockMic"',
+        ],
         frames=frames,
         exit_code=0,
     )
@@ -299,21 +315,61 @@ def test_end_to_end_with_python_fake_helper(tmp_path: Path) -> None:
         (2, 210),
     ]
 
-    with (
-        _patch_resolve_to(fake_binary),
-        mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
-    ):
-        with AudioCapture() as cap:
-            sys_only = list(cap.system_frames())
-    assert [ts for ts, _ in sys_only] == [100, 200]
+
+def test_mic_device_name_parsed_from_diagnostic_line(tmp_path: Path) -> None:
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\necho stub\n")
+    fake_binary.chmod(0o755)
+
+    cmd = _spawn_fake_helper(
+        stderr_lines=[
+            "capture: started",
+            "capture: sample_rate=16000 channels=1 format=float32",
+            "capture: system_audio=enabled",
+            'capture: microphone=enabled device="MacBook Pro Microphone"',
+        ],
+        frames=[],
+        exit_code=0,
+    )
+
+    real_popen = subprocess.Popen
+
+    def popen_override(args, **kwargs):
+        return real_popen(cmd, **kwargs)
 
     with (
         _patch_resolve_to(fake_binary),
         mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
     ):
         with AudioCapture() as cap:
-            mic_only = list(cap.mic_frames())
-    assert [ts for ts, _ in mic_only] == [110, 210]
+            assert cap.mic_device_name == "MacBook Pro Microphone"
+
+
+def test_mic_device_name_is_none_when_diagnostic_line_absent(
+    tmp_path: Path,
+) -> None:
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\necho stub\n")
+    fake_binary.chmod(0o755)
+
+    cmd = _spawn_fake_helper(
+        stderr_lines=["capture: started"],
+        frames=[],
+        exit_code=0,
+    )
+
+    real_popen = subprocess.Popen
+
+    def popen_override(args, **kwargs):
+        return real_popen(cmd, **kwargs)
+
+    with (
+        _patch_resolve_to(fake_binary),
+        mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
+        mock.patch("audio_capture._POST_START_DRAIN_SECONDS", 0.1),
+    ):
+        with AudioCapture() as cap:
+            assert cap.mic_device_name is None
 
 
 def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
@@ -355,9 +411,70 @@ def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
         _patch_resolve_to(fake_binary),
         mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
         mock.patch("audio_capture._STARTUP_TIMEOUT_SECONDS", 1.0),
+        mock.patch("audio_capture._POST_START_DRAIN_SECONDS", 0.1),
     ):
         with AudioCapture() as cap:
             assert cap._proc is not None
+
+
+def test_exit_during_frames_iteration_stops_cleanly(tmp_path: Path) -> None:
+    # L15: calling __exit__ from another thread while frames() is being
+    # consumed must stop the iterator cleanly — no exception leak.
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\necho stub\n")
+    fake_binary.chmod(0o755)
+
+    samples = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    frame_bytes = _pack_frame(1, 0, samples)
+
+    cmd = [
+        sys.executable,
+        "-c",
+        textwrap.dedent(
+            f"""
+            import sys, time
+            sys.stderr.write('capture: started\\n')
+            sys.stderr.flush()
+            for _ in range(20):
+                sys.stdout.buffer.write({frame_bytes!r})
+                sys.stdout.buffer.flush()
+                time.sleep(0.05)
+            """
+        ),
+    ]
+
+    real_popen = subprocess.Popen
+
+    def popen_override(args, **kwargs):
+        return real_popen(cmd, **kwargs)
+
+    collected: list = []
+    exception_in_thread: list[BaseException] = []
+
+    with (
+        _patch_resolve_to(fake_binary),
+        mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
+    ):
+        with AudioCapture() as cap:
+
+            def exit_after_first():
+                time.sleep(0.1)
+                try:
+                    cap.__exit__(None, None, None)
+                except Exception as exc:  # noqa: BLE001 - test contract: collect any race exception
+                    exception_in_thread.append(exc)
+
+            killer = threading.Thread(target=exit_after_first, daemon=True)
+            killer.start()
+            try:
+                for frame in cap.frames():
+                    collected.append(frame)
+            except Exception:  # noqa: BLE001 - test contract: frames() may raise on concurrent exit
+                pass
+            killer.join(timeout=2.0)
+
+    assert len(collected) >= 1
+    assert not exception_in_thread
 
 
 @pytest.mark.real_platform
@@ -366,7 +483,7 @@ def test_non_darwin_capture_raises() -> None:
         with pytest.raises(RuntimeError) as excinfo:
             with AudioCapture():
                 pass
-    assert "macOS 13+" in str(excinfo.value)
+    assert "macOS 13" in str(excinfo.value)
 
 
 @pytest.mark.integration

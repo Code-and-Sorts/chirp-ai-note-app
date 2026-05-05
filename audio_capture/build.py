@@ -59,6 +59,8 @@ def main() -> int:
 
     env = os.environ.copy()
     arch = env.get("ARCH")
+    if arch is not None and arch not in {"arm64", "x86_64"}:
+        raise ValueError(f"Unsupported ARCH={arch!r}; expected one of arm64, x86_64")
     make_args = ["make", "-C", str(SWIFT_DIR), "build"]
     if arch:
         make_args.append(f"ARCH={arch}")
@@ -67,13 +69,22 @@ def main() -> int:
     if proc.returncode != 0:
         return proc.returncode
 
-    binary = (
-        Path(__file__).parent
-        / "CaptureAudio.app"
-        / "Contents"
-        / "MacOS"
-        / "capture_audio"
+    bundle = Path(__file__).parent / "CaptureAudio.app"
+    binary = bundle / "Contents" / "MacOS" / "capture_audio"
+
+    # Replace the linker-applied ad-hoc signature with a proper bundle-level
+    # ad-hoc signature so Info.plist is bound and the bundle identifier
+    # (com.codeandsorts.chirp.capture-audio) is the code identity TCC uses.
+    # Without this, macOS attributes screen-recording / mic prompts to the
+    # parent process (Terminal/IDE) and Chirp never appears in System
+    # Settings → Privacy & Security.
+    sign_proc = subprocess.run(
+        ["codesign", "--force", "--deep", "--sign", "-", str(bundle)]
     )
+    if sign_proc.returncode != 0:
+        sys.stderr.write("codesign failed; the bundle is unsigned\n")
+        return sign_proc.returncode
+
     sys.stdout.write(f"built: {binary}\n")
     return 0
 
