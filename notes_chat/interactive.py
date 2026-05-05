@@ -68,6 +68,7 @@ class InteractiveChatSession:
         try:
             self._session.app.invalidate()
         except (RuntimeError, AttributeError):
+            # UI session may be torn down already; invalidate is fire-and-forget.
             pass
 
     def _show_hint_then_auto_clear(self):
@@ -79,6 +80,7 @@ class InteractiveChatSession:
         try:
             self._session.app.invalidate()
         except (RuntimeError, AttributeError):
+            # Same as above: invalidate is best-effort during teardown / re-entry.
             pass
 
     def _toolbar(self):
@@ -139,6 +141,7 @@ class InteractiveChatSession:
                     sys.stdout.write("\r\x1b[2K")
                     sys.stdout.flush()
                 except OSError:
+                    # Terminal may have closed mid-prompt; goodbye banner still prints below.
                     pass
                 console.print("\n[dim]Goodbye![/dim]")
                 return

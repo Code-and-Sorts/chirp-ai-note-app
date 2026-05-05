@@ -187,6 +187,7 @@ def clean_old_files(directory: Path, days_old: int = 30) -> int:
                 file_path.unlink()
                 deleted_count += 1
             except OSError:
+                # One file failing should not stop the bulk delete; counter just doesn't increment.
                 pass
 
     return deleted_count

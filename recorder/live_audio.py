@@ -222,6 +222,7 @@ class LiveAudioStream:
             try:
                 proc.terminate()
             except (ProcessLookupError, OSError):
+                # Helper already exited or signal raced; teardown continues regardless.
                 pass
         thread = self._mixer_thread
         if thread is not None:
@@ -244,6 +245,7 @@ class LiveAudioStream:
             try:
                 self._wave.close()
             except OSError:
+                # Best-effort close on cleanup path; the temp file is unlinked next.
                 pass
             self._wave = None
 
@@ -285,11 +287,13 @@ class LiveAudioStream:
             try:
                 self._wave.close()
             except OSError:
+                # Best-effort close during teardown; failure is non-recoverable here.
                 pass
             self._wave = None
         if self._temp_wav_path is not None:
             try:
                 self._temp_wav_path.unlink(missing_ok=True)
             except OSError:
+                # Temp file may already be gone or on a vanishing volume; nothing to recover.
                 pass
             self._temp_wav_path = None

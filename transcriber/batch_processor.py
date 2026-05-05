@@ -146,6 +146,7 @@ def _audio_duration_seconds(transcriber: WhisperTranscriber, audio: Path) -> flo
             if rate > 0:
                 return frames / float(rate)
     except (OSError, wave.Error):
+        # Probe is best-effort; fall through to the 0.0 default.
         pass
 
     return 0.0

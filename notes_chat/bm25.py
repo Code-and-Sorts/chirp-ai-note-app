@@ -33,6 +33,7 @@ class BM25Index:
                 self._tokenized_corpus = corpus
                 self.bm25 = BM25Okapi(corpus)
         except (OSError, json.JSONDecodeError, ValueError, KeyError):
+            # Cache miss / corruption / schema drift — caller will rebuild the index.
             pass
 
     def vocabulary(self) -> dict[str, int]:
