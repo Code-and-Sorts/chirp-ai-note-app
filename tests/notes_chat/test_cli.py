@@ -34,7 +34,7 @@ def _patch_config(monkeypatch):
 
 class TestIndexCommand:
     def _patch_build_index(self, monkeypatch, result: dict):
-        monkeypatch.setattr("notes_chat.cli.get_notes_config", lambda: _fake_config())
+        monkeypatch.setattr("notes_chat.cli.get_notes_config", _fake_config)
 
         def fake_build(config, force=False, progress_callback=None):
             if progress_callback is not None:
