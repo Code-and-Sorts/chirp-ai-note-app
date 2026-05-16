@@ -79,6 +79,17 @@ class MonitoringConfig(BaseModel):
     max_recording_hours: int = 8
 
 
+class LLMConfig(BaseModel):
+    daemon_socket: Path | None = None
+
+    @field_validator("daemon_socket", mode="before")
+    @classmethod
+    def convert_to_path(cls, value):
+        if value is None or value == "":
+            return None
+        return Path(value) if isinstance(value, str) else value
+
+
 class NotesChatConfig(BaseModel):
     emb_model: str = "nomic-embed-text"
     chunk_size: int = 1000
@@ -100,6 +111,7 @@ class ChirpSettings(BaseModel):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     notes_chat: NotesChatConfig = Field(default_factory=NotesChatConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
 
     @classmethod
     def get_config_path(cls) -> Path:
@@ -153,7 +165,9 @@ class ChirpSettings(BaseModel):
 def _stringify_paths(value):
     if isinstance(value, dict):
         for key, nested in list(value.items()):
-            if isinstance(nested, Path):
+            if nested is None:
+                del value[key]
+            elif isinstance(nested, Path):
                 value[key] = str(nested)
             else:
                 _stringify_paths(nested)

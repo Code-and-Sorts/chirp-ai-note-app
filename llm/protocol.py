@@ -14,6 +14,8 @@ from typing import Any, Final
 
 from llm.exceptions import LLMMalformedResponse
 
+DISTRIBUTION_NAME: Final[str] = "chirp-notes-ai"
+
 MAX_LINE_BYTES: Final[int] = 1_048_576
 
 REQUEST_ID_RE: Final[re.Pattern[str]] = re.compile(r"^r-[0-9a-f]{12}$")

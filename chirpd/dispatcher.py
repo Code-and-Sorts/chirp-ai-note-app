@@ -6,10 +6,11 @@ import asyncio
 import logging
 import time
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, Final
+from typing import Any
 
 from llm import error_codes
 from llm.protocol import (
+    DISTRIBUTION_NAME,
     EVENT_DONE,
     EVENT_ERROR,
     EVENT_READY,
@@ -17,14 +18,12 @@ from llm.protocol import (
     encode_event,
 )
 
-_DISTRIBUTION_NAME: Final[str] = "chirp-notes-ai"
-
 _logger = logging.getLogger("chirpd.dispatcher")
 
 
 def _daemon_version() -> str:
     try:
-        return version(_DISTRIBUTION_NAME)
+        return version(DISTRIBUTION_NAME)
     except PackageNotFoundError:
         return "0.0.0"
 
