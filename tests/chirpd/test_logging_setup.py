@@ -93,9 +93,12 @@ def test_configure_logging_replaces_prior_rotating_handler(
 
 
 def test_logfmt_required_keys() -> None:
+    from chirpd.logging_setup import _REQUIRED_KEYS
+
     line = _format_record(msg="started")
     parts = dict(token.split("=", 1) for token in line.split(" ", 3))
-    assert "ts" in parts
+    for key in _REQUIRED_KEYS:
+        assert key in parts, f"required key {key!r} missing from logfmt line"
     assert parts["level"] == "info"
     assert parts["component"] == "chirpd"
     assert parts["msg"] == "started"
