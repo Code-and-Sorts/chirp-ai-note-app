@@ -42,6 +42,7 @@ packages = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.0.0",
     "freezegun>=1.2.0",
     "ruff>=0.1.0",
@@ -103,6 +104,7 @@ markers = [
     "integration: marks tests as integration tests",
     "real_platform: skip the auto-darwin sys.platform patch in audio_capture tests",
 ]
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
@@ -134,6 +136,7 @@ files = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_ch
 [dependency-groups]
 dev = [
     "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.0.0",
     "freezegun>=1.2.0",
     "ruff>=0.1.0",

@@ -44,6 +44,7 @@
     "codespell",
     "diarization",
     "isort",
+    "logfmt",
     "mypy",
     "nomic",
     "noreverse",

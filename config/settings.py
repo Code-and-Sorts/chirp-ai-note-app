@@ -1,3 +1,4 @@
+import os
 import tomllib
 from pathlib import Path
 
@@ -5,6 +6,13 @@ import tomli_w
 from platformdirs import user_documents_dir
 from pydantic import BaseModel, Field, field_validator
 from rich.console import Console
+
+CHIRP_DAEMON_SOCKET_ENV = "CHIRP_DAEMON_SOCKET"
+
+
+def get_daemon_socket_override() -> Path | None:
+    override = os.environ.get(CHIRP_DAEMON_SOCKET_ENV)
+    return Path(override) if override else None
 
 
 class ConfigurationError(Exception):
