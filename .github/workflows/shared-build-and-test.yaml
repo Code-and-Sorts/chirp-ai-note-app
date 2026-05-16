@@ -153,8 +153,8 @@ jobs:
     - name: 🏗️ Build
       run: uv build
 
-    - name: 🧪 Run tests
-      run: uv run pytest
+    - name: 🧪 Run unit tests
+      run: uv run pytest --cov --cov-report=term
 
     - name: 📤 Upload build artifacts
       if: ${{ inputs.upload-artifacts }}

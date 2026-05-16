@@ -4,10 +4,10 @@ on:
   workflow_call:
     inputs:
       gh-aw-version:
-        description: 'Version tag of github/gh-aw to install (e.g. v0.71.1)'
+        description: 'Version tag of github/gh-aw to install (e.g. v0.74.3)'
         required: false
         type: string
-        default: 'v0.71.3'
+        default: 'v0.74.3'
 
 jobs:
   validate:
@@ -19,15 +19,21 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 🛠️ Install gh-aw CLI
-        uses: github/gh-aw/actions/setup-cli@v0.71.3
+        uses: github/gh-aw/actions/setup-cli@v0.74.3
         with:
           version: ${{ inputs.gh-aw-version }}
 
       - name: 🔍 Validate gh-aw workflows (compile + actionlint + zizmor + poutine)
         run: gh aw validate --strict
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔒 Compile workflows
         run: gh aw compile --strict
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🚦 Verify committed lock files match sources
         run: |

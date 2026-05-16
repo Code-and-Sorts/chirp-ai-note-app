@@ -1,5 +1,6 @@
 import logging
 import math
+import platform
 import sys
 from collections import deque
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ from rich.table import Table
 from rich.text import Text
 from typer.core import TyperGroup
 
+import audio_capture
 from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingError
 from config.settings import ChirpSettings, get_settings
 from utils.file_utils import NoteRecord, list_notes
@@ -1146,4 +1148,34 @@ def devices():
     console.print(
         "System audio is captured via the bundled CaptureAudio.app; no virtual driver required."
     )
+    if platform.system() == "Darwin":
+        try:
+            perms = audio_capture.check_permissions()
+            state = perms.get("screen_recording")
+            if state == "granted":
+                console.print("[green]✅ capture ready[/green]")
+            elif state == "undetermined":
+                console.print("[yellow]— capture will prompt on first record[/yellow]")
+            elif state == "denied":
+                console.print(
+                    "[red]❌ screen recording permission denied[/red]"
+                    " — open System Settings → Privacy & Security → Screen Recording"
+                )
+            else:
+                console.print(
+                    "[red]❌ capture_audio probe returned unexpected state[/red]"
+                    " — rebuild with python -m audio_capture.build"
+                )
+        except FileNotFoundError:
+            console.print(
+                "[red]❌ capture_audio binary missing[/red] — run python -m audio_capture.build"
+            )
+        except RuntimeError as exc:
+            console.print(
+                f"[red]❌ permission probe failed[/red]: {exc} — try rebuilding with python -m audio_capture.build"
+            )
+    else:
+        console.print(
+            f"[dim]— capture status not applicable on {platform.system()}[/dim]"
+        )
     console.print("[dim]Run 'chirp init' for first-run setup.[/dim]")

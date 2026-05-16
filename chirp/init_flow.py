@@ -22,6 +22,7 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -40,6 +41,7 @@ from rich.progress import (
 )
 from rich.text import Text
 
+import audio_capture
 from config.settings import ChirpSettings
 
 
@@ -156,6 +158,55 @@ def _model_installed(tag: str, available: list[str]) -> bool:
     return any(name.startswith(f"{base}:") for name in available)
 
 
+def _screen_recording_permission() -> DependencyStatus:
+    if platform.system() != "Darwin":
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=True,
+            required=False,
+            detail=f"not applicable on {platform.system()}",
+        )
+    try:
+        perms = audio_capture.check_permissions()
+    except FileNotFoundError:
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=False,
+            detail="capture_audio binary not built — run python -m audio_capture.build",
+        )
+    except RuntimeError as exc:
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=False,
+            detail=f"permission probe failed: {exc} — try rebuilding with python -m audio_capture.build",
+        )
+    state = perms.get("screen_recording", "undetermined")
+    if state == "granted":
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=True,
+            detail="granted",
+        )
+    if state == "denied":
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=False,
+            detail="denied — open System Settings → Privacy & Security → Screen Recording",
+        )
+    if state == "undetermined":
+        return DependencyStatus(
+            name="screen recording permission",
+            installed=True,
+            required=False,
+            detail="will prompt on first record",
+        )
+    return DependencyStatus(
+        name="screen recording permission",
+        installed=False,
+        detail=f"unexpected permission state {state!r} — rebuild the helper",
+    )
+
+
 def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
     """Run phase 1 — returns the ordered status list and prints the table."""
     console.print()
@@ -200,6 +251,8 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
                 required=False,
             )
         )
+
+    statuses.append(_screen_recording_permission())
 
     for status in statuses:
         _print_status(console, status)
@@ -282,6 +335,7 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
     console.print(" [dim]installing dependencies via homebrew...[/dim]")
     console.print()
 
+    denied_user_action_required = False
     tasks: list[tuple[str, list[str]]] = []
     for status in statuses:
         if status.installed or not status.required:
@@ -291,6 +345,18 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
             tasks.append(("ollama service", [brew, "services", "start", "ollama"]))
         elif status.name == "ffmpeg":
             tasks.append(("ffmpeg", [brew, "install", "ffmpeg"]))
+        elif status.name == "screen recording permission" and status.detail.startswith(
+            "denied"
+        ):
+            console.print(
+                "[yellow]![/yellow] screen recording permission must be granted manually — "
+                "open System Settings → Privacy & Security → Screen Recording, then re-run."
+            )
+            denied_user_action_required = True
+        elif status.name == "screen recording permission":
+            tasks.append(
+                ("capture_audio", [sys.executable, "-m", "audio_capture.build"])
+            )
 
     for label, args in tasks:
         with console.status(f"[yellow]⠹[/yellow] {label} — installing..."):
@@ -303,6 +369,12 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
                 f"   [dim]{out.strip().splitlines()[-1] if out else ''}[/dim]"
             )
             return False
+
+    if denied_user_action_required:
+        console.print(
+            "[red]init incomplete[/red] — grant screen recording permission and re-run."
+        )
+        return False
 
     return True
 

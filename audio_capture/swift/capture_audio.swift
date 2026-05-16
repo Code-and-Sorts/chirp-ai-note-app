@@ -292,6 +292,14 @@ func runMain() {
 
     writeStderr("capture: awaiting_permission\n")
     flushStderr()
+    // Write the sentinel before the screen-recording prompt fires — once macOS
+    // shows it, future probes can read sentinel-present + preflight-false as
+    // "denied" instead of "undetermined".
+    try? FileManager.default.createDirectory(
+        at: permissionSentinelURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    FileManager.default.createFile(atPath: permissionSentinelURL.path, contents: nil)
     // CGRequestScreenCaptureAccess is the documented way to surface the
     // Screen Recording TCC prompt and register this bundle with the
     // privacy database. Without it, SCShareableContent silently fails on
@@ -356,6 +364,13 @@ private let disclaimSentinelEnv = "CHIRP_CAPTURE_DISCLAIMED"
 private let childKillGraceSeconds: UInt32 = 2
 
 private var disclaimedChildPid: pid_t = 0
+
+// Sentinel marking that macOS has already shown the screen-recording permission
+// dialog to this user. Lets --check-permissions distinguish "denied" from
+// "never asked" — CGPreflightScreenCaptureAccess() returns Bool only.
+let permissionSentinelURL: URL = FileManager.default
+    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("Chirp/.permission-prompted")
 
 private func disclaimEscalateToSigkill(_ sig: Int32) {
     if disclaimedChildPid > 0 {
@@ -453,6 +468,32 @@ private func runDisclaimer() -> Int32 {
         kill(getpid(), termSig)
     }
     return 1
+}
+
+if CommandLine.arguments.contains("--check-permissions") {
+    let screenRecordingState: String
+    if CGPreflightScreenCaptureAccess() {
+        screenRecordingState = "granted"
+    } else if FileManager.default.fileExists(atPath: permissionSentinelURL.path) {
+        screenRecordingState = "denied"
+    } else {
+        screenRecordingState = "undetermined"
+    }
+
+    let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    let microphoneState: String
+    switch micStatus {
+    case .authorized:
+        microphoneState = "granted"
+    case .notDetermined:
+        microphoneState = "undetermined"
+    default:
+        microphoneState = "denied"
+    }
+
+    print("permission: screen_recording=\(screenRecordingState)")
+    print("permission: microphone=\(microphoneState)")
+    exit(0)
 }
 
 if ProcessInfo.processInfo.environment[disclaimSentinelEnv] == nil {
