@@ -25,8 +25,8 @@ dependencies = [
     "prompt-toolkit>=3.0.52",
     "numpy>=1.24.0",
     "silero-vad>=5.1",
-    "mlx-lm==0.31.3",
-    "huggingface_hub>=1.5.0",
+    "mlx-lm==0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "huggingface_hub>=1.5.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [project.scripts]
@@ -85,7 +85,7 @@ indent-style = "space"
 convention = "google"
 
 [tool.ruff.lint.isort]
-known-first-party = ["chirp"]
+known-first-party = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -105,7 +105,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+source = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 omit = [
     "tests/*",
     "*/__pycache__/*",
@@ -129,7 +129,7 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
-files = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+files = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [dependency-groups]
 dev = [

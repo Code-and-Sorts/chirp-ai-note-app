@@ -1,9 +1,9 @@
-def main() -> int:
-    from importlib.metadata import version
+from importlib.metadata import version
 
+
+def main() -> None:
     print(f"chirpd {version('chirp-notes-ai')}")
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
