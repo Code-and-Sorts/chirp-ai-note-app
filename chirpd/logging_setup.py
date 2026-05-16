@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-LOG_DIR: Final[Path] = Path.home() / "Library" / "Logs" / "chirp"
-LOG_FILE: Final[Path] = LOG_DIR / "chirpd.log"
+from chirpd import paths
+
 LOG_MAX_BYTES: Final[int] = 10_485_760
 LOG_BACKUP_COUNT: Final[int] = 1
 
@@ -65,9 +65,9 @@ class LogfmtFormatter(logging.Formatter):
 
 def configure_logging() -> None:
     """Install the rotating file handler with the logfmt formatter at INFO."""
-    LOG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    paths.LOG_DIR.mkdir(parents=True, exist_ok=True, mode=paths.RUNTIME_DIR_MODE)
     handler = logging.handlers.RotatingFileHandler(
-        LOG_FILE,
+        paths.LOG_FILE,
         maxBytes=LOG_MAX_BYTES,
         backupCount=LOG_BACKUP_COUNT,
         encoding="utf-8",
@@ -79,7 +79,7 @@ def configure_logging() -> None:
     for existing in list(root.handlers):
         if (
             isinstance(existing, logging.handlers.RotatingFileHandler)
-            and Path(existing.baseFilename) == LOG_FILE
+            and Path(existing.baseFilename) == paths.LOG_FILE
         ):
             root.removeHandler(existing)
             existing.close()

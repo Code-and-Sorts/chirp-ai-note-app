@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 
 from chirpd.logging_setup import (
-    LOG_FILE,
     LogfmtFormatter,
     _quote,
     configure_logging,
 )
+from chirpd.paths import LOG_FILE
 
 
 def _format_record(**kwargs: object) -> str:
@@ -69,8 +69,8 @@ def test_configure_logging_replaces_prior_rotating_handler(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     log_dir = tmp_path / "logs2"
-    monkeypatch.setattr("chirpd.logging_setup.LOG_DIR", log_dir)
-    monkeypatch.setattr("chirpd.logging_setup.LOG_FILE", log_dir / "chirpd.log")
+    monkeypatch.setattr("chirpd.paths.LOG_DIR", log_dir)
+    monkeypatch.setattr("chirpd.paths.LOG_FILE", log_dir / "chirpd.log")
     configure_logging()
     configure_logging()
     try:
@@ -140,8 +140,8 @@ def test_configure_logging_installs_rotating_handler(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     log_dir = tmp_path / "logs"
-    monkeypatch.setattr("chirpd.logging_setup.LOG_DIR", log_dir)
-    monkeypatch.setattr("chirpd.logging_setup.LOG_FILE", log_dir / "chirpd.log")
+    monkeypatch.setattr("chirpd.paths.LOG_DIR", log_dir)
+    monkeypatch.setattr("chirpd.paths.LOG_FILE", log_dir / "chirpd.log")
 
     configure_logging()
     try:
@@ -172,8 +172,8 @@ def test_configure_logging_creates_log_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     log_dir = tmp_path / "fresh-logs"
-    monkeypatch.setattr("chirpd.logging_setup.LOG_DIR", log_dir)
-    monkeypatch.setattr("chirpd.logging_setup.LOG_FILE", log_dir / "chirpd.log")
+    monkeypatch.setattr("chirpd.paths.LOG_DIR", log_dir)
+    monkeypatch.setattr("chirpd.paths.LOG_FILE", log_dir / "chirpd.log")
     configure_logging()
     try:
         assert log_dir.exists()

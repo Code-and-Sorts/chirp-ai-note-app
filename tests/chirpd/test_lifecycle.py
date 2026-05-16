@@ -16,12 +16,12 @@ from chirpd.lifecycle import acquire_single_instance_lock, release_lock
 def test_ensure_runtime_dirs_creates_both_dirs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from chirpd import lifecycle
+    from chirpd import lifecycle, paths
 
     app_support = tmp_path / "AppSupport" / "chirp"
     log_dir = tmp_path / "Logs" / "chirp"
-    monkeypatch.setattr(lifecycle, "APP_SUPPORT_DIR", app_support)
-    monkeypatch.setattr(lifecycle, "LOG_DIR", log_dir)
+    monkeypatch.setattr(paths, "APP_SUPPORT_DIR", app_support)
+    monkeypatch.setattr(paths, "LOG_DIR", log_dir)
 
     lifecycle.ensure_runtime_dirs()
 

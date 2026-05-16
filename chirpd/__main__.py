@@ -11,14 +11,12 @@ from pathlib import Path
 
 from chirpd.dispatcher import Dispatcher
 from chirpd.lifecycle import (
-    SOCKET_PATH as DEFAULT_SOCKET_PATH,
-)
-from chirpd.lifecycle import (
     acquire_single_instance_lock,
     ensure_runtime_dirs,
     release_lock,
 )
 from chirpd.logging_setup import configure_logging
+from chirpd.paths import SOCKET_PATH as DEFAULT_SOCKET_PATH
 from chirpd.server import serve
 from config.settings import get_daemon_socket_override
 
