@@ -25,9 +25,15 @@ jobs:
 
       - name: 🔍 Validate gh-aw workflows (compile + actionlint + zizmor + poutine)
         run: gh aw validate --strict
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔒 Compile workflows
         run: gh aw compile --strict
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🚦 Verify committed lock files match sources
         run: |
