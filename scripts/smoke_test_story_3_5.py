@@ -7,6 +7,7 @@ FR9 / NFR-O3 budgets without requiring the user to babysit two terminals.
 Run with::
 
     uv run python scripts/smoke_test_story_3_5.py
+    uv run python scripts/smoke_test_story_3_5.py --model mlx-community/Llama-3.2-1B-Instruct-4bit
 
 The script uses CHIRP_MODEL_IDLE_TIMEOUT=10 so the idle-unload assertion
 finishes in ~15 s rather than the 5 min production default. Pre-existing
@@ -15,6 +16,7 @@ finishes in ~15 s rather than the 5 min production default. Pre-existing
 
 from __future__ import annotations
 
+import argparse
 import os
 import platform
 import shutil
@@ -25,7 +27,6 @@ import time
 from pathlib import Path
 
 DEFAULT_MODEL_REPO = "mlx-community/gemma-4-4b-it-4bit"
-DEFAULT_MODEL_ALIAS = "gemma-4-4b"
 IDLE_TIMEOUT_S = 10
 DAEMON_START_TIMEOUT_S = 5.0
 MODEL_LOAD_TIMEOUT_S = 120.0
@@ -55,19 +56,23 @@ def _fail(message: str) -> str:
     return message
 
 
-def _preflight() -> str | None:
+def _alias_for(repo: str) -> str:
+    last = repo.rsplit("/", 1)[-1]
+    return last.lower().replace("_", "-")
+
+
+def _preflight(repo: str) -> str | None:
     if platform.machine() != "arm64":
         return f"requires Apple Silicon (arm64); detected {platform.machine()}"
-    cache_dir = _hf_cache_dir_for(DEFAULT_MODEL_REPO)
+    cache_dir = _hf_cache_dir_for(repo)
     if not cache_dir.exists():
         return (
-            f"model weights not in HF cache at {cache_dir}\n"
-            f"  Run: huggingface-cli download {DEFAULT_MODEL_REPO}"
+            f"model weights not in HF cache at {cache_dir}\n  Run: hf download {repo}"
         )
     return None
 
 
-def _stage_models_toml() -> Path | None:
+def _stage_models_toml(repo: str, alias: str) -> Path | None:
     APP_SUPPORT_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     backup_path: Path | None = None
     if MODELS_TOML_PATH.exists():
@@ -76,10 +81,10 @@ def _stage_models_toml() -> Path | None:
         print(f"  backed up existing models.toml → {backup_path}", flush=True)
     MODELS_TOML_PATH.write_text(
         "schema_version = 1\n"
-        f'default_chat = "{DEFAULT_MODEL_ALIAS}"\n'
+        f'default_chat = "{alias}"\n'
         "\n"
-        f"[models.{DEFAULT_MODEL_ALIAS}]\n"
-        f'hf_repo = "{DEFAULT_MODEL_REPO}"\n'
+        f'[models."{alias}"]\n'
+        f'hf_repo = "{repo}"\n'
         'role = "chat"\n'
     )
     return backup_path
@@ -101,14 +106,26 @@ def _wait_for_socket(timeout_s: float) -> bool:
     return False
 
 
+def _chirpd_binary() -> str:
+    candidate = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "chirpd"
+    if candidate.exists():
+        return str(candidate)
+    found = shutil.which("chirpd")
+    if found:
+        return found
+    raise RuntimeError(
+        "chirpd console script not found; install with `uv pip install -e .`"
+    )
+
+
 def _spawn_daemon() -> subprocess.Popen[bytes]:
     env = os.environ.copy()
     env["CHIRP_MODEL_IDLE_TIMEOUT"] = str(IDLE_TIMEOUT_S)
     return subprocess.Popen(
-        ["uv", "run", "chirpd"],
+        [_chirpd_binary()],
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         start_new_session=True,
     )
 
@@ -126,7 +143,7 @@ def _terminate_daemon(proc: subprocess.Popen[bytes]) -> None:
 
 def _lsof_network_sockets(pid: int) -> list[str]:
     result = subprocess.run(
-        ["lsof", "-iTCP", "-iUDP", "-P", "-n", "-p", str(pid)],
+        ["lsof", "-a", "-iTCP", "-iUDP", "-P", "-n", "-p", str(pid)],
         capture_output=True,
         text=True,
         check=False,
@@ -136,18 +153,28 @@ def _lsof_network_sockets(pid: int) -> list[str]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL_REPO,
+        help=f"HF repo to load (default: {DEFAULT_MODEL_REPO})",
+    )
+    args = parser.parse_args()
+    repo = args.model
+    alias = _alias_for(repo)
+
     failures: list[str] = []
 
     _step("Preflight")
-    err = _preflight()
+    err = _preflight(repo)
     if err is not None:
         _fail(err)
         return 1
     _ok(f"Apple Silicon ({platform.machine()})")
-    _ok(f"model in HF cache: {DEFAULT_MODEL_REPO}")
+    _ok(f"model in HF cache: {repo}")
 
     _step("Stage models.toml")
-    backup_path = _stage_models_toml()
+    backup_path = _stage_models_toml(repo, alias)
     _ok(f"wrote registry → {MODELS_TOML_PATH}")
 
     _step(f"Spawn chirpd (CHIRP_MODEL_IDLE_TIMEOUT={IDLE_TIMEOUT_S})")
@@ -157,6 +184,14 @@ def main() -> int:
             _fail(
                 f"socket {SOCKET_PATH} did not appear within {DAEMON_START_TIMEOUT_S}s"
             )
+            try:
+                stdout, stderr = proc.communicate(timeout=2)
+                if stdout:
+                    print(f"  daemon stdout:\n    {stdout.decode(errors='replace')}")
+                if stderr:
+                    print(f"  daemon stderr:\n    {stderr.decode(errors='replace')}")
+            except subprocess.TimeoutExpired:
+                proc.kill()
             return _restore_or(1, proc, backup_path)
         _ok(f"daemon pid {proc.pid} listening on socket")
 
@@ -167,7 +202,7 @@ def main() -> int:
         _step("model.list returns the registered alias")
         models = client.model_list_sync()
         aliases = [m["alias"] for m in models]
-        if DEFAULT_MODEL_ALIAS not in aliases:
+        if alias not in aliases:
             failures.append(
                 _fail(f"registered alias missing from model_list: {aliases}")
             )
@@ -176,14 +211,14 @@ def main() -> int:
 
         _step("model.load against the real MLX backend")
         load_started = time.monotonic()
-        client.model_load_sync(DEFAULT_MODEL_ALIAS)
+        client.model_load_sync(alias)
         load_elapsed = time.monotonic() - load_started
         _ok(f"model_load_sync returned in {load_elapsed:.2f}s")
 
         _step("model.status shows the model loaded with non-zero RSS")
         status = client.model_status_sync()
         loaded_aliases = [m["alias"] for m in status.get("models", [])]
-        if DEFAULT_MODEL_ALIAS not in loaded_aliases:
+        if alias not in loaded_aliases:
             failures.append(_fail(f"model not in status.models: {loaded_aliases}"))
         else:
             _ok(f"models={loaded_aliases}")
@@ -219,7 +254,7 @@ def main() -> int:
         time.sleep(wait_total)
         post_status = client.model_status_sync()
         still_loaded = [m["alias"] for m in post_status.get("models", [])]
-        if DEFAULT_MODEL_ALIAS in still_loaded:
+        if alias in still_loaded:
             failures.append(
                 _fail(f"model still loaded after idle window: {still_loaded}")
             )
