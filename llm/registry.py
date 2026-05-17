@@ -97,10 +97,12 @@ def resolve_alias(
                 f"default {role} alias {default_alias!r} is not present in registry",
                 details={"role": role, "alias": default_alias},
             )
+        _require_matching_role(default_alias, entry, role)
         return entry
 
     entry = registry.models.get(identifier)
     if entry is not None:
+        _require_matching_role(identifier, entry, role)
         return entry
 
     if "/" in identifier:
@@ -109,4 +111,19 @@ def resolve_alias(
     raise LLMModelNotFound(
         f"unknown model alias {identifier!r}",
         details={"identifier": identifier, "role": role},
+    )
+
+
+def _require_matching_role(
+    alias: str, entry: RegistryEntry, requested_role: ModelRole
+) -> None:
+    if entry.role == requested_role:
+        return
+    raise LLMModelNotFound(
+        f"alias {alias!r} is registered as {entry.role!r}, not {requested_role!r}",
+        details={
+            "alias": alias,
+            "registered_role": entry.role,
+            "requested_role": requested_role,
+        },
     )

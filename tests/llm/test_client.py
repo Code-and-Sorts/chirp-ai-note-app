@@ -154,6 +154,7 @@ async def test_lazy_spawn_when_socket_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spawn_calls: list[list[str]] = []
+    spawn_envs: list[dict[str, str]] = []
 
     class _FakeProc:
         def poll(self) -> int | None:
@@ -176,6 +177,7 @@ async def test_lazy_spawn_when_socket_missing(
 
     def _fake_popen(args: list[str], **kwargs: Any) -> _FakeProc:
         spawn_calls.append(args)
+        spawn_envs.append(kwargs.get("env") or {})
         return _FakeProc()
 
     monkeypatch.setattr(subprocess, "Popen", _fake_popen)
@@ -185,6 +187,9 @@ async def test_lazy_spawn_when_socket_missing(
     await delayed_task
     assert payload["status"] == "ok"
     assert spawn_calls and spawn_calls[0][0] == "chirpd"
+    # The child chirpd must bind the socket the client is polling — otherwise
+    # a custom socket_path would deadlock against the default-bound daemon.
+    assert spawn_envs[0].get("CHIRP_DAEMON_SOCKET") == str(temp_socket_path)
 
 
 async def test_lazy_spawn_timeout_raises_daemon_spawn_failed(

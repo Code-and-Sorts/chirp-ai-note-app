@@ -10,13 +10,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 from collections.abc import AsyncIterator, Coroutine, Iterator
 from pathlib import Path
 from typing import Any, Final, Literal, TypeVar
 
 from chirpd.paths import SOCKET_PATH
-from config.settings import get_daemon_socket_override, get_settings
+from config.settings import (
+    CHIRP_DAEMON_SOCKET_ENV,
+    get_daemon_socket_override,
+    get_settings,
+)
 from llm.exceptions import (
     CODE_TO_EXCEPTION,
     LLMConnectionLost,
@@ -421,9 +426,16 @@ class LLMClient:
             ) from err
 
     async def _spawn_daemon(self) -> None:
+        # Force the child to bind the same socket the client is polling. Without
+        # this, a client constructed with a non-default ``socket_path`` would
+        # spawn a chirpd that binds the default socket, then time out waiting
+        # for its own custom path to appear.
+        env = os.environ.copy()
+        env[CHIRP_DAEMON_SOCKET_ENV] = str(self.socket_path)
         try:
             proc = subprocess.Popen(
                 ["chirpd"],
+                env=env,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

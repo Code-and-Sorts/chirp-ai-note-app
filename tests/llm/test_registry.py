@@ -115,3 +115,32 @@ def test_resolve_alias_unknown_raises() -> None:
     registry = Registry(schema_version=1, models={})
     with pytest.raises(LLMModelNotFound):
         resolve_alias(registry, "bogus", "chat")
+
+
+def test_resolve_alias_by_name_rejects_role_mismatch() -> None:
+    registry = Registry(
+        schema_version=1,
+        models={
+            "nomic": RegistryEntry(hf_repo="mlx-community/nomic-embed", role="embed"),
+        },
+    )
+    with pytest.raises(LLMModelNotFound) as exc:
+        resolve_alias(registry, "nomic", "chat")
+    assert exc.value.details["registered_role"] == "embed"
+    assert exc.value.details["requested_role"] == "chat"
+
+
+def test_resolve_alias_default_rejects_role_mismatch() -> None:
+    registry = Registry(
+        schema_version=1,
+        default_chat="mislabeled",
+        models={
+            "mislabeled": RegistryEntry(
+                hf_repo="mlx-community/embed-as-chat", role="embed"
+            ),
+        },
+    )
+    with pytest.raises(LLMModelNotFound) as exc:
+        resolve_alias(registry, "default", "chat")
+    assert exc.value.details["registered_role"] == "embed"
+    assert exc.value.details["requested_role"] == "chat"
