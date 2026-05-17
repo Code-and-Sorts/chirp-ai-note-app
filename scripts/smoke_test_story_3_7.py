@@ -407,6 +407,25 @@ def main() -> int:
         default=15,
         help="Seconds to set CHIRP_MODEL_IDLE_TIMEOUT to (only used with --check-idle-unload).",
     )
+    parser.add_argument(
+        "--warm-budget-s",
+        type=float,
+        default=None,
+        help=(
+            "Override the warm-path first-token budget (default: NFR-P1 = 0.5s). "
+            "Larger 4B-class chat models on M-series may need a relaxation; "
+            "record the override in the PR description as a known performance gap."
+        ),
+    )
+    parser.add_argument(
+        "--cold-budget-s",
+        type=float,
+        default=None,
+        help=(
+            "Override the cold-path first-token budget (default: NFR-P2 = 5s on "
+            "M2-class / 8s on M1)."
+        ),
+    )
     args = parser.parse_args()
 
     repo = args.model
@@ -476,9 +495,28 @@ def main() -> int:
             spawn_ms = (time.monotonic() - spawn_started) * 1000
             _ok(f"chirpd pid {daemon_proc.pid} bound socket in {spawn_ms:.0f}ms")
 
-        budget_s, chip = _budget_for_first_token()
+        default_cold_budget_s, chip = _budget_for_first_token()
+        cold_budget_s = (
+            args.cold_budget_s
+            if args.cold_budget_s is not None
+            else default_cold_budget_s
+        )
+        cold_budget_label = (
+            "model override" if args.cold_budget_s is not None else f"NFR-P2 on {chip}"
+        )
+        warm_budget_s = (
+            args.warm_budget_s
+            if args.warm_budget_s is not None
+            else WARM_FIRST_TOKEN_BUDGET_S
+        )
+        warm_budget_label = (
+            "model override" if args.warm_budget_s is not None else "NFR-P1"
+        )
 
-        _step(f"Cold-path: chirp ask (first-token budget ≤ {budget_s:.1f}s on {chip})")
+        _step(
+            f"Cold-path: chirp ask (first-token budget ≤ {cold_budget_s:.1f}s, "
+            f"{cold_budget_label})"
+        )
         cold = _run_ask(
             args.question,
             mock_retrieval=args.mock_retrieval,
@@ -499,10 +537,10 @@ def main() -> int:
         else:
             line = (
                 f"first-token latency {cold.first_token_seconds * 1000:.0f}ms "
-                f"(budget {budget_s * 1000:.0f}ms)"
+                f"(budget {cold_budget_s * 1000:.0f}ms, {cold_budget_label})"
             )
-            if cold.first_token_seconds > budget_s:
-                failures.append(_fail(line + " — OVER BUDGET (NFR-P2)"))
+            if cold.first_token_seconds > cold_budget_s:
+                failures.append(_fail(line + " — OVER BUDGET"))
             else:
                 _ok(line)
         if cold.streamed_text:
@@ -518,7 +556,8 @@ def main() -> int:
             _ok(f"chirpd pid {pid}")
 
         _step(
-            f"Warm-path: second chirp ask (first-token budget ≤ {WARM_FIRST_TOKEN_BUDGET_S * 1000:.0f}ms / NFR-P1)"
+            f"Warm-path: second chirp ask (first-token budget ≤ "
+            f"{warm_budget_s * 1000:.0f}ms, {warm_budget_label})"
         )
         warm = _run_ask(
             args.question,
@@ -540,10 +579,10 @@ def main() -> int:
         else:
             line = (
                 f"first-token latency {warm.first_token_seconds * 1000:.0f}ms "
-                f"(budget {WARM_FIRST_TOKEN_BUDGET_S * 1000:.0f}ms)"
+                f"(budget {warm_budget_s * 1000:.0f}ms, {warm_budget_label})"
             )
-            if warm.first_token_seconds > WARM_FIRST_TOKEN_BUDGET_S:
-                failures.append(_fail(line + " — OVER BUDGET (NFR-P1)"))
+            if warm.first_token_seconds > warm_budget_s:
+                failures.append(_fail(line + " — OVER BUDGET"))
             else:
                 _ok(line)
 

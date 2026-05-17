@@ -120,9 +120,7 @@ class MLXBackend:
 
         tokenizer = handle["tokenizer"]
         model = handle["model"]
-        prompt = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        prompt = _apply_chat_template_no_thinking(tokenizer, messages)
         usage_out["prompt_tokens"] = len(tokenizer.encode(prompt))
 
         try:
@@ -213,6 +211,28 @@ def _extract_token_text(piece: Any) -> str | None:
     if isinstance(text, str):
         return text
     return None
+
+
+def _apply_chat_template_no_thinking(  # pragma: no cover — opt-in @slow path
+    tokenizer: Any, messages: list[dict[str, Any]]
+) -> str:
+    # Reasoning-model templates (Qwen3, DeepSeek-R1, …) emit <think>…</think>
+    # blocks ahead of the answer unless the template variable is unset. chirp's
+    # grounded-answer flow never wants that on stdout, so we always ask the
+    # template for non-thinking output and silently fall back if the tokenizer
+    # rejects the kwarg.
+    try:
+        rendered = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+    except TypeError:
+        rendered = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    return str(rendered)
 
 
 def _vector_to_floats(vector: Any) -> list[float]:
