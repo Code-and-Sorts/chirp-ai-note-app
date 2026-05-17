@@ -41,10 +41,10 @@ def _seed_note(
 @pytest.fixture
 def seeded_settings(tmp_path: Path) -> SimpleNamespace:
     settings = _build_settings(tmp_path)
-    now = datetime(2026, 4, 16, 12, 0, 0)
+    now = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
     _seed_note(
         settings,
-        slug="call-w-jamie-2026-04-16",
+        slug="call-w-jamie-recent",
         created_at=now,
         title="call w/ jamie",
         transcript=(
@@ -59,7 +59,7 @@ def seeded_settings(tmp_path: Path) -> SimpleNamespace:
     )
     _seed_note(
         settings,
-        slug="walk-thought-pricing-2026-04-12",
+        slug="walk-thought-pricing-recent",
         created_at=now - timedelta(days=4),
         title="walk thought: pricing",
         transcript="thinking about tier structure and pricing psychology\n",
@@ -67,7 +67,7 @@ def seeded_settings(tmp_path: Path) -> SimpleNamespace:
     )
     _seed_note(
         settings,
-        slug="old-note-2025-01-01",
+        slug="old-note-ancient",
         created_at=now - timedelta(days=120),
         title="old note",
         transcript="we discussed the pricing roadmap last quarter\n",

@@ -1,10 +1,42 @@
+import os
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 import tomli_w
 from platformdirs import user_documents_dir
 from pydantic import BaseModel, Field, field_validator
 from rich.console import Console
+
+CHIRP_DAEMON_SOCKET_ENV = "CHIRP_DAEMON_SOCKET"
+CHIRP_MODEL_IDLE_TIMEOUT_ENV = "CHIRP_MODEL_IDLE_TIMEOUT"
+
+DEFAULT_IDLE_TIMEOUT_SECONDS = 300.0
+
+
+def get_daemon_socket_override() -> Path | None:
+    override = os.environ.get(CHIRP_DAEMON_SOCKET_ENV)
+    return Path(override) if override else None
+
+
+def get_idle_timeout_override() -> float | None:
+    override = os.environ.get(CHIRP_MODEL_IDLE_TIMEOUT_ENV)
+    if not override:
+        return None
+    try:
+        return float(override)
+    except ValueError:
+        return None
+
+
+def resolve_idle_timeout_seconds() -> float:
+    override = get_idle_timeout_override()
+    if override is not None:
+        return override
+    try:
+        return get_settings().llm.idle_timeout_seconds
+    except Exception:  # noqa: BLE001 — config failures must not block daemon start
+        return DEFAULT_IDLE_TIMEOUT_SECONDS
 
 
 class ConfigurationError(Exception):
@@ -71,6 +103,19 @@ class MonitoringConfig(BaseModel):
     max_recording_hours: int = 8
 
 
+class LLMSettings(BaseModel):
+    backend: Literal["chirpd"] = "chirpd"
+    daemon_socket: Path | None = None
+    idle_timeout_seconds: float = DEFAULT_IDLE_TIMEOUT_SECONDS
+
+    @field_validator("daemon_socket", mode="before")
+    @classmethod
+    def convert_to_path(cls, value):
+        if value is None or value == "":
+            return None
+        return Path(value) if isinstance(value, str) else value
+
+
 class NotesChatConfig(BaseModel):
     emb_model: str = "nomic-embed-text"
     chunk_size: int = 1000
@@ -92,6 +137,7 @@ class ChirpSettings(BaseModel):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     notes_chat: NotesChatConfig = Field(default_factory=NotesChatConfig)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
 
     @classmethod
     def get_config_path(cls) -> Path:
@@ -145,7 +191,9 @@ class ChirpSettings(BaseModel):
 def _stringify_paths(value):
     if isinstance(value, dict):
         for key, nested in list(value.items()):
-            if isinstance(nested, Path):
+            if nested is None:
+                del value[key]
+            elif isinstance(nested, Path):
                 value[key] = str(nested)
             else:
                 _stringify_paths(nested)

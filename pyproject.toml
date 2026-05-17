@@ -25,13 +25,17 @@ dependencies = [
     "prompt-toolkit>=3.0.52",
     "numpy>=1.24.0",
     "silero-vad>=5.1",
+    "mlx-lm==0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "huggingface_hub>=1.5.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "psutil>=5.9",
 ]
 
 [project.scripts]
 chirp = "chirp.cli:app"
+chirpd = "chirpd.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+packages = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [tool.hatch.build.hooks.custom]
 # hatch_build.py conditionally includes CaptureAudio.app when present
@@ -39,6 +43,7 @@ packages = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.0.0",
     "freezegun>=1.2.0",
     "ruff>=0.1.0",
@@ -82,7 +87,7 @@ indent-style = "space"
 convention = "google"
 
 [tool.ruff.lint.isort]
-known-first-party = ["chirp"]
+known-first-party = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -100,9 +105,10 @@ markers = [
     "integration: marks tests as integration tests",
     "real_platform: skip the auto-darwin sys.platform patch in audio_capture tests",
 ]
+asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+source = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 omit = [
     "tests/*",
     "*/__pycache__/*",
@@ -126,11 +132,12 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
-files = ["audio_capture", "chirp", "config", "notes", "notes_chat", "recorder", "transcriber", "utils"]
+files = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [dependency-groups]
 dev = [
     "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.0.0",
     "freezegun>=1.2.0",
     "ruff>=0.1.0",

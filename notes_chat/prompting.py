@@ -6,6 +6,7 @@ from typing import Any
 import requests
 
 from config.settings import ChirpSettings
+from llm.client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -64,65 +65,43 @@ Examples:
 """
 
 
+def build_chat_messages(question: str, context: str) -> list[dict[str, str]]:
+    """Assemble the chat-message list for the ask flow's grounded-answer prompt."""
+    prompt = SYSTEM_PROMPT.format(context=context, question=question)
+    return [{"role": "user", "content": prompt}]
+
+
 def generate_answer(
-    config: ChirpSettings, question: str, context: str
+    config: ChirpSettings,
+    question: str,
+    context: str,
+    client: LLMClient | None = None,
 ) -> dict[str, Any]:
-    """Generate an answer using Ollama LLM with deterministic settings."""
-    try:
-        if not context.strip():
-            return {"success": False, "error": "Empty context provided"}
+    """Generate an answer via the chirpd daemon. LLMError propagates."""
+    if not context.strip():
+        return {"success": False, "error": "Empty context provided"}
 
-        prompt = SYSTEM_PROMPT.format(context=context, question=question)
+    messages = build_chat_messages(question, context)
+    llm = client or LLMClient()
+    answer = llm.chat_sync(messages, model="default").strip()
+    if not answer:
+        return {"success": False, "error": "Empty response from LLM"}
+    return {"success": True, "answer": answer}
 
-        response = requests.post(
-            f"{config.models.ollama_url}/api/generate",
-            json={
-                "model": config.models.llm,
-                "prompt": prompt,
-                "temperature": 0,
-                "top_p": 1,
-                "stream": False,
-            },
-            timeout=60,
-        )
 
-        if response.status_code != 200:
-            error_msg = f"Ollama API error: {response.status_code}"
-            if response.status_code == 404:
-                error_msg += f". Model '{config.models.llm}' not found. Try: ollama pull {config.models.llm}"
-            elif response.status_code == 500:
-                error_msg += (
-                    ". Ollama server error. Is ollama running? Try: ollama serve"
-                )
+def stream_answer_tokens(
+    config: ChirpSettings,
+    question: str,
+    context: str,
+    client: LLMClient | None = None,
+) -> Generator[str, None, None]:
+    """Stream the answer token-by-token via the chirpd daemon. LLMError propagates."""
+    if not context.strip():
+        return
 
-            return {"success": False, "error": error_msg}
-
-        result = response.json()
-        answer = result.get("response", "").strip()
-
-        if not answer:
-            return {"success": False, "error": "Empty response from LLM"}
-
-        return {"success": True, "answer": answer}
-
-    except requests.exceptions.ConnectionError:
-        return {
-            "success": False,
-            "error": "Cannot connect to Ollama. Is it running? Try: ollama serve",
-        }
-    except requests.exceptions.Timeout:
-        return {
-            "success": False,
-            "error": "Ollama request timed out. The model might be too large or the query too complex.",
-        }
-    except ConnectionError:
-        return {
-            "success": False,
-            "error": "Cannot connect to Ollama. Is it running? Try: ollama serve",
-        }
-    except Exception as e:  # noqa: BLE001 - fallback after specific request handlers
-        logger.debug("Failed to generate answer: %s", e)
-        return {"success": False, "error": f"Failed to generate answer: {e}"}
+    messages = build_chat_messages(question, context)
+    llm = client or LLMClient()
+    yield from llm.chat_stream_sync(messages, model="default")
 
 
 def generate_conversational_response(
