@@ -49,12 +49,13 @@ class LogfmtFormatter(logging.Formatter):
             + f"{timestamp.microsecond // 1000:03d}Z"
         )
 
-        parts: list[str] = [
-            f"ts={ts}",
-            f"level={record.levelname.lower()}",
-            f"component={_quote(record.name)}",
-            f"msg={_quote(record.getMessage())}",
-        ]
+        required_values: dict[str, str] = {
+            "ts": ts,
+            "level": record.levelname.lower(),
+            "component": _quote(record.name),
+            "msg": _quote(record.getMessage()),
+        }
+        parts: list[str] = [f"{key}={required_values[key]}" for key in _REQUIRED_KEYS]
         for key in _OPTIONAL_KEYS:
             if hasattr(record, key):
                 parts.append(f"{key}={_quote(getattr(record, key))}")
