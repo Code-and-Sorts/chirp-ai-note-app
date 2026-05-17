@@ -10,11 +10,21 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Final
 
 from llm.exceptions import LLMMalformedResponse
 
 DISTRIBUTION_NAME: Final[str] = "chirp-notes-ai"
+
+
+def package_version() -> str:
+    """Return the installed chirp distribution version, falling back to 0.0.0."""
+    try:
+        return version(DISTRIBUTION_NAME)
+    except PackageNotFoundError:
+        return "0.0.0"
+
 
 MAX_LINE_BYTES: Final[int] = 1_048_576
 

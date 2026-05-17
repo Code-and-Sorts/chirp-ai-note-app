@@ -7,7 +7,6 @@ import json
 
 import pytest
 
-from chirpd import dispatcher as dispatcher_module
 from chirpd.dispatcher import Dispatcher
 from llm import error_codes
 from llm.protocol import (
@@ -96,8 +95,10 @@ def test_daemon_version_falls_back_when_package_missing(
 ) -> None:
     from importlib.metadata import PackageNotFoundError
 
+    from llm import protocol
+
     def _missing(_: str) -> str:
         raise PackageNotFoundError("chirp-notes-ai")
 
-    monkeypatch.setattr(dispatcher_module, "version", _missing)
-    assert dispatcher_module._daemon_version() == "0.0.0"
+    monkeypatch.setattr(protocol, "version", _missing)
+    assert protocol.package_version() == "0.0.0"

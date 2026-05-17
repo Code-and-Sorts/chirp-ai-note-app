@@ -12,9 +12,8 @@ import asyncio
 import logging
 import subprocess
 from collections.abc import AsyncIterator, Coroutine
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Final, TypeVar
+from typing import Any, Final, Literal, TypeVar
 
 from chirpd.paths import SOCKET_PATH
 from config.settings import get_daemon_socket_override, get_settings
@@ -28,18 +27,25 @@ from llm.exceptions import (
     LLMVersionMismatch,
 )
 from llm.protocol import (
-    DISTRIBUTION_NAME,
     EVENT_DONE,
     EVENT_ERROR,
     EVENT_READY,
+    EVENT_STATUS,
     EVENT_VERSION_MISMATCH,
     MAX_LINE_BYTES,
     OP_HEALTH,
     OP_HELLO,
+    OP_MODEL_LIST,
+    OP_MODEL_LOAD,
+    OP_MODEL_STATUS,
+    OP_MODEL_UNLOAD,
     decode_line,
     encode_request,
     new_request_id,
+    package_version,
 )
+
+ModelRole = Literal["chat", "embed"]
 
 DEFAULT_SOCKET_PATH: Final[Path] = SOCKET_PATH
 DEFAULT_SPAWN_TIMEOUT_S: Final[float] = 3.0
@@ -63,13 +69,6 @@ class _HandshakeVersionMismatch(Exception):
     def __init__(self, daemon_version: Any) -> None:
         super().__init__("daemon version mismatch on handshake")
         self.daemon_version = daemon_version
-
-
-def _client_version() -> str:
-    try:
-        return version(DISTRIBUTION_NAME)
-    except PackageNotFoundError:  # pragma: no cover — package always installed in tests
-        return "0.0.0"
 
 
 def resolve_socket_path() -> Path:
@@ -98,7 +97,7 @@ class LLMClient:
         self.socket_path: Path = socket_path or resolve_socket_path()
         self.spawn_timeout_s = spawn_timeout_s
         self.retry_on_version_mismatch = retry_on_version_mismatch
-        self._client_version = _client_version()
+        self._client_version = package_version()
 
     async def health(self) -> dict[str, Any]:
         envelope = {"id": new_request_id(), "op": OP_HEALTH}
@@ -116,16 +115,86 @@ class LLMClient:
         return _run_sync(self.health())
 
     async def model_list(self) -> list[dict[str, Any]]:
-        raise NotImplementedError("model_list lands in story 3.5")
+        envelope = {"id": new_request_id(), "op": OP_MODEL_LIST}
+        status_payload: dict[str, Any] | None = None
+        async for event in self._request(envelope):
+            if event.get("event") == EVENT_STATUS:
+                status_payload = event
+        if status_payload is None:
+            raise LLMMalformedResponse(
+                "model.list completed without emitting a status event",
+            )
+        models = status_payload.get("models")
+        if not isinstance(models, list):
+            raise LLMMalformedResponse(
+                "model.list status event missing 'models' list",
+                details={"status": status_payload},
+            )
+        return models
 
-    async def model_load(self, alias: str) -> dict[str, Any]:
-        raise NotImplementedError("model_load lands in story 3.5")
+    def model_list_sync(self) -> list[dict[str, Any]]:
+        return _run_sync(self.model_list())
+
+    async def model_load(
+        self,
+        model: str,
+        role: ModelRole = "chat",
+    ) -> dict[str, Any]:
+        envelope = {
+            "id": new_request_id(),
+            "op": OP_MODEL_LOAD,
+            "model": model,
+            "role": role,
+        }
+        ready_payload: dict[str, Any] | None = None
+        async for event in self._request(envelope):
+            if event.get("event") == EVENT_READY:
+                ready_payload = event
+        if ready_payload is None:
+            raise LLMMalformedResponse(
+                "model.load completed without emitting a ready event",
+            )
+        return ready_payload
+
+    def model_load_sync(
+        self,
+        model: str,
+        role: ModelRole = "chat",
+    ) -> dict[str, Any]:
+        return _run_sync(self.model_load(model, role))
 
     async def model_unload(self, alias: str) -> dict[str, Any]:
-        raise NotImplementedError("model_unload lands in story 3.5")
+        envelope = {
+            "id": new_request_id(),
+            "op": OP_MODEL_UNLOAD,
+            "model": alias,
+        }
+        last_event: dict[str, Any] | None = None
+        async for event in self._request(envelope):
+            last_event = event
+        if last_event is None or last_event.get("event") != EVENT_DONE:
+            raise LLMMalformedResponse(
+                "model.unload completed without emitting a done event",
+            )
+        return last_event
 
-    async def model_status(self, alias: str) -> dict[str, Any]:
-        raise NotImplementedError("model_status lands in story 3.5")
+    def model_unload_sync(self, alias: str) -> dict[str, Any]:
+        return _run_sync(self.model_unload(alias))
+
+    async def model_status(self) -> dict[str, Any]:
+        envelope = {"id": new_request_id(), "op": OP_MODEL_STATUS}
+        status_payload: dict[str, Any] | None = None
+        async for event in self._request(envelope):
+            if event.get("event") == EVENT_STATUS:
+                status_payload = event
+        if status_payload is None:
+            raise LLMMalformedResponse(
+                "model.status completed without emitting a status event",
+            )
+        return status_payload
+
+    def model_status_sync(self) -> dict[str, Any]:
+        return _run_sync(self.model_status())
 
     async def chat(self, *args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
         raise NotImplementedError("chat lands in story 3.6")

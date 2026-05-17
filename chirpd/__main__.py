@@ -9,6 +9,7 @@ import signal
 import sys
 from pathlib import Path
 
+from chirpd.backend import MLXBackend
 from chirpd.dispatcher import Dispatcher
 from chirpd.lifecycle import (
     acquire_single_instance_lock,
@@ -18,7 +19,12 @@ from chirpd.lifecycle import (
 from chirpd.logging_setup import configure_logging
 from chirpd.paths import SOCKET_PATH as DEFAULT_SOCKET_PATH
 from chirpd.server import serve
-from config.settings import get_daemon_socket_override
+from chirpd.state import DaemonState
+from config.settings import (
+    get_daemon_socket_override,
+    resolve_idle_timeout_seconds,
+)
+from llm.registry import read_registry
 
 _REQUIRED_MACHINE = "arm64"
 
@@ -44,7 +50,14 @@ def main() -> int:
         return 0
 
     socket_path = _resolve_socket_path()
-    dispatcher = Dispatcher()
+    backend = MLXBackend()
+    registry = read_registry()
+    state = DaemonState(
+        backend=backend,
+        registry=registry,
+        idle_timeout_s=resolve_idle_timeout_seconds(),
+    )
+    dispatcher = Dispatcher(state=state)
     logger = logging.getLogger("chirpd")
     logger.info("chirpd starting", extra={"op": "startup"})
 

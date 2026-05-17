@@ -1,6 +1,7 @@
 import os
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 import tomli_w
 from platformdirs import user_documents_dir
@@ -8,11 +9,37 @@ from pydantic import BaseModel, Field, field_validator
 from rich.console import Console
 
 CHIRP_DAEMON_SOCKET_ENV = "CHIRP_DAEMON_SOCKET"
+CHIRP_MODEL_IDLE_TIMEOUT_ENV = "CHIRP_MODEL_IDLE_TIMEOUT"
+
+DEFAULT_DAEMON_SOCKET = (
+    Path.home() / "Library" / "Application Support" / "chirp" / "chirpd.sock"
+)
+DEFAULT_IDLE_TIMEOUT_SECONDS = 300.0
 
 
 def get_daemon_socket_override() -> Path | None:
     override = os.environ.get(CHIRP_DAEMON_SOCKET_ENV)
     return Path(override) if override else None
+
+
+def get_idle_timeout_override() -> float | None:
+    override = os.environ.get(CHIRP_MODEL_IDLE_TIMEOUT_ENV)
+    if not override:
+        return None
+    try:
+        return float(override)
+    except ValueError:
+        return None
+
+
+def resolve_idle_timeout_seconds() -> float:
+    override = get_idle_timeout_override()
+    if override is not None:
+        return override
+    try:
+        return get_settings().llm.idle_timeout_seconds
+    except Exception:  # noqa: BLE001 — config failures must not block daemon start
+        return DEFAULT_IDLE_TIMEOUT_SECONDS
 
 
 class ConfigurationError(Exception):
@@ -79,8 +106,10 @@ class MonitoringConfig(BaseModel):
     max_recording_hours: int = 8
 
 
-class LLMConfig(BaseModel):
+class LLMSettings(BaseModel):
+    backend: Literal["chirpd"] = "chirpd"
     daemon_socket: Path | None = None
+    idle_timeout_seconds: float = DEFAULT_IDLE_TIMEOUT_SECONDS
 
     @field_validator("daemon_socket", mode="before")
     @classmethod
@@ -111,7 +140,7 @@ class ChirpSettings(BaseModel):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     notes_chat: NotesChatConfig = Field(default_factory=NotesChatConfig)
-    llm: LLMConfig = Field(default_factory=LLMConfig)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
 
     @classmethod
     def get_config_path(cls) -> Path:

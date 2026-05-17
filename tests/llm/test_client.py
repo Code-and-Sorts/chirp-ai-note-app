@@ -46,6 +46,7 @@ from llm.protocol import (
     EVENT_READY,
     EVENT_VERSION_MISMATCH,
     OP_HELLO,
+    package_version,
 )
 from tests.llm.conftest import (
     FakeDaemonFactory,
@@ -55,7 +56,7 @@ from tests.llm.conftest import (
     write_event,
 )
 
-CLIENT_VERSION_MATCH = client_module._client_version()
+CLIENT_VERSION_MATCH = package_version()
 VERSION_MISMATCH_BUDGET_S = VERSION_MISMATCH_RESPAWN_WAIT_S + DEFAULT_SPAWN_TIMEOUT_S
 
 
@@ -505,10 +506,6 @@ def test_unimplemented_methods_raise() -> None:
             await coro
 
     methods: list[Callable[[], Any]] = [
-        lambda: llm_client.model_list(),
-        lambda: llm_client.model_load("a"),
-        lambda: llm_client.model_unload("a"),
-        lambda: llm_client.model_status("a"),
         lambda: llm_client.chat(),
         lambda: llm_client.embed(),
         lambda: llm_client.cancel("r-aaaaaaaaaaaa"),
@@ -870,10 +867,138 @@ async def test_cancellation_during_hello_closes_writer(
         await llm_client.health()
 
 
-def test_llm_config_daemon_socket_roundtrip_none(tmp_path: Path) -> None:
-    from config.settings import ChirpSettings, LLMConfig
+async def test_model_list_against_in_process_daemon(
+    temp_socket_path: Path,
+) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.registry import Registry, RegistryEntry
 
-    settings = ChirpSettings(llm=LLMConfig(daemon_socket=None))
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma",
+        models={
+            "gemma": RegistryEntry(
+                hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+            ),
+            "nomic": RegistryEntry(hf_repo="mlx-community/nomic-embed", role="embed"),
+        },
+    )
+    state = DaemonState(backend=FakeBackend(), registry=registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not temp_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+
+    try:
+        llm_client = LLMClient(socket_path=temp_socket_path)
+        models = await llm_client.model_list()
+        aliases = {m["alias"] for m in models}
+        assert {"gemma", "nomic"}.issubset(aliases)
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+
+
+async def test_model_load_unload_round_trip(temp_socket_path: Path) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.registry import Registry, RegistryEntry
+
+    registry = Registry(
+        schema_version=1,
+        models={
+            "gemma": RegistryEntry(
+                hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+            ),
+        },
+    )
+    state = DaemonState(backend=FakeBackend(), registry=registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not temp_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+
+    try:
+        load_client = LLMClient(socket_path=temp_socket_path)
+        ready = await load_client.model_load("gemma", "chat")
+        assert ready["model"] == "gemma"
+        assert state.get("gemma") is not None
+
+        unload_client = LLMClient(socket_path=temp_socket_path)
+        await unload_client.model_unload("gemma")
+        assert state.get("gemma") is None
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+
+
+async def test_model_status_returns_rich_dict(temp_socket_path: Path) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.registry import Registry, RegistryEntry
+
+    registry = Registry(
+        schema_version=1,
+        models={
+            "gemma": RegistryEntry(
+                hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+            ),
+        },
+    )
+    state = DaemonState(backend=FakeBackend(), registry=registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not temp_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+
+    try:
+        load_client = LLMClient(socket_path=temp_socket_path)
+        await load_client.model_load("gemma", "chat")
+
+        status_client = LLMClient(socket_path=temp_socket_path)
+        payload = await status_client.model_status()
+        assert "pid" in payload
+        assert "uptime_seconds" in payload
+        assert "daemon_version" in payload
+        assert "rss_bytes" in payload
+        assert isinstance(payload["models"], list)
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+
+
+def test_llm_config_daemon_socket_roundtrip_none(tmp_path: Path) -> None:
+    from config.settings import ChirpSettings, LLMSettings
+
+    settings = ChirpSettings(llm=LLMSettings(daemon_socket=None))
     cfg_path = tmp_path / "config.toml"
     settings.save_to_file(cfg_path)
     loaded = ChirpSettings.load_from_file(cfg_path)
@@ -881,10 +1006,10 @@ def test_llm_config_daemon_socket_roundtrip_none(tmp_path: Path) -> None:
 
 
 def test_llm_config_daemon_socket_roundtrip_path(tmp_path: Path) -> None:
-    from config.settings import ChirpSettings, LLMConfig
+    from config.settings import ChirpSettings, LLMSettings
 
     sock_path = tmp_path / "chirpd.sock"
-    settings = ChirpSettings(llm=LLMConfig(daemon_socket=sock_path))
+    settings = ChirpSettings(llm=LLMSettings(daemon_socket=sock_path))
     cfg_path = tmp_path / "config.toml"
     settings.save_to_file(cfg_path)
     loaded = ChirpSettings.load_from_file(cfg_path)
