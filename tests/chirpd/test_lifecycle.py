@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from chirpd import __main__ as chirpd_main
-from chirpd.lifecycle import acquire_single_instance_lock, release_lock
+from chirpd.lifecycle import single_instance_lock
 
 
 def test_ensure_runtime_dirs_creates_both_dirs(
@@ -29,68 +28,72 @@ def test_ensure_runtime_dirs_creates_both_dirs(
     assert log_dir.is_dir()
 
 
-def test_release_lock_swallows_oserror_on_unlock(tmp_path: Path) -> None:
-    from chirpd import lifecycle
-
-    lock_path = tmp_path / "chirpd.lock"
-    handle = lifecycle.acquire_single_instance_lock(lock_path)
-    assert handle is not None
-    with mock.patch("chirpd.lifecycle.fcntl.flock", side_effect=OSError("forced")):
-        lifecycle.release_lock(handle)
-
-
 def test_flock_acquires_when_free(tmp_path: Path) -> None:
     lock_path = tmp_path / "chirpd.lock"
-    handle = acquire_single_instance_lock(lock_path)
-    assert handle is not None
-    try:
+    with single_instance_lock(lock_path) as acquired:
+        assert acquired
         assert lock_path.exists()
-    finally:
-        release_lock(handle)
 
 
-def test_flock_returns_none_when_held(tmp_path: Path) -> None:
+def test_flock_yields_false_when_held(tmp_path: Path) -> None:
     lock_path = tmp_path / "chirpd.lock"
     with mock.patch("chirpd.lifecycle.fcntl.flock", side_effect=BlockingIOError):
-        handle = acquire_single_instance_lock(lock_path)
-    assert handle is None
+        with single_instance_lock(lock_path) as acquired:
+            assert acquired is False
 
 
 def test_flock_blocks_second_acquirer(tmp_path: Path) -> None:
     lock_path = tmp_path / "chirpd.lock"
-    first = acquire_single_instance_lock(lock_path)
-    assert first is not None
-    try:
-        second = acquire_single_instance_lock(lock_path)
-        assert second is None
-    finally:
-        release_lock(first)
+    with single_instance_lock(lock_path) as first:
+        assert first
+        with single_instance_lock(lock_path) as second:
+            assert second is False
 
 
-def test_release_lock_allows_reacquire(tmp_path: Path) -> None:
+def test_lock_releases_on_exit_so_reacquire_succeeds(tmp_path: Path) -> None:
     lock_path = tmp_path / "chirpd.lock"
-    first = acquire_single_instance_lock(lock_path)
-    assert first is not None
-    release_lock(first)
-
-    second = acquire_single_instance_lock(lock_path)
-    assert second is not None
-    release_lock(second)
+    with single_instance_lock(lock_path) as first:
+        assert first
+    with single_instance_lock(lock_path) as second:
+        assert second
 
 
-def test_release_lock_tolerates_already_unlocked(tmp_path: Path) -> None:
+def test_lock_release_swallows_oserror_on_unlock(tmp_path: Path) -> None:
+    """flock(LOCK_UN) failures during release must not propagate."""
     lock_path = tmp_path / "chirpd.lock"
-    handle = acquire_single_instance_lock(lock_path)
-    assert handle is not None
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    release_lock(handle)
+    real_flock = __import__("fcntl").flock
+    call_count = {"n": 0}
+
+    def _flaky_flock(fd: int, op: int) -> None:
+        call_count["n"] += 1
+        # Let the initial LOCK_EX | LOCK_NB succeed via the real flock; raise
+        # only on the LOCK_UN that single_instance_lock issues in its finally.
+        if call_count["n"] == 1:
+            real_flock(fd, op)
+            return
+        raise OSError("forced unlock failure")
+
+    with mock.patch("chirpd.lifecycle.fcntl.flock", side_effect=_flaky_flock):
+        with single_instance_lock(lock_path) as acquired:
+            assert acquired
+
+
+def _patch_lock(monkeypatch: pytest.MonkeyPatch, acquired: bool) -> None:
+    """Replace ``single_instance_lock`` with a contextmanager yielding ``acquired``."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _fake_lock(_path: Path | None = None):
+        yield acquired
+
+    monkeypatch.setattr("chirpd.__main__.single_instance_lock", _fake_lock)
 
 
 def test_apple_silicon_check_passes_on_arm64(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr("chirpd.__main__.platform.machine", lambda: "arm64")
-    monkeypatch.setattr("chirpd.__main__.acquire_single_instance_lock", lambda: None)
+    _patch_lock(monkeypatch, acquired=False)
     monkeypatch.setattr("chirpd.__main__.configure_logging", lambda: None)
     monkeypatch.setattr("chirpd.__main__.ensure_runtime_dirs", lambda: None)
     assert chirpd_main.main() == 0
@@ -128,7 +131,7 @@ def test_main_returns_zero_when_lock_already_held(
     monkeypatch.setattr("chirpd.__main__.platform.machine", lambda: "arm64")
     monkeypatch.setattr("chirpd.__main__.configure_logging", lambda: None)
     monkeypatch.setattr("chirpd.__main__.ensure_runtime_dirs", lambda: None)
-    monkeypatch.setattr("chirpd.__main__.acquire_single_instance_lock", lambda: None)
+    _patch_lock(monkeypatch, acquired=False)
     assert chirpd_main.main() == 0
 
 
@@ -143,18 +146,7 @@ def test_main_runs_serve_until_cancelled(
     monkeypatch.setattr("chirpd.__main__.platform.machine", lambda: "arm64")
     monkeypatch.setattr("chirpd.__main__.configure_logging", lambda: None)
     monkeypatch.setattr("chirpd.__main__.ensure_runtime_dirs", lambda: None)
-
-    class _DummyHandle:
-        def close(self) -> None:
-            pass
-
-    handle = _DummyHandle()
-    monkeypatch.setattr("chirpd.__main__.acquire_single_instance_lock", lambda: handle)
-    released: dict[str, object] = {}
-    monkeypatch.setattr(
-        "chirpd.__main__.release_lock",
-        lambda h: released.setdefault("handle", h),
-    )
+    _patch_lock(monkeypatch, acquired=True)
 
     original_run = chirpd_main.asyncio.run
 
@@ -171,8 +163,6 @@ def test_main_runs_serve_until_cancelled(
             tmp_dir.rmdir()
         except OSError:
             pass
-
-    assert released["handle"] is handle
 
 
 async def test_run_returns_when_serve_task_cancelled(

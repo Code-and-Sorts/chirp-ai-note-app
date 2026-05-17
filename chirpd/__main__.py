@@ -12,9 +12,8 @@ from pathlib import Path
 from chirpd.backend import MLXBackend
 from chirpd.dispatcher import Dispatcher
 from chirpd.lifecycle import (
-    acquire_single_instance_lock,
     ensure_runtime_dirs,
-    release_lock,
+    single_instance_lock,
 )
 from chirpd.logging_setup import configure_logging
 from chirpd.paths import SOCKET_PATH as DEFAULT_SOCKET_PATH
@@ -45,30 +44,28 @@ def main() -> int:
     configure_logging()
     ensure_runtime_dirs()
 
-    lock_handle = acquire_single_instance_lock()
-    if lock_handle is None:
-        return 0
-
     logger = logging.getLogger("chirpd")
-    try:
-        socket_path = _resolve_socket_path()
-        backend = MLXBackend()
-        registry = read_registry()
-        state = DaemonState(
-            backend=backend,
-            registry=registry,
-            idle_timeout_s=resolve_idle_timeout_seconds(),
-        )
-        dispatcher = Dispatcher(state=state)
-        logger.info("chirpd starting", extra={"op": "startup"})
-
+    with single_instance_lock() as acquired:
+        if not acquired:
+            return 0
         try:
-            asyncio.run(_run(socket_path, dispatcher))
-        except KeyboardInterrupt:
-            pass
-    finally:
-        release_lock(lock_handle)
-        logger.info("chirpd stopped", extra={"op": "shutdown"})
+            socket_path = _resolve_socket_path()
+            backend = MLXBackend()
+            registry = read_registry()
+            state = DaemonState(
+                backend=backend,
+                registry=registry,
+                idle_timeout_s=resolve_idle_timeout_seconds(),
+            )
+            dispatcher = Dispatcher(state=state)
+            logger.info("chirpd starting", extra={"op": "startup"})
+
+            try:
+                asyncio.run(_run(socket_path, dispatcher))
+            except KeyboardInterrupt:
+                pass
+        finally:
+            logger.info("chirpd stopped", extra={"op": "shutdown"})
     return 0
 
 

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import logging
+from collections.abc import Iterator
 from pathlib import Path
-from typing import IO
 
 from chirpd import paths
 
@@ -19,30 +20,29 @@ def ensure_runtime_dirs() -> None:
     paths.LOG_DIR.mkdir(parents=True, exist_ok=True, mode=paths.RUNTIME_DIR_MODE)
 
 
-def acquire_single_instance_lock(
+@contextlib.contextmanager
+def single_instance_lock(
     lock_path: Path | None = None,
-) -> IO[bytes] | None:
-    """Acquire an exclusive non-blocking flock on ``lock_path``.
+) -> Iterator[bool]:
+    """Hold an exclusive non-blocking flock on ``lock_path`` for the block.
 
-    Returns the open file handle on success; the caller must keep it alive for
-    the process lifetime (closing it releases the lock). Returns ``None`` when
-    another process already holds the lock.
+    Yields ``True`` if the lock was acquired (caller is the single instance),
+    ``False`` if another process already holds it. The lock is released and the
+    backing file descriptor is closed on exit, regardless of how the block ends.
     """
     target = lock_path if lock_path is not None else paths.LOCK_PATH
     target.parent.mkdir(parents=True, exist_ok=True, mode=paths.RUNTIME_DIR_MODE)
-    handle = open(target, "ab+")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        handle.close()
-        _logger.info("another chirpd already running; exiting")
-        return None
-    return handle
-
-
-def release_lock(handle: IO[bytes]) -> None:
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    except OSError:
-        pass
-    handle.close()
+    with open(target, "ab+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            _logger.info("another chirpd already running; exiting")
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
