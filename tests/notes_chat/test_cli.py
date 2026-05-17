@@ -186,8 +186,7 @@ class TestAskRetrievalFailure:
 
         monkeypatch.setattr("notes_chat.retrieval.retrieve_context", fake_retrieve)
         result = runner.invoke(app, ["ask", "no docs?"])
-        # typer.Exit(2) is caught by the outer except Exception handler → exit code 1
-        assert result.exit_code == 1
+        assert result.exit_code == 2
         assert "No relevant documents" in result.output
 
     def test_no_documents_found_without_suggestion(self, monkeypatch):
@@ -198,7 +197,7 @@ class TestAskRetrievalFailure:
 
         monkeypatch.setattr("notes_chat.retrieval.retrieve_context", fake_retrieve)
         result = runner.invoke(app, ["ask", "empty?"])
-        assert result.exit_code == 1
+        assert result.exit_code == 2
 
     def test_generic_retrieval_error_exits_1(self, monkeypatch):
         self._setup(monkeypatch)
@@ -357,3 +356,103 @@ class TestAskOuterException:
         result = runner.invoke(app, ["ask", "something?"])
         assert result.exit_code == 1
         assert "unexpected crash" in result.output
+
+
+# ---------------------------------------------------------------------------
+# ask command — LLM exception → exit-code mapping (story 3.7 AC-6)
+# ---------------------------------------------------------------------------
+
+
+class TestAskLLMExceptions:
+    @staticmethod
+    def _retrieval_ok(monkeypatch):
+        _patch_config(monkeypatch)
+
+        def fake_retrieve(config, question, when_filter=None):
+            return {
+                "success": True,
+                "context": "ctx",
+                "sources": [],
+                "retrieved_ids": ["c1"],
+            }
+
+        monkeypatch.setattr("notes_chat.retrieval.retrieve_context", fake_retrieve)
+        monkeypatch.setattr("notes_chat.cache.get_cached_answer", lambda *a: None)
+        monkeypatch.setattr("notes_chat.cache.cache_answer", lambda *a: None)
+
+    def test_daemon_unreachable_exits_3(self, monkeypatch):
+        from llm.exceptions import LLMDaemonUnreachable
+
+        self._retrieval_ok(monkeypatch)
+
+        def boom(*a, **kw):
+            raise LLMDaemonUnreachable("socket refused", details={})
+
+        monkeypatch.setattr("notes_chat.prompting.generate_answer", boom)
+        result = runner.invoke(app, ["ask", "q?"])
+        assert result.exit_code == 3
+        assert "chirpd is not running" in result.output
+
+    def test_daemon_spawn_failed_exits_3(self, monkeypatch):
+        from llm.exceptions import LLMDaemonSpawnFailed
+
+        self._retrieval_ok(monkeypatch)
+
+        def boom(*a, **kw):
+            raise LLMDaemonSpawnFailed("spawn failed", details={})
+
+        monkeypatch.setattr("notes_chat.prompting.generate_answer", boom)
+        result = runner.invoke(app, ["ask", "q?"])
+        assert result.exit_code == 3
+
+    def test_model_not_found_exits_5(self, monkeypatch):
+        from llm.exceptions import LLMModelNotFound
+
+        self._retrieval_ok(monkeypatch)
+
+        def boom(*a, **kw):
+            raise LLMModelNotFound("no default chat model", details={})
+
+        monkeypatch.setattr("notes_chat.prompting.generate_answer", boom)
+        result = runner.invoke(app, ["ask", "q?"])
+        assert result.exit_code == 5
+        assert "chirp models add" in result.output
+
+    def test_model_load_failed_exits_4(self, monkeypatch):
+        from llm.exceptions import LLMModelLoadFailed
+
+        self._retrieval_ok(monkeypatch)
+
+        def boom(*a, **kw):
+            raise LLMModelLoadFailed("weights missing", details={})
+
+        monkeypatch.setattr("notes_chat.prompting.generate_answer", boom)
+        result = runner.invoke(app, ["ask", "q?"])
+        assert result.exit_code == 4
+        assert "weights missing" in result.output
+
+    def test_cancelled_exits_1(self, monkeypatch):
+        from llm.exceptions import LLMCancelled
+
+        self._retrieval_ok(monkeypatch)
+
+        def boom(*a, **kw):
+            raise LLMCancelled("cancelled", details={})
+
+        monkeypatch.setattr("notes_chat.prompting.generate_answer", boom)
+        result = runner.invoke(app, ["ask", "q?"])
+        assert result.exit_code == 1
+        assert "Interrupted" in result.output
+
+    def test_generic_llm_error_exits_1(self, monkeypatch):
+        from llm.exceptions import LLMGenerationFailed
+
+        self._retrieval_ok(monkeypatch)
+
+        def boom(*a, **kw):
+            raise LLMGenerationFailed("inference oom", details={})
+
+        monkeypatch.setattr("notes_chat.prompting.generate_answer", boom)
+        result = runner.invoke(app, ["ask", "q?"])
+        assert result.exit_code == 1
+        assert "inference oom" in result.output

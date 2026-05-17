@@ -21,117 +21,103 @@ from notes_chat.prompting import (
 
 
 class TestPrompting:
-    @patch("requests.post")
-    def test_prompt_includes_instruction_and_sources(self, mock_post):
-        """Test that prompt includes proper instruction and source headers."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"response": "Test answer"}
-        mock_post.return_value = mock_response
+    def test_generate_answer_routes_through_llm_client(self):
+        """generate_answer hands the templated prompt to LLMClient.chat_sync."""
 
+        class _StubClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[list[dict], str]] = []
+
+            def chat_sync(self, messages, model="default", **_):
+                self.calls.append((messages, model))
+                return "Test answer"
+
+        client = _StubClient()
         config = ChirpSettings()
         question = "What was decided?"
         context = "2025-01-15 · meeting.md\nWe decided to implement the new feature."
 
-        result = generate_answer(config, question, context)
+        result = generate_answer(config, question, context, client=client)
 
-        assert result["success"]
-        assert result["answer"] == "Test answer"
-
-        call_args = mock_post.call_args
-        prompt = call_args[1]["json"]["prompt"]
-
+        assert result == {"success": True, "answer": "Test answer"}
+        assert len(client.calls) == 1
+        messages, model = client.calls[0]
+        assert model == "default"
+        assert messages[-1]["role"] == "user"
+        prompt = messages[-1]["content"]
         assert "based ONLY on the provided meeting notes" in prompt
         assert question in prompt
         assert context in prompt
-        assert "temperature" in call_args[1]["json"]
-        assert call_args[1]["json"]["temperature"] == 0
 
-    @patch("requests.post")
-    def test_budget_cap_enforced(self, mock_post):
-        """Test that context budget cap is enforced."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"response": "Answer"}
-        mock_post.return_value = mock_response
+    def test_generate_answer_low_confidence_answer_is_returned(self):
+        class _StubClient:
+            def chat_sync(self, *a, **kw):
+                return "I don't have enough information to answer that question."
 
-        config = ChirpSettings()
-        question = "Test question"
-
-        context = "X" * 20000
-
-        result = generate_answer(config, question, context)
-
-        assert result["success"]
-
-        call_args = mock_post.call_args
-        prompt = call_args[1]["json"]["prompt"]
-        assert len(prompt) > 10000
-
-    @patch("requests.post")
-    def test_low_confidence_answer_is_returned(self, mock_post):
-        """The LLM is allowed to say it doesn't know; surface the reply rather than throwing it away."""
-        config = ChirpSettings()
-        question = "hi"
-        context = "Some meeting notes"
-
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "response": "I don't have enough information to answer that question."
-        }
-        mock_post.return_value = mock_response
-
-        result = generate_answer(config, question, context)
-
+        result = generate_answer(
+            ChirpSettings(), "hi", "Some meeting notes", client=_StubClient()
+        )
         assert result["success"] is True
         assert "I don't have enough information" in result["answer"]
 
-    @patch("requests.post")
-    def test_empty_context_handling(self, mock_post):
-        """Test handling of empty context."""
-        config = ChirpSettings()
-        question = "What happened?"
-        context = ""
+    def test_generate_answer_empty_context_handling(self):
+        """Empty context is rejected before reaching the LLM."""
 
-        result = generate_answer(config, question, context)
+        class _BoomClient:
+            def chat_sync(self, *a, **kw):
+                raise AssertionError("chat_sync must not be called for empty context")
 
+        result = generate_answer(ChirpSettings(), "What?", "", client=_BoomClient())
         assert not result["success"]
         assert "Empty context" in result["error"]
-        mock_post.assert_not_called()
 
-    @patch("requests.post")
-    def test_api_error_handling(self, mock_post):
-        """Test handling of various API errors."""
-        config = ChirpSettings()
-        question = "Test question"
-        context = "Test context"
+    def test_generate_answer_empty_response_handling(self):
+        class _StubClient:
+            def chat_sync(self, *a, **kw):
+                return "   "
 
-        mock_response = Mock()
-        mock_response.status_code = 404
-        mock_post.return_value = mock_response
-
-        result = generate_answer(config, question, context)
-
+        result = generate_answer(ChirpSettings(), "Q?", "ctx", client=_StubClient())
         assert not result["success"]
-        assert "Model" in result["error"]
-        assert "not found" in result["error"]
-        assert "ollama pull" in result["error"]
+        assert "Empty response" in result["error"]
 
-    @patch("requests.post")
-    def test_connection_error_handling(self, mock_post):
-        """Test handling of connection errors."""
-        config = ChirpSettings()
-        question = "Test question"
-        context = "Test context"
+    def test_generate_answer_propagates_llm_error(self):
+        from llm.exceptions import LLMGenerationFailed
 
-        mock_post.side_effect = ConnectionError("Connection failed")
+        class _BoomClient:
+            def chat_sync(self, *a, **kw):
+                raise LLMGenerationFailed("inference failed", details={})
 
-        result = generate_answer(config, question, context)
+        import pytest
 
-        assert not result["success"]
-        assert "Cannot connect to Ollama" in result["error"]
-        assert "ollama serve" in result["error"]
+        with pytest.raises(LLMGenerationFailed):
+            generate_answer(ChirpSettings(), "Q?", "ctx", client=_BoomClient())
+
+    def test_stream_answer_tokens_yields_through_client(self):
+        class _StubClient:
+            def chat_stream_sync(self, messages, model="default", **_):
+                assert messages[-1]["role"] == "user"
+                yield "Hello "
+                yield "world"
+
+        from notes_chat.prompting import stream_answer_tokens
+
+        tokens = list(
+            stream_answer_tokens(ChirpSettings(), "q?", "ctx", client=_StubClient())
+        )
+        assert tokens == ["Hello ", "world"]
+
+    def test_stream_answer_tokens_skips_empty_context(self):
+        class _BoomClient:
+            def chat_stream_sync(self, *a, **kw):
+                raise AssertionError("must not be called for empty context")
+                yield  # pragma: no cover
+
+        from notes_chat.prompting import stream_answer_tokens
+
+        tokens = list(
+            stream_answer_tokens(ChirpSettings(), "q?", "", client=_BoomClient())
+        )
+        assert tokens == []
 
     @patch("requests.get")
     def test_ollama_validation_success(self, mock_get):
@@ -162,25 +148,6 @@ class TestPrompting:
         assert not result["success"]
         assert "llama3.1:8b" in result["error"]
         assert "not found" in result["error"]
-
-    @patch("requests.post")
-    def test_deterministic_settings(self, mock_post):
-        """Test that deterministic settings are applied."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"response": "Answer"}
-        mock_post.return_value = mock_response
-
-        config = ChirpSettings()
-        question = "Test question"
-        context = "Test context"
-
-        generate_answer(config, question, context)
-
-        call_args = mock_post.call_args[1]["json"]
-        assert call_args["temperature"] == 0
-        assert call_args["top_p"] == 1
-        assert call_args["stream"] is False
 
     @patch("requests.post")
     def test_conversational_response_success(self, mock_post):
@@ -290,56 +257,6 @@ class TestPrompting:
         for query in short_questions:
             result = is_search_query(query)
             assert isinstance(result, bool), f"'{query}' should return a boolean"
-
-    @patch("requests.post")
-    def test_generate_answer_500_error(self, mock_post):
-        mock_response = Mock()
-        mock_response.status_code = 500
-        mock_post.return_value = mock_response
-
-        result = generate_answer(ChirpSettings(), "Q?", "context here")
-
-        assert not result["success"]
-        assert "ollama serve" in result["error"]
-
-    @patch("requests.post")
-    def test_generate_answer_empty_response(self, mock_post):
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"response": ""}
-        mock_post.return_value = mock_response
-
-        result = generate_answer(ChirpSettings(), "Q?", "context here")
-
-        assert not result["success"]
-        assert "Empty response" in result["error"]
-
-    @patch("requests.post")
-    def test_generate_answer_requests_connection_error(self, mock_post):
-        mock_post.side_effect = requests.exceptions.ConnectionError()
-
-        result = generate_answer(ChirpSettings(), "Q?", "context here")
-
-        assert not result["success"]
-        assert "Cannot connect to Ollama" in result["error"]
-
-    @patch("requests.post")
-    def test_generate_answer_timeout(self, mock_post):
-        mock_post.side_effect = requests.exceptions.Timeout()
-
-        result = generate_answer(ChirpSettings(), "Q?", "context here")
-
-        assert not result["success"]
-        assert "timed out" in result["error"]
-
-    @patch("requests.post")
-    def test_generate_answer_generic_exception(self, mock_post):
-        mock_post.side_effect = RuntimeError("something broke")
-
-        result = generate_answer(ChirpSettings(), "Q?", "context here")
-
-        assert not result["success"]
-        assert "something broke" in result["error"]
 
     @patch("requests.post")
     def test_conversational_response_500_error(self, mock_post):

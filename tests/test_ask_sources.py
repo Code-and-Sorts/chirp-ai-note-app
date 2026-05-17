@@ -167,11 +167,16 @@ class TestAskMarkdownToggle:
                 "retrieved_ids": ["c1"],
             }
 
-        def fake_generate(config, question, context):
+        def fake_generate(config, question, context, client=None):
             return {"success": True, "answer": answer}
+
+        def fake_stream(config, question, context, client=None):
+            for piece in answer.split():
+                yield piece + " "
 
         monkeypatch.setattr("notes_chat.retrieval.retrieve_context", fake_retrieve)
         monkeypatch.setattr("notes_chat.prompting.generate_answer", fake_generate)
+        monkeypatch.setattr("notes_chat.prompting.stream_answer_tokens", fake_stream)
         monkeypatch.setattr("notes_chat.cache.get_cached_answer", lambda *args: None)
         monkeypatch.setattr("notes_chat.cache.cache_answer", lambda *args: None)
 

@@ -1,9 +1,18 @@
 import logging
+import sys
 
 import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from llm.exceptions import (
+    LLMCancelled,
+    LLMDaemonSpawnFailed,
+    LLMDaemonUnreachable,
+    LLMError,
+    LLMModelLoadFailed,
+    LLMModelNotFound,
+)
 from notes_chat.config import get_notes_config
 
 logger = logging.getLogger(__name__)
@@ -104,7 +113,7 @@ def ask(
 
     try:
         from notes_chat.cache import cache_answer, get_cached_answer
-        from notes_chat.prompting import generate_answer
+        from notes_chat.prompting import generate_answer, stream_answer_tokens
         from notes_chat.retrieval import retrieve_context
 
         console.print(f"[dim]searching for: {question}[/dim]")
@@ -138,31 +147,69 @@ def ask(
         cached_answer = get_cached_answer(question, retrieved_ids)
         if cached_answer:
             console.print("[dim]using cached answer[/dim]")
-            answer = cached_answer
-        else:
-            answer_result = generate_answer(config, question, context)
+            console.print("\n[magenta bold]chirp ›[/magenta bold]")
+            if markdown:
+                from rich.markdown import Markdown
 
+                console.print(Markdown(cached_answer))
+            else:
+                console.print(cached_answer)
+            answer = cached_answer
+        elif markdown:
+            answer_result = generate_answer(config, question, context)
             if not answer_result.get("success"):
                 console.print(
                     f"[red]Answer generation failed: {answer_result.get('error', 'Unknown error')}[/red]"
                 )
                 raise typer.Exit(1)
-
             answer = answer_result["answer"]
             cache_answer(question, retrieved_ids, answer)
-
-        console.print("\n[magenta bold]chirp ›[/magenta bold]")
-        if markdown:
+            console.print("\n[magenta bold]chirp ›[/magenta bold]")
             from rich.markdown import Markdown
 
             console.print(Markdown(answer))
         else:
-            console.print(answer)
+            console.print("\n[magenta bold]chirp ›[/magenta bold]")
+            tokens: list[str] = []
+            for token in stream_answer_tokens(config, question, context):
+                sys.stdout.write(token)
+                sys.stdout.flush()
+                tokens.append(token)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            answer = "".join(tokens).strip()
+            if not answer:
+                console.print("[red]Answer generation failed: empty response[/red]")
+                raise typer.Exit(1)
+            cache_answer(question, retrieved_ids, answer)
 
         if sources and context_result.get("sources"):
             joined = ", ".join(context_result["sources"])
             console.print(f"\n[dim]sources: {joined}[/dim]")
 
+    except typer.Exit:
+        raise
+    except (LLMDaemonUnreachable, LLMDaemonSpawnFailed) as exc:
+        console.print(
+            f"[red]chirpd is not running and could not be started: {exc.message}[/red]"
+        )
+        console.print("[dim]run `chirp daemon status` for diagnostics[/dim]")
+        raise typer.Exit(3) from exc
+    except LLMModelNotFound as exc:
+        console.print(f"[red]{exc.message}[/red]")
+        console.print(
+            "[dim]run `chirp models add <hf-repo>` to register a chat model[/dim]"
+        )
+        raise typer.Exit(5) from exc
+    except LLMModelLoadFailed as exc:
+        console.print(f"[red]{exc.message}[/red]")
+        raise typer.Exit(4) from exc
+    except LLMCancelled:
+        console.print("[yellow]Interrupted.[/yellow]")
+        raise typer.Exit(1) from None
+    except LLMError as exc:
+        console.print(f"[red]{exc.message}[/red]")
+        raise typer.Exit(1) from exc
     except Exception as e:  # noqa: BLE001 - top-level CLI handler for ask command
         logger.debug("Query failed: %s", e, exc_info=True)
         console.print(f"[red]Query failed: {e}[/red]")
