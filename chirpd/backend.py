@@ -273,8 +273,9 @@ class FakeBackend:
         self.load_calls.append((repo, role))
         if self.load_delay_s > 0:
             await asyncio.sleep(self.load_delay_s)
-        if self.load_raises is not None:
-            raise self.load_raises
+        scheduled_raise = self.load_raises
+        if scheduled_raise is not None:
+            raise scheduled_raise
         return {"repo": repo, "role": role, "loaded": True}
 
     async def unload(self, handle: Any) -> None:
