@@ -45,12 +45,3 @@ def test_code_to_exception_has_no_orphan_entries() -> None:
 def test_code_to_exception_values_are_llm_error_subclasses() -> None:
     for cls in CODE_TO_EXCEPTION.values():
         assert issubclass(cls, LLMError)
-
-
-def test_re_exported_via_error_codes_module() -> None:
-    assert error_codes.CODE_TO_EXCEPTION is CODE_TO_EXCEPTION
-
-
-def test_re_exported_missing_attribute_raises() -> None:
-    with pytest.raises(AttributeError):
-        error_codes.does_not_exist  # noqa: B018

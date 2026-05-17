@@ -17,8 +17,8 @@ from typing import Any, Final, Literal, TypeVar
 
 from chirpd.paths import SOCKET_PATH
 from config.settings import get_daemon_socket_override, get_settings
-from llm.error_codes import CODE_TO_EXCEPTION
 from llm.exceptions import (
+    CODE_TO_EXCEPTION,
     LLMConnectionLost,
     LLMDaemonSpawnFailed,
     LLMDaemonUnreachable,
