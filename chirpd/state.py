@@ -47,6 +47,7 @@ class DaemonState:
         self._idle_timeout_s = idle_timeout_s
         self._models: dict[str, LoadedModel] = {}
         self._registry_locks: dict[str, asyncio.Lock] = {}
+        self._cancellation_events: dict[str, asyncio.Event] = {}
         self._start_monotonic = time.monotonic()
         self._daemon_version = package_version()
         self._proc = psutil.Process(os.getpid())
@@ -54,6 +55,10 @@ class DaemonState:
     @property
     def registry(self) -> Registry:
         return self._registry
+
+    @property
+    def backend(self) -> LLMBackend:
+        return self._backend
 
     @property
     def daemon_version(self) -> str:
@@ -68,6 +73,12 @@ class DaemonState:
 
     def get(self, alias: str) -> LoadedModel | None:
         return self._models.get(alias)
+
+    def resolve_canonical_alias(self, identifier: str, role: ModelRole) -> str:
+        resolve_alias(self._registry, identifier, role)
+        if identifier == "default":
+            return _alias_for_default(self._registry, role)
+        return identifier
 
     async def load(
         self,
@@ -192,6 +203,15 @@ class DaemonState:
 
     def touch(self, model: LoadedModel) -> None:
         model.last_used = datetime.now(UTC)
+
+    def register_cancellation(self, request_id: str, event: asyncio.Event) -> None:
+        self._cancellation_events[request_id] = event
+
+    def clear_cancellation(self, request_id: str) -> None:
+        self._cancellation_events.pop(request_id, None)
+
+    def get_cancellation(self, request_id: str) -> asyncio.Event | None:
+        return self._cancellation_events.get(request_id)
 
     def schedule_idle_unload(
         self,

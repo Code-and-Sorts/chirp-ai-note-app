@@ -4,9 +4,6 @@ The Protocol defines the surface daemon state interacts with for model load /
 unload / inference. ``MLXBackend`` is the production implementation that wraps
 ``mlx_lm`` and ``huggingface_hub``; ``FakeBackend`` is the unit-test double
 exercised throughout ``tests/chirpd`` and ``tests/llm``.
-
-Inference methods (``stream_generate``, ``embed``) are stubbed in this story
-and filled in by story 3.6.
 """
 
 from __future__ import annotations
@@ -38,6 +35,7 @@ class LLMBackend(Protocol):
         messages: list[dict[str, Any]],
         options: dict[str, Any],
         should_stop: asyncio.Event,
+        usage_out: dict[str, int],
     ) -> AsyncIterator[str]: ...
 
     async def embed(
@@ -109,31 +107,146 @@ class MLXBackend:
             handle.pop("tokenizer", None)
         await asyncio.to_thread(gc.collect)
 
-    def stream_generate(
+    async def stream_generate(  # pragma: no cover — exercised via opt-in @slow tests
         self,
         handle: Any,
         messages: list[dict[str, Any]],
         options: dict[str, Any],
         should_stop: asyncio.Event,
+        usage_out: dict[str, int],
     ) -> AsyncIterator[str]:
-        raise NotImplementedError("MLXBackend.stream_generate lands in story 3.6")
+        from llm.exceptions import LLMGenerationFailed
 
-    async def embed(
+        tokenizer = handle["tokenizer"]
+        model = handle["model"]
+        prompt = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        usage_out["prompt_tokens"] = len(tokenizer.encode(prompt))
+
+        try:
+            from mlx_lm import stream_generate as mlx_stream_generate
+        except ImportError as err:
+            raise LLMGenerationFailed(
+                "mlx_lm is not installed; chirpd requires Apple Silicon dependencies",
+                details={"error": str(err)},
+            ) from err
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        SENTINEL_DONE = "done"
+        SENTINEL_ERROR = "error"
+        SENTINEL_TOKEN = "token"
+
+        def _produce() -> None:
+            try:
+                for piece in mlx_stream_generate(model, tokenizer, prompt, **options):
+                    if should_stop.is_set():
+                        break
+                    text = _extract_token_text(piece)
+                    if text is None:
+                        continue
+                    loop.call_soon_threadsafe(queue.put_nowait, (SENTINEL_TOKEN, text))
+                loop.call_soon_threadsafe(queue.put_nowait, (SENTINEL_DONE, None))
+            except Exception as exc:  # noqa: BLE001 — surface to consumer
+                loop.call_soon_threadsafe(queue.put_nowait, (SENTINEL_ERROR, exc))
+
+        worker = asyncio.create_task(asyncio.to_thread(_produce))
+        try:
+            while True:
+                kind, payload = await queue.get()
+                if kind == SENTINEL_TOKEN:
+                    yield payload
+                    continue
+                if kind == SENTINEL_ERROR:
+                    raise LLMGenerationFailed(
+                        f"mlx_lm.stream_generate failed: {payload}",
+                        details={"exception_type": type(payload).__name__},
+                    ) from payload
+                return
+        finally:
+            should_stop.set()
+            await worker
+
+    async def embed(  # pragma: no cover — exercised via opt-in @slow tests
         self,
         handle: Any,
         inputs: list[str],
     ) -> list[list[float]]:
-        raise NotImplementedError("MLXBackend.embed lands in story 3.6")
+        model = handle["model"]
+        tokenizer = handle["tokenizer"]
+
+        def _run() -> list[list[float]]:
+            results: list[list[float]] = []
+            for text in inputs:
+                token_ids = tokenizer.encode(text)
+                vector = _invoke_embed(model, token_ids, handle.get("repo"))
+                results.append(_vector_to_floats(vector))
+            return results
+
+        return await asyncio.to_thread(_run)
+
+
+def _invoke_embed(model: Any, token_ids: Any, repo: Any) -> Any:  # pragma: no cover
+    from llm.exceptions import LLMGenerationFailed
+
+    embed_callable = getattr(model, "embed", None)
+    if callable(embed_callable):
+        return embed_callable(token_ids)
+    embed_tokens = getattr(model, "embed_tokens", None)
+    if callable(embed_tokens):
+        return embed_tokens(token_ids)
+    raise LLMGenerationFailed(
+        "loaded model does not expose an 'embed' or 'embed_tokens' callable",
+        details={"repo": repo, "model_type": type(model).__name__},
+    )
+
+
+def _extract_token_text(piece: Any) -> str | None:
+    if isinstance(piece, str):
+        return piece
+    text = getattr(piece, "text", None)
+    if isinstance(text, str):
+        return text
+    return None
+
+
+def _vector_to_floats(vector: Any) -> list[float]:
+    tolist = getattr(vector, "tolist", None)
+    if callable(tolist):
+        as_list = tolist()
+    else:
+        as_list = list(vector)
+    return [float(x) for x in as_list]
 
 
 class FakeBackend:
     """In-process deterministic backend for unit / integration tests."""
 
-    def __init__(self, load_delay_s: float = 0.0) -> None:
+    def __init__(
+        self,
+        load_delay_s: float = 0.0,
+        chat_tokens: list[str] | None = None,
+        generation_delay_s: float = 0.0,
+        embed_dim: int = 4,
+        stream_raises: BaseException | None = None,
+        stream_raises_after: int = 0,
+    ) -> None:
         self.load_delay_s = load_delay_s
+        self.chat_tokens = (
+            chat_tokens if chat_tokens is not None else ["hello", " world"]
+        )
+        self.generation_delay_s = generation_delay_s
+        self.embed_dim = embed_dim
+        self.stream_raises = stream_raises
+        self.stream_raises_after = stream_raises_after
         self.load_calls: list[tuple[str, ModelRole]] = []
         self.unload_calls: list[Any] = []
         self.load_raises: BaseException | None = None
+        self.last_prompt: str | None = None
+        self.last_messages: list[dict[str, Any]] | None = None
+        self.last_options: dict[str, Any] | None = None
+        self.embed_calls: list[list[str]] = []
 
     async def load(self, repo: str, role: ModelRole) -> Any:
         self.load_calls.append((repo, role))
@@ -148,18 +261,53 @@ class FakeBackend:
         if isinstance(handle, dict):
             handle.clear()
 
-    def stream_generate(
+    async def stream_generate(
         self,
         handle: Any,
         messages: list[dict[str, Any]],
         options: dict[str, Any],
         should_stop: asyncio.Event,
+        usage_out: dict[str, int],
     ) -> AsyncIterator[str]:
-        raise NotImplementedError("FakeBackend.stream_generate lands in story 3.6")
+        self.last_messages = list(messages)
+        self.last_options = dict(options)
+        self.last_prompt = _render_fake_chat_template(messages)
+        usage_out["prompt_tokens"] = len(self.last_prompt.split())
+        emitted = 0
+        for token in self.chat_tokens:
+            if should_stop.is_set():
+                return
+            if self.generation_delay_s > 0:
+                await asyncio.sleep(self.generation_delay_s)
+            if should_stop.is_set():
+                return
+            if self.stream_raises is not None and emitted >= self.stream_raises_after:
+                raise self.stream_raises
+            yield token
+            emitted += 1
 
     async def embed(
         self,
         handle: Any,
         inputs: list[str],
     ) -> list[list[float]]:
-        raise NotImplementedError("FakeBackend.embed lands in story 3.6")
+        self.embed_calls.append(list(inputs))
+        return [_fake_embed_vector(text, self.embed_dim) for text in inputs]
+
+
+def _render_fake_chat_template(messages: list[dict[str, Any]]) -> str:
+    parts = [f"<{m.get('role', 'user')}>{m.get('content', '')}" for m in messages]
+    parts.append("<assistant>")
+    return "\n".join(parts)
+
+
+def _fake_embed_vector(text: str, dim: int) -> list[float]:
+    seed = (len(text), hash(text) % 100)
+    if dim <= 0:
+        return []
+    if dim == 1:
+        return [float(seed[0])]
+    base = [float(seed[0]), float(seed[1])]
+    if dim <= 2:
+        return base[:dim]
+    return base + [0.0] * (dim - 2)

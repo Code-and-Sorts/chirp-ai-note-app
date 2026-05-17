@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncIterator, Coroutine, Iterator
 from pathlib import Path
 from typing import Any, Final, Literal, TypeVar
 
@@ -27,12 +27,16 @@ from llm.exceptions import (
     LLMVersionMismatch,
 )
 from llm.protocol import (
+    EVENT_DELTA,
     EVENT_DONE,
     EVENT_ERROR,
     EVENT_READY,
     EVENT_STATUS,
     EVENT_VERSION_MISMATCH,
     MAX_LINE_BYTES,
+    OP_CANCEL,
+    OP_CHAT,
+    OP_EMBED,
     OP_HEALTH,
     OP_HELLO,
     OP_MODEL_LIST,
@@ -83,6 +87,30 @@ def resolve_socket_path() -> Path:
     if configured is not None:
         return configured
     return DEFAULT_SOCKET_PATH
+
+
+class ChatStream:
+    """Async iterator of token deltas with a ``.usage`` attribute set on completion."""
+
+    def __init__(self, event_stream: AsyncIterator[dict[str, Any]]) -> None:
+        self._event_stream = event_stream
+        self.usage: dict[str, Any] | None = None
+
+    def __aiter__(self) -> ChatStream:
+        return self
+
+    async def __anext__(self) -> str:
+        while True:
+            event = await self._event_stream.__anext__()
+            event_name = event.get("event")
+            if event_name == EVENT_DELTA:
+                text = event.get("text", "")
+                return text if isinstance(text, str) else ""
+            if event_name == EVENT_DONE:
+                usage = event.get("usage")
+                if isinstance(usage, dict):
+                    self.usage = usage
+                raise StopAsyncIteration
 
 
 class LLMClient:
@@ -196,14 +224,110 @@ class LLMClient:
     def model_status_sync(self) -> dict[str, Any]:
         return _run_sync(self.model_status())
 
-    async def chat(self, *args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
-        raise NotImplementedError("chat lands in story 3.6")
+    def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        model: str = "default",
+        options: dict[str, Any] | None = None,
+        keep_alive: int | None = None,
+        request_id: str | None = None,
+    ) -> ChatStream:
+        envelope: dict[str, Any] = {
+            "id": request_id or new_request_id(),
+            "op": OP_CHAT,
+            "model": model,
+            "messages": messages,
+            "options": options or {},
+            "keep_alive": keep_alive,
+        }
+        return ChatStream(self._request(envelope))
 
-    async def embed(self, *args: Any, **kwargs: Any) -> list[list[float]]:
-        raise NotImplementedError("embed lands in story 3.6")
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        model: str = "default",
+        options: dict[str, Any] | None = None,
+        keep_alive: int | None = None,
+    ) -> str:
+        stream = self.chat_stream(messages, model, options, keep_alive)
+        tokens: list[str] = []
+        async for token in stream:
+            tokens.append(token)
+        return "".join(tokens)
 
-    async def cancel(self, request_id: str) -> dict[str, Any]:
-        raise NotImplementedError("cancel lands in story 3.6")
+    def chat_sync(
+        self,
+        messages: list[dict[str, Any]],
+        model: str = "default",
+        options: dict[str, Any] | None = None,
+        keep_alive: int | None = None,
+    ) -> str:
+        return _run_sync(self.chat(messages, model, options, keep_alive))
+
+    def chat_stream_sync(
+        self,
+        messages: list[dict[str, Any]],
+        model: str = "default",
+        options: dict[str, Any] | None = None,
+        keep_alive: int | None = None,
+    ) -> Iterator[str]:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise LLMError(
+                "sync wrapper cannot be called from a running event loop",
+            )
+        return _sync_iter_async(self.chat_stream(messages, model, options, keep_alive))
+
+    async def embed(
+        self,
+        inputs: list[str],
+        model: str = "default",
+    ) -> list[list[float]]:
+        envelope = {
+            "id": new_request_id(),
+            "op": OP_EMBED,
+            "model": model,
+            "inputs": inputs,
+        }
+        vectors: list[list[float]] | None = None
+        async for event in self._request(envelope):
+            if event.get("event") == EVENT_DONE:
+                payload = event.get("vectors")
+                if isinstance(payload, list):
+                    vectors = [list(v) for v in payload]
+        if vectors is None:
+            raise LLMMalformedResponse(
+                "embed completed without emitting vectors",
+            )
+        return vectors
+
+    def embed_sync(
+        self,
+        inputs: list[str],
+        model: str = "default",
+    ) -> list[list[float]]:
+        return _run_sync(self.embed(inputs, model))
+
+    async def cancel(self, target_id: str) -> dict[str, Any]:
+        envelope = {
+            "id": new_request_id(),
+            "op": OP_CANCEL,
+            "target_id": target_id,
+        }
+        last_event: dict[str, Any] | None = None
+        async for event in self._request(envelope):
+            last_event = event
+        if last_event is None or last_event.get("event") != EVENT_DONE:
+            raise LLMMalformedResponse(
+                "cancel completed without emitting a done event",
+            )
+        return last_event
+
+    def cancel_sync(self, target_id: str) -> dict[str, Any]:
+        return _run_sync(self.cancel(target_id))
 
     async def _request(self, envelope: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
         attempted_respawn = False
@@ -496,3 +620,15 @@ def _run_sync(coro: Coroutine[Any, Any, T]) -> T:
     raise LLMError(
         "sync wrapper cannot be called from a running event loop",
     )
+
+
+def _sync_iter_async(stream: ChatStream) -> Iterator[str]:
+    loop = asyncio.new_event_loop()
+    try:
+        while True:
+            try:
+                yield loop.run_until_complete(stream.__anext__())
+            except StopAsyncIteration:
+                return
+    finally:
+        loop.close()

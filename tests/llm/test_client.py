@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -498,20 +497,289 @@ def test_default_constants_match_spec() -> None:
     assert client_module.VERSION_MISMATCH_RESPAWN_WAIT_S == 1.0
 
 
-def test_unimplemented_methods_raise() -> None:
-    llm_client = LLMClient(socket_path=Path("/tmp/never-used.sock"))
+async def test_chat_stream_yields_tokens(temp_socket_path: Path) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.registry import Registry, RegistryEntry
 
-    async def _check(coro: Any) -> None:
-        with pytest.raises(NotImplementedError):
-            await coro
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma",
+        models={
+            "gemma": RegistryEntry(
+                hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+            ),
+        },
+    )
+    backend = FakeBackend(chat_tokens=["hello", " world"])
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not temp_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+    try:
+        llm_client = LLMClient(socket_path=temp_socket_path)
+        stream = llm_client.chat_stream(
+            messages=[{"role": "user", "content": "hi"}], model="gemma"
+        )
+        tokens = [t async for t in stream]
+        assert tokens == ["hello", " world"]
+        assert stream.usage is not None
+        assert stream.usage["completion_tokens"] == 2
+        assert stream.usage["prompt_tokens"] > 0
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
 
-    methods: list[Callable[[], Any]] = [
-        lambda: llm_client.chat(),
-        lambda: llm_client.embed(),
-        lambda: llm_client.cancel("r-aaaaaaaaaaaa"),
-    ]
-    for invoke in methods:
-        asyncio.run(_check(invoke()))
+
+async def test_chat_non_streaming_returns_concatenated_string(
+    temp_socket_path: Path,
+) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.registry import Registry, RegistryEntry
+
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma",
+        models={
+            "gemma": RegistryEntry(
+                hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+            ),
+        },
+    )
+    backend = FakeBackend(chat_tokens=["hello", " world"])
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not temp_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+    try:
+        llm_client = LLMClient(socket_path=temp_socket_path)
+        text = await llm_client.chat(
+            messages=[{"role": "user", "content": "hi"}], model="gemma"
+        )
+        assert text == "hello world"
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+
+
+async def test_embed_batched_round_trip(temp_socket_path: Path) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.registry import Registry, RegistryEntry
+
+    registry = Registry(
+        schema_version=1,
+        default_embed="nomic",
+        models={
+            "nomic": RegistryEntry(hf_repo="mlx-community/nomic-embed", role="embed"),
+        },
+    )
+    backend = FakeBackend(embed_dim=3)
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not temp_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+    try:
+        llm_client = LLMClient(socket_path=temp_socket_path)
+        vectors = await llm_client.embed(["a", "bb", "ccc"], model="nomic")
+        assert len(vectors) == 3
+        assert all(len(v) == 3 for v in vectors)
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+
+
+async def test_cancel_in_flight_chat_raises_llm_cancelled(
+    temp_socket_path: Path,
+) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.protocol import new_request_id
+    from llm.registry import Registry, RegistryEntry
+
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma",
+        models={
+            "gemma": RegistryEntry(
+                hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+            ),
+        },
+    )
+    backend = FakeBackend(
+        chat_tokens=[f"t{i}" for i in range(50)], generation_delay_s=0.03
+    )
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not temp_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+    try:
+        chat_client = LLMClient(socket_path=temp_socket_path)
+        cancel_client = LLMClient(socket_path=temp_socket_path)
+        chat_request_id = new_request_id()
+
+        async def _drain() -> list[str]:
+            tokens: list[str] = []
+            async for token in chat_client.chat_stream(
+                messages=[{"role": "user", "content": "go"}],
+                model="gemma",
+                request_id=chat_request_id,
+            ):
+                tokens.append(token)
+            return tokens
+
+        chat_task = asyncio.create_task(_drain())
+        await asyncio.sleep(0.15)
+        await cancel_client.cancel(chat_request_id)
+        with pytest.raises(LLMCancelled):
+            await chat_task
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+
+
+async def test_chat_propagates_model_generation_failed(
+    temp_socket_path: Path,
+) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.registry import Registry, RegistryEntry
+
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma",
+        models={
+            "gemma": RegistryEntry(
+                hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+            ),
+        },
+    )
+    backend = FakeBackend(stream_raises=RuntimeError("boom"))
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not temp_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+    try:
+        llm_client = LLMClient(socket_path=temp_socket_path)
+        with pytest.raises(LLMGenerationFailed):
+            await llm_client.chat(
+                messages=[{"role": "user", "content": "hi"}], model="gemma"
+            )
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+
+
+def test_chat_stream_sync_returns_generator(temp_socket_path: Path) -> None:
+    from chirpd.backend import FakeBackend
+    from chirpd.dispatcher import Dispatcher
+    from chirpd.server import serve
+    from chirpd.state import DaemonState
+    from llm.registry import Registry, RegistryEntry
+
+    async def _drive() -> list[str]:
+        registry = Registry(
+            schema_version=1,
+            default_chat="gemma",
+            models={
+                "gemma": RegistryEntry(
+                    hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+                ),
+            },
+        )
+        backend = FakeBackend(chat_tokens=["foo", "bar", "baz"])
+        state = DaemonState(backend=backend, registry=registry, idle_timeout_s=60.0)
+        dispatcher = Dispatcher(state=state)
+        task = asyncio.create_task(serve(temp_socket_path, dispatcher))
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while not temp_socket_path.exists():
+            if asyncio.get_running_loop().time() > deadline:
+                raise RuntimeError("socket never appeared")
+            await asyncio.sleep(0.02)
+        try:
+            loop = asyncio.get_running_loop()
+
+            def _collect() -> list[str]:
+                client = LLMClient(socket_path=temp_socket_path)
+                gen = client.chat_stream_sync(
+                    messages=[{"role": "user", "content": "hi"}], model="gemma"
+                )
+                # Verify lazy iteration: first call returns a token, doesn't drain.
+                first = next(gen)
+                rest = list(gen)
+                return [first, *rest]
+
+            return await loop.run_in_executor(None, _collect)
+        finally:
+            if not task.done():
+                task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+
+    tokens = asyncio.run(_drive())
+    assert tokens == ["foo", "bar", "baz"]
+
+
+def test_chat_stream_sync_in_running_loop_raises(temp_socket_path: Path) -> None:
+    async def _trigger() -> None:
+        client = LLMClient(socket_path=temp_socket_path)
+        client.chat_stream_sync(messages=[{"role": "user", "content": "hi"}])
+
+    with pytest.raises(LLMError, match="event loop"):
+        asyncio.run(_trigger())
 
 
 async def test_mid_stream_version_mismatch_triggers_retry(
