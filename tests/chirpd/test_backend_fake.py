@@ -122,3 +122,43 @@ async def test_mlx_backend_unload_clears_handle() -> None:
     await backend.unload(handle)
     assert "model" not in handle
     assert "tokenizer" not in handle
+
+
+def test_apply_chat_template_no_thinking_passes_kwarg_when_supported() -> None:
+    from chirpd.backend import _apply_chat_template_no_thinking
+
+    calls: list[dict] = []
+
+    class _AcceptsKwarg:
+        def apply_chat_template(self, messages, **kwargs):
+            calls.append(kwargs)
+            return f"prompt-from-{len(messages)}-messages"
+
+    out = _apply_chat_template_no_thinking(
+        _AcceptsKwarg(), [{"role": "user", "content": "hi"}]
+    )
+    assert out == "prompt-from-1-messages"
+    assert calls[0]["enable_thinking"] is False
+    assert calls[0]["add_generation_prompt"] is True
+    assert calls[0]["tokenize"] is False
+
+
+def test_apply_chat_template_no_thinking_falls_back_on_typeerror() -> None:
+    from chirpd.backend import _apply_chat_template_no_thinking
+
+    seen_kwargs: list[dict] = []
+
+    class _RejectsKwarg:
+        def apply_chat_template(self, messages, **kwargs):
+            seen_kwargs.append(kwargs)
+            if "enable_thinking" in kwargs:
+                raise TypeError("got unexpected keyword 'enable_thinking'")
+            return "fallback-prompt"
+
+    out = _apply_chat_template_no_thinking(
+        _RejectsKwarg(), [{"role": "user", "content": "hi"}]
+    )
+    assert out == "fallback-prompt"
+    # First call attempts with enable_thinking; fallback call omits it.
+    assert "enable_thinking" in seen_kwargs[0]
+    assert "enable_thinking" not in seen_kwargs[1]
