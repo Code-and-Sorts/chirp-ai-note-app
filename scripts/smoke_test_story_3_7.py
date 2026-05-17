@@ -50,7 +50,9 @@ DAEMON_VACATE_TIMEOUT_S = 10.0
 APP_SUPPORT_DIR = Path.home() / "Library" / "Application Support" / "chirp"
 MODELS_TOML_PATH = APP_SUPPORT_DIR / "models.toml"
 SOCKET_PATH = APP_SUPPORT_DIR / "chirpd.sock"
+LOCK_PATH = APP_SUPPORT_DIR / "chirpd.lock"
 LOG_FILE = Path.home() / "Library" / "Logs" / "chirp" / "chirpd.log"
+DAEMON_SPAWN_WAIT_S = 30.0
 
 BANNER_RE = re.compile(r"chirp\s*›")
 
@@ -93,28 +95,62 @@ def _preflight(repo: str) -> str | None:
 
 
 def _kill_existing_chirpd() -> int:
-    result = subprocess.run(["pgrep", "chirpd"], capture_output=True, text=True)
+    result = subprocess.run(["pgrep", "-f", "/chirpd$"], capture_output=True, text=True)
     pids = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             continue
-    if pids:
-        deadline = time.monotonic() + DAEMON_VACATE_TIMEOUT_S
-        while time.monotonic() < deadline:
-            still = subprocess.run(
-                ["pgrep", "chirpd"], capture_output=True, text=True
-            ).stdout.split()
-            if not still:
-                break
-            time.sleep(SOCKET_POLL_INTERVAL_S)
-    if SOCKET_PATH.exists():
+    deadline = time.monotonic() + DAEMON_VACATE_TIMEOUT_S
+    while time.monotonic() < deadline:
+        still = subprocess.run(
+            ["pgrep", "-f", "/chirpd$"], capture_output=True, text=True
+        ).stdout.split()
+        if not still:
+            break
+        time.sleep(SOCKET_POLL_INTERVAL_S)
+    # Anyone left gets SIGKILL.
+    result = subprocess.run(["pgrep", "-f", "/chirpd$"], capture_output=True, text=True)
+    stragglers = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
+    for pid in stragglers:
         try:
-            SOCKET_PATH.unlink()
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+    # Lock + socket cleanup so the next spawn can flock cleanly.
+    for path in (SOCKET_PATH, LOCK_PATH):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
         except OSError:
             pass
-    return len(pids)
+    return len(pids) + len(stragglers)
+
+
+def _spawn_chirpd() -> subprocess.Popen[bytes]:
+    chirpd_bin = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "chirpd"
+    if not chirpd_bin.exists():
+        found = shutil.which("chirpd")
+        if not found:
+            raise RuntimeError("chirpd console script not found")
+        chirpd_bin = Path(found)
+    return subprocess.Popen(
+        [str(chirpd_bin)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def _wait_for_socket(timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if SOCKET_PATH.is_socket():
+            return True
+        time.sleep(SOCKET_POLL_INTERVAL_S)
+    return False
 
 
 def _stage_models_toml(repo: str, alias: str) -> Path | None:
@@ -241,7 +277,7 @@ def _chirp_binary() -> Path:
 
 
 def _chirpd_pid() -> int | None:
-    result = subprocess.run(["pgrep", "chirpd"], capture_output=True, text=True)
+    result = subprocess.run(["pgrep", "-f", "/chirpd$"], capture_output=True, text=True)
     pids = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
     return pids[0] if pids else None
 
@@ -312,8 +348,10 @@ def _budget_for_first_token() -> tuple[float, str]:
 _MOCK_RETRIEVAL_RUNNER = """
 import sys, os
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
-from typer.testing import CliRunner  # noqa: E402
-from notes_chat.cli import app  # noqa: E402
+
+import notes_chat.cli as cli  # noqa: E402
+import notes_chat.retrieval as retrieval  # noqa: E402
+import notes_chat.cache as cache  # noqa: E402
 
 class _Settings:
     pass
@@ -326,20 +364,21 @@ def _fake_retrieve(config, question, when_filter=None):
         "retrieved_ids": ["c1"],
     }
 
-import notes_chat.cli as cli  # noqa: E402
-import notes_chat.retrieval as retrieval  # noqa: E402
-import notes_chat.cache as cache  # noqa: E402
-
 cli.get_notes_config = lambda: _Settings()
 retrieval.retrieve_context = _fake_retrieve
 cache.get_cached_answer = lambda *a, **kw: None
 cache.cache_answer = lambda *a, **kw: None
 
 question = sys.argv[1]
-runner = CliRunner(mix_stderr=False)
-result = runner.invoke(app, ["ask", "-q", question, "--no-markdown"], color=False)
-sys.stdout.write(result.stdout)
-sys.exit(result.exit_code)
+sys.argv = ["chirp-smoke", "ask", "-q", question, "--no-markdown"]
+try:
+    cli.app(standalone_mode=False)
+    sys.exit(0)
+except SystemExit:
+    raise
+except Exception as exc:  # noqa: BLE001
+    print(f"Query failed: {exc}", file=sys.stderr)
+    sys.exit(1)
 """
 
 
@@ -411,7 +450,32 @@ def main() -> int:
             f"using CHIRP_MODEL_IDLE_TIMEOUT={args.idle_timeout} for idle-unload check"
         )
 
+    daemon_proc: subprocess.Popen[bytes] | None = None
     try:
+        _step("Pre-spawn chirpd (separating spawn from first-token measurement)")
+        spawn_env = os.environ.copy()
+        spawn_env.update(ask_env)
+        chirpd_bin = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "chirpd"
+        if not chirpd_bin.exists():
+            chirpd_bin = Path(shutil.which("chirpd") or "chirpd")
+        spawn_started = time.monotonic()
+        daemon_proc = subprocess.Popen(
+            [str(chirpd_bin)],
+            env=spawn_env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        if not _wait_for_socket(DAEMON_SPAWN_WAIT_S):
+            failures.append(
+                _fail(
+                    f"chirpd did not bind {SOCKET_PATH} within {DAEMON_SPAWN_WAIT_S}s"
+                )
+            )
+        else:
+            spawn_ms = (time.monotonic() - spawn_started) * 1000
+            _ok(f"chirpd pid {daemon_proc.pid} bound socket in {spawn_ms:.0f}ms")
+
         budget_s, chip = _budget_for_first_token()
 
         _step(f"Cold-path: chirp ask (first-token budget ≤ {budget_s:.1f}s on {chip})")

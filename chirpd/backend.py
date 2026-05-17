@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import threading
 from collections.abc import AsyncIterator
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -137,11 +138,12 @@ class MLXBackend:
         SENTINEL_DONE = "done"
         SENTINEL_ERROR = "error"
         SENTINEL_TOKEN = "token"
+        worker_stop = threading.Event()
 
         def _produce() -> None:
             try:
                 for piece in mlx_stream_generate(model, tokenizer, prompt, **options):
-                    if should_stop.is_set():
+                    if should_stop.is_set() or worker_stop.is_set():
                         break
                     text = _extract_token_text(piece)
                     if text is None:
@@ -165,7 +167,9 @@ class MLXBackend:
                     ) from payload
                 return
         finally:
-            should_stop.set()
+            # Tell the worker to halt without mutating the dispatcher's
+            # should_stop — otherwise normal completion would look like a cancel.
+            worker_stop.set()
             await worker
 
     async def embed(  # pragma: no cover — exercised via opt-in @slow tests
