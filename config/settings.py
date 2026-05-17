@@ -11,9 +11,6 @@ from rich.console import Console
 CHIRP_DAEMON_SOCKET_ENV = "CHIRP_DAEMON_SOCKET"
 CHIRP_MODEL_IDLE_TIMEOUT_ENV = "CHIRP_MODEL_IDLE_TIMEOUT"
 
-DEFAULT_DAEMON_SOCKET = (
-    Path.home() / "Library" / "Application Support" / "chirp" / "chirpd.sock"
-)
 DEFAULT_IDLE_TIMEOUT_SECONDS = 300.0
 
 

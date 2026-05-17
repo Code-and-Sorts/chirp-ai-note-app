@@ -10,14 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import logging
 import threading
 from collections.abc import AsyncIterator
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from llm.exceptions import LLMModelLoadFailed
-
-_logger = logging.getLogger("chirpd.backend")
 
 ModelRole = Literal["chat", "embed"]
 
@@ -305,8 +302,9 @@ class FakeBackend:
                 await asyncio.sleep(self.generation_delay_s)
             if should_stop.is_set():
                 return
-            if self.stream_raises is not None and emitted >= self.stream_raises_after:
-                raise self.stream_raises
+            scheduled_raise = self.stream_raises
+            if scheduled_raise is not None and emitted >= self.stream_raises_after:
+                raise scheduled_raise
             yield token
             emitted += 1
 

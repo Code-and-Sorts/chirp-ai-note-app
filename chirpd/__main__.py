@@ -49,22 +49,23 @@ def main() -> int:
     if lock_handle is None:
         return 0
 
-    socket_path = _resolve_socket_path()
-    backend = MLXBackend()
-    registry = read_registry()
-    state = DaemonState(
-        backend=backend,
-        registry=registry,
-        idle_timeout_s=resolve_idle_timeout_seconds(),
-    )
-    dispatcher = Dispatcher(state=state)
     logger = logging.getLogger("chirpd")
-    logger.info("chirpd starting", extra={"op": "startup"})
-
     try:
-        asyncio.run(_run(socket_path, dispatcher))
-    except KeyboardInterrupt:
-        pass
+        socket_path = _resolve_socket_path()
+        backend = MLXBackend()
+        registry = read_registry()
+        state = DaemonState(
+            backend=backend,
+            registry=registry,
+            idle_timeout_s=resolve_idle_timeout_seconds(),
+        )
+        dispatcher = Dispatcher(state=state)
+        logger.info("chirpd starting", extra={"op": "startup"})
+
+        try:
+            asyncio.run(_run(socket_path, dispatcher))
+        except KeyboardInterrupt:
+            pass
     finally:
         release_lock(lock_handle)
         logger.info("chirpd stopped", extra={"op": "shutdown"})

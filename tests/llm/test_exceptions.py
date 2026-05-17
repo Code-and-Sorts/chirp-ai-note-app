@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import llm
 from llm import error_codes
 from llm.exceptions import (
     CODE_TO_EXCEPTION,
@@ -110,8 +111,6 @@ def test_every_wire_constant_maps_to_a_class() -> None:
 
 
 def test_re_exports_from_llm_package() -> None:
-    import llm
-
     for name in (
         "LLMError",
         "LLMTransportError",

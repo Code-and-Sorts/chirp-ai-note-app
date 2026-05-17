@@ -123,7 +123,7 @@ def daemon(socket_path: Path) -> Iterator[_DaemonHarness]:
 
 def _patch_pipeline(monkeypatch: pytest.MonkeyPatch, socket_path: Path) -> None:
     monkeypatch.setenv("CHIRP_DAEMON_SOCKET", str(socket_path))
-    monkeypatch.setattr("notes_chat.cli.get_notes_config", lambda: object())
+    monkeypatch.setattr("notes_chat.cli.get_notes_config", object)
 
     def fake_retrieve(config, question, when_filter=None):
         return {

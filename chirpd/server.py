@@ -78,8 +78,12 @@ async def _close_server(server: asyncio.base_events.Server) -> None:
 
 
 def _unlink_stale_socket(socket_path: Path) -> None:
+    # Guard against accidentally deleting a non-socket file at the configured
+    # path — CHIRP_DAEMON_SOCKET can point anywhere, so refuse to unlink
+    # anything that isn't actually a unix socket.
     try:
-        os.unlink(socket_path)
+        if socket_path.is_socket():
+            os.unlink(socket_path)
     except FileNotFoundError:
         pass
 
