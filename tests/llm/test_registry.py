@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import os
+import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from llm.exceptions import LLMMalformedResponse, LLMModelNotFound
-from llm.registry import Registry, RegistryEntry, read_registry, resolve_alias
+from llm.registry import (
+    HEADER_COMMENT,
+    Registry,
+    RegistryEntry,
+    RegistryWriteError,
+    alias_for_repo,
+    read_registry,
+    remove_model,
+    resolve_alias,
+    set_default_for_role,
+    upsert_model,
+    write_registry,
+)
 
 _WELL_FORMED_TOML = """\
 schema_version = 1
@@ -144,3 +159,307 @@ def test_resolve_alias_default_rejects_role_mismatch() -> None:
         resolve_alias(registry, "default", "chat")
     assert exc.value.details["registered_role"] == "embed"
     assert exc.value.details["requested_role"] == "chat"
+
+
+# ---------------------------------------------------------------------------
+# Writer + mutation helpers (Story 4.1)
+# ---------------------------------------------------------------------------
+
+
+def _chat_entry() -> RegistryEntry:
+    return RegistryEntry(
+        hf_repo="mlx-community/gemma-4-4b-it-4bit",
+        role="chat",
+        options={"temperature": 0.7, "top_p": 0.9, "max_tokens": 2048},
+    )
+
+
+def _embed_entry() -> RegistryEntry:
+    return RegistryEntry(
+        hf_repo="mlx-community/bge-small-en-v1.5",
+        role="embed",
+    )
+
+
+def test_registry_round_trip_empty(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    original = Registry(schema_version=1)
+    write_registry(original, path=target)
+    loaded = read_registry(target)
+    assert loaded == original
+
+
+def test_registry_round_trip_single_chat(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    original = Registry(
+        schema_version=1,
+        default_chat="gemma-4-4b-it-4bit",
+        models={"gemma-4-4b-it-4bit": _chat_entry()},
+    )
+    write_registry(original, path=target)
+    loaded = read_registry(target)
+    assert loaded == original
+
+
+def test_registry_round_trip_chat_and_embed(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    original = Registry(
+        schema_version=1,
+        default_chat="gemma-4-4b-it-4bit",
+        default_embed="bge-small-en-v1.5",
+        models={
+            "gemma-4-4b-it-4bit": _chat_entry(),
+            "bge-small-en-v1.5": _embed_entry(),
+        },
+    )
+    write_registry(original, path=target)
+    loaded = read_registry(target)
+    assert loaded == original
+
+
+def test_write_creates_parent_dir(tmp_path: Path) -> None:
+    target = tmp_path / "nested" / "deeper" / "models.toml"
+    write_registry(Registry(schema_version=1), path=target)
+    assert target.exists()
+    assert target.parent.is_dir()
+
+
+def test_write_uses_default_path_when_omitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "default-models.toml"
+    monkeypatch.setattr("llm.registry.MODELS_TOML_PATH", target)
+    write_registry(Registry(schema_version=1))
+    assert target.exists()
+
+
+def test_write_is_atomic_on_replace_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "models.toml"
+    original = Registry(
+        schema_version=1,
+        default_chat="gemma-4-4b-it-4bit",
+        models={"gemma-4-4b-it-4bit": _chat_entry()},
+    )
+    write_registry(original, path=target)
+    original_bytes = target.read_bytes()
+
+    def boom(_src: str, _dst: str) -> None:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr("llm.registry.os.replace", boom)
+
+    replacement = Registry(
+        schema_version=1,
+        default_chat="other",
+        models={"other": RegistryEntry(hf_repo="mlx-community/other", role="chat")},
+    )
+    with pytest.raises(RegistryWriteError):
+        write_registry(replacement, path=target)
+
+    assert target.read_bytes() == original_bytes
+    assert read_registry(target) == original
+    assert not target.with_name(target.name + ".tmp").exists()
+
+
+def test_write_wraps_mkdir_failure_as_registry_write_error(
+    tmp_path: Path,
+) -> None:
+    occupied = tmp_path / "blocked"
+    occupied.write_text("not a directory")
+    target = occupied / "models.toml"
+
+    with pytest.raises(RegistryWriteError) as exc:
+        write_registry(Registry(schema_version=1), path=target)
+    assert "failed to write models.toml" in str(exc.value)
+    assert occupied.read_text() == "not a directory"
+
+
+def test_write_succeeds_even_when_directory_fsync_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "models.toml"
+    real_fsync = os.fsync
+    real_open = os.open
+    directory_fds: set[int] = set()
+
+    def tracking_open(*args: Any, **kwargs: Any) -> int:
+        fd = real_open(*args, **kwargs)
+        directory_fds.add(fd)
+        return fd
+
+    def fsync_fails_for_directory(fd: int) -> None:
+        if fd in directory_fds:
+            raise OSError("simulated directory fsync failure")
+        real_fsync(fd)
+
+    monkeypatch.setattr("llm.registry.os.open", tracking_open)
+    monkeypatch.setattr("llm.registry.os.fsync", fsync_fails_for_directory)
+
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma-4-4b-it-4bit",
+        models={"gemma-4-4b-it-4bit": _chat_entry()},
+    )
+    write_registry(registry, path=target)
+
+    assert directory_fds, "_fsync_directory_best_effort never opened a directory fd"
+    assert read_registry(target) == registry
+
+
+def test_upsert_model_inserts(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    registry = Registry(schema_version=1)
+    updated = upsert_model(registry, "gemma-4-4b-it-4bit", _chat_entry())
+    assert registry.models == {}
+    assert updated.models["gemma-4-4b-it-4bit"] == _chat_entry()
+    write_registry(updated, path=target)
+    assert read_registry(target) == updated
+
+
+def test_upsert_model_replaces(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    registry = Registry(
+        schema_version=1,
+        models={"gemma-4-4b-it-4bit": _chat_entry()},
+    )
+    replacement = RegistryEntry(
+        hf_repo="mlx-community/gemma-4-4b-it-4bit",
+        role="chat",
+        options={"temperature": 0.1},
+    )
+    updated = upsert_model(registry, "gemma-4-4b-it-4bit", replacement)
+    assert updated.models["gemma-4-4b-it-4bit"].options == {"temperature": 0.1}
+    write_registry(updated, path=target)
+    assert read_registry(target) == updated
+
+
+def test_upsert_rejects_empty_or_slashed_alias() -> None:
+    registry = Registry(schema_version=1)
+    entry = _chat_entry()
+    with pytest.raises(ValueError):
+        upsert_model(registry, "", entry)
+    with pytest.raises(ValueError):
+        upsert_model(registry, "mlx-community/gemma", entry)
+
+
+def test_upsert_rejects_invalid_alias_characters() -> None:
+    registry = Registry(schema_version=1)
+    entry = _chat_entry()
+    for bad in ("Gemma-4-4b", "has spaces", "exclaim!", "über"):
+        with pytest.raises(ValueError):
+            upsert_model(registry, bad, entry)
+
+
+def test_remove_model_clears_default() -> None:
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma-4-4b-it-4bit",
+        models={"gemma-4-4b-it-4bit": _chat_entry()},
+    )
+    updated = remove_model(registry, "gemma-4-4b-it-4bit")
+    assert updated.models == {}
+    assert updated.default_chat is None
+    assert registry.default_chat == "gemma-4-4b-it-4bit"
+
+
+def test_remove_model_clears_embed_default() -> None:
+    registry = Registry(
+        schema_version=1,
+        default_embed="bge-small-en-v1.5",
+        models={"bge-small-en-v1.5": _embed_entry()},
+    )
+    updated = remove_model(registry, "bge-small-en-v1.5")
+    assert updated.models == {}
+    assert updated.default_embed is None
+
+
+def test_remove_unknown_alias_raises_keyerror() -> None:
+    registry = Registry(schema_version=1)
+    with pytest.raises(KeyError):
+        remove_model(registry, "ghost")
+
+
+def test_set_default_for_role_chat() -> None:
+    registry = Registry(
+        schema_version=1,
+        models={"gemma-4-4b-it-4bit": _chat_entry()},
+    )
+    updated = set_default_for_role(registry, "gemma-4-4b-it-4bit")
+    assert updated.default_chat == "gemma-4-4b-it-4bit"
+    assert updated.default_embed is None
+
+
+def test_set_default_for_role_embed() -> None:
+    registry = Registry(
+        schema_version=1,
+        models={"bge-small-en-v1.5": _embed_entry()},
+    )
+    updated = set_default_for_role(registry, "bge-small-en-v1.5")
+    assert updated.default_embed == "bge-small-en-v1.5"
+    assert updated.default_chat is None
+
+
+def test_set_default_for_role_unknown_alias_raises_keyerror() -> None:
+    registry = Registry(schema_version=1)
+    with pytest.raises(KeyError):
+        set_default_for_role(registry, "ghost")
+
+
+def test_alias_for_repo_strips_org_and_lowercases() -> None:
+    assert alias_for_repo("mlx-community/gemma-4-4b-it-4bit") == "gemma-4-4b-it-4bit"
+    assert alias_for_repo("BAAI/bge-small-en-v1.5") == "bge-small-en-v1.5"
+    assert alias_for_repo("Gemma-4-4b-it-4bit") == "gemma-4-4b-it-4bit"
+
+
+def test_alias_for_repo_rejects_empty_after_strip() -> None:
+    with pytest.raises(ValueError):
+        alias_for_repo("mlx-community/")
+
+
+def test_alias_for_repo_rejects_nested_slash() -> None:
+    with pytest.raises(ValueError):
+        alias_for_repo("org/sub/repo")
+
+
+def test_alias_for_repo_rejects_invalid_chars() -> None:
+    with pytest.raises(ValueError):
+        alias_for_repo("mlx-community/has spaces")
+
+
+def test_header_comment_present_and_parseable(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma-4-4b-it-4bit",
+        models={"gemma-4-4b-it-4bit": _chat_entry()},
+    )
+    write_registry(registry, path=target)
+    text = target.read_text(encoding="utf-8")
+    assert text.startswith("# chirp models registry — schema_version 1")
+    assert HEADER_COMMENT in text
+    parsed = tomllib.loads(text)
+    assert parsed["schema_version"] == 1
+    assert parsed["default_chat"] == "gemma-4-4b-it-4bit"
+    assert parsed["models"]["gemma-4-4b-it-4bit"]["hf_repo"] == (
+        "mlx-community/gemma-4-4b-it-4bit"
+    )
+
+
+def test_unicode_options_round_trip(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    entry = RegistryEntry(
+        hf_repo="mlx-community/gemma-4-4b-it-4bit",
+        role="chat",
+        options={
+            "system_prompt": 'you are a助手 with "quotes" and \\backslashes\\',
+        },
+    )
+    original = Registry(schema_version=1, models={"gemma-4-4b-it-4bit": entry})
+    write_registry(original, path=target)
+    loaded = read_registry(target)
+    assert loaded == original
+    assert loaded.models["gemma-4-4b-it-4bit"].options["system_prompt"] == (
+        'you are a助手 with "quotes" and \\backslashes\\'
+    )
