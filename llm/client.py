@@ -147,10 +147,10 @@ class LLMClient:
     def health_sync(self) -> dict[str, Any]:
         return _run_sync(self.health())
 
-    async def model_list(self) -> list[dict[str, Any]]:
+    async def model_list(self, *, spawn_if_absent: bool = True) -> list[dict[str, Any]]:
         envelope = {"id": new_request_id(), "op": OP_MODEL_LIST}
         status_payload: dict[str, Any] | None = None
-        async for event in self._request(envelope):
+        async for event in self._request(envelope, spawn_if_absent=spawn_if_absent):
             if event.get("event") == EVENT_STATUS:
                 status_payload = event
         if status_payload is None:
@@ -165,8 +165,8 @@ class LLMClient:
             )
         return models
 
-    def model_list_sync(self) -> list[dict[str, Any]]:
-        return _run_sync(self.model_list())
+    def model_list_sync(self, *, spawn_if_absent: bool = True) -> list[dict[str, Any]]:
+        return _run_sync(self.model_list(spawn_if_absent=spawn_if_absent))
 
     async def model_load(
         self,
@@ -334,11 +334,15 @@ class LLMClient:
     def cancel_sync(self, target_id: str) -> dict[str, Any]:
         return _run_sync(self.cancel(target_id))
 
-    async def _request(self, envelope: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    async def _request(
+        self, envelope: dict[str, Any], *, spawn_if_absent: bool = True
+    ) -> AsyncIterator[dict[str, Any]]:
         attempted_respawn = False
         while True:
             try:
-                reader, writer = await self._connect_with_handshake()
+                reader, writer = await self._connect_with_handshake(
+                    spawn_if_absent=spawn_if_absent
+                )
             except _HandshakeVersionMismatch as err:
                 if attempted_respawn or not self.retry_on_version_mismatch:
                     raise LLMVersionMismatch(
@@ -372,9 +376,9 @@ class LLMClient:
             await self._wait_for_socket_gone(VERSION_MISMATCH_RESPAWN_WAIT_S)
 
     async def _connect_with_handshake(
-        self,
+        self, *, spawn_if_absent: bool = True
     ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        reader, writer = await self._open_connection()
+        reader, writer = await self._open_connection(spawn_if_absent=spawn_if_absent)
         try:
             hello_event = await self._do_hello(reader, writer)
         except BaseException:
@@ -396,14 +400,19 @@ class LLMClient:
         )
 
     async def _open_connection(
-        self,
+        self, *, spawn_if_absent: bool = True
     ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         try:
             return await asyncio.open_unix_connection(
                 str(self.socket_path), limit=_LINE_READ_LIMIT
             )
-        except (FileNotFoundError, ConnectionRefusedError):
-            pass
+        except (FileNotFoundError, ConnectionRefusedError) as err:
+            if not spawn_if_absent:
+                raise LLMDaemonUnreachable(
+                    f"daemon socket at {self.socket_path} is not accepting "
+                    "connections and spawn was disabled",
+                    details={"socket_path": str(self.socket_path)},
+                ) from err
 
         await self._spawn_daemon()
         try:
