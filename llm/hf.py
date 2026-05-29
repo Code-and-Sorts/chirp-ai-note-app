@@ -227,10 +227,13 @@ def download_model(
     requires the class-level lock protocol and iterates the bar to drive the
     downloads, neither of which a hand-rolled stand-in provides.
 
-    Only the byte bar feeds the callback and the byte total; the file-count bar
-    is ignored. ``DownloadResult.cache_hit`` is ``True`` when no bytes were
-    transferred — the byte bar is always constructed even on a warm cache, so
-    its construction is not itself a cache-miss signal. On a warm cache
+    Only byte bars (``unit="B"``) feed the callback and the byte total; the
+    file-count bar is ignored. Updates from *every* byte bar are summed (not
+    just the first), so a future ``huggingface_hub`` that splits the byte
+    progress across more than one bar can't undercount.
+    ``DownloadResult.cache_hit`` is ``True`` when no bytes were transferred —
+    a byte bar is always constructed even on a warm cache, so its construction
+    is not itself a cache-miss signal. On a warm cache
     ``on_start``/``on_done`` still fire (with a zero byte total) because
     ``huggingface_hub`` reports the snapshot total incrementally, not upfront.
 
@@ -271,15 +274,15 @@ def _build_tqdm_adapter(
             is_byte_bar = kwargs.get("unit") == "B"
             kwargs["disable"] = True
             super().__init__(*args, **kwargs)
-            if is_byte_bar and state.get("byte_bar") is None:
-                state["byte_bar"] = self
+            self._is_byte_bar = is_byte_bar
+            if is_byte_bar and not state["started"]:
                 state["started"] = True
                 if progress is not None:
                     progress.on_start(self.total or None)
 
         def update(self, n: float | None = 1) -> None:
             super().update(n)
-            if state.get("byte_bar") is self and n:
+            if self._is_byte_bar and n:
                 state["bytes"] += int(n)
                 if progress is not None:
                     progress.on_progress(state["bytes"], self.total or None)

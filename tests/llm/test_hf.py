@@ -418,6 +418,32 @@ def test_download_model_mirrors_huggingface_two_bar_usage(tmp_path: Path) -> Non
     assert result.cache_hit is False
 
 
+def test_download_model_sums_bytes_across_multiple_byte_bars(tmp_path: Path) -> None:
+    """Hardening: if huggingface_hub ever splits byte progress across more than
+    one ``unit="B"`` bar, every bar's updates are summed — not just the first's
+    — so bytes can't be undercounted into a false ``cache_hit``."""
+    snapshot_dir = tmp_path / "snap"
+    snapshot_dir.mkdir()
+    recorder = _RecordingCallback()
+
+    def fake_snapshot_download(
+        *, repo_id: str, tqdm_class: type, **_kwargs: Any
+    ) -> str:
+        first = tqdm_class(total=100, unit="B")
+        first.update(100)
+        second = tqdm_class(total=200, unit="B")
+        second.update(200)
+        return str(snapshot_dir)
+
+    with patch("llm.hf.snapshot_download", side_effect=fake_snapshot_download):
+        result = download_model("mlx-community/multi-bar", progress=recorder)
+
+    assert recorder.starts == [100]  # on_start fires once, for the first bar
+    assert recorder.dones == 1
+    assert result.bytes_downloaded == 300
+    assert result.cache_hit is False
+
+
 def test_download_model_cache_hit_reports_zero_bytes(tmp_path: Path) -> None:
     """Warm cache: the byte bar is still constructed (on_start/on_done fire),
     but no bytes transfer, so the result is flagged ``cache_hit``."""
