@@ -148,6 +148,20 @@ def test_health_sync_against_in_process_daemon(
     assert payload["status"] == "ok"
 
 
+async def test_model_list_spawn_if_absent_false_raises_without_spawning(
+    temp_socket_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail_popen(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("spawn_if_absent=False must not spawn a daemon")
+
+    monkeypatch.setattr(subprocess, "Popen", _fail_popen)
+
+    llm_client = LLMClient(socket_path=temp_socket_path)
+    with pytest.raises(LLMDaemonUnreachable):
+        await llm_client.model_list(spawn_if_absent=False)
+
+
 async def test_lazy_spawn_when_socket_missing(
     temp_socket_path: Path,
     fake_daemon_factory: FakeDaemonFactory,

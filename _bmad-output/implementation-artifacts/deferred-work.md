@@ -40,3 +40,7 @@
 
 - Banner test exercises the format string in isolation, not the `InteractiveChatSession.start()` code path. `start()` calls `prompt_toolkit.PromptSession.prompt()` which expects a real TTY; defer an end-to-end banner test until a `prompt_toolkit` session stub is in place. [tests/test_ask_sources.py]
 - `_build_note_index` rebuilds the slug→index map on every retrieval call (`list_notes` + `meta.toml` reads per query). Acceptable at typical scale (10–100 notes); revisit if profiling flags it. [notes_chat/retrieval.py]
+
+## Found during: smoke of 4.4-models-list (2026-05-28)
+
+- Two escaped CHIRPD-CORE defects surfaced while validating `chirp models list` against a real daemon: (1) `MLXBackend.load` can't load embed (`bert`) models — story 3.6; (2) the daemon never re-reads `models.toml` per op, so newly-added aliases fail to warm until restart — story 3.5 (contract violation). Full report: [bug-chirpd-registry-reread-and-embed-load.md](bug-chirpd-registry-reread-and-embed-load.md). Story 4.4 itself is unaffected. [chirpd/backend.py:49, chirpd/state.py:46]
