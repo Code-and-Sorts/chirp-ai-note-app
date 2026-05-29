@@ -20,7 +20,13 @@ from typer.testing import CliRunner
 from llm import hf
 from llm.cli import models as models_module
 from llm.cli._progress import RichProgressCallback
-from llm.exceptions import LLMDaemonUnreachable, LLMModelLoadFailed
+from llm.exceptions import (
+    LLMConnectionLost,
+    LLMDaemonUnreachable,
+    LLMMalformedResponse,
+    LLMModelLoadFailed,
+    LLMVersionMismatch,
+)
 from llm.registry import (
     Registry,
     RegistryEntry,
@@ -494,9 +500,12 @@ def _mock_list_client(
     *,
     models: list[dict[str, object]] | None = None,
     unreachable: bool = False,
+    side_effect: Exception | None = None,
 ) -> MagicMock:
     client = MagicMock()
-    if unreachable:
+    if side_effect is not None:
+        client.model_list_sync.side_effect = side_effect
+    elif unreachable:
         client.model_list_sync.side_effect = LLMDaemonUnreachable("no socket")
     else:
         client.model_list_sync.return_value = models or []
@@ -663,6 +672,36 @@ def test_list_daemon_unreachable_json(
     assert all(model["loaded"] is None for model in payload["models"])
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        LLMVersionMismatch("client 2 != daemon 1"),
+        LLMConnectionLost("broken pipe mid-request"),
+        LLMMalformedResponse("daemon sent junk"),
+    ],
+)
+def test_list_soft_fails_on_transport_or_protocol_error(
+    registry_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    """A reachable-but-broken daemon must not crash the diagnostic command.
+
+    ``list`` only catches ``LLMDaemonUnreachable`` historically; a version
+    mismatch / dropped connection / malformed reply should be treated the
+    same way — loaded state unknown, exit 0 — not surface a raw traceback.
+    """
+    _seed_chat_model(registry_path)
+    _mock_list_client(monkeypatch, side_effect=error)
+
+    result = runner.invoke(models_module.app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["daemon_reachable"] is False
+    assert all(model["loaded"] is None for model in payload["models"])
+
+
 def test_list_does_not_spawn_daemon(
     registry_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -748,6 +787,55 @@ def test_rich_progress_callback_tty_uses_progress_bar() -> None:
     callback.on_done()
 
     assert f"Downloading {CHAT_REPO}" in buffer.getvalue()
+
+
+def test_rich_progress_callback_close_stops_live_display_silently() -> None:
+    """``close`` tears down a started bar idempotently and prints no success."""
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=True, width=120)
+    callback = RichProgressCallback(CHAT_REPO, console=console)
+
+    callback.on_start(100)
+    assert callback._progress is not None
+
+    callback.close()
+    assert callback._progress is None
+    callback.close()  # idempotent — must not raise on the second call
+
+    assert f"Downloaded {CHAT_REPO}" not in buffer.getvalue()
+
+
+def test_add_download_failure_tears_down_live_progress(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A TTY download that fails after ``on_start`` must not leave the bar live.
+
+    Otherwise the Rich live region keeps running with a hidden cursor and the
+    error line can be overdrawn. ``_download``'s ``finally`` must stop it.
+    """
+    captured: dict[str, RichProgressCallback] = {}
+
+    def make_callback(repo_id: str) -> RichProgressCallback:
+        callback = RichProgressCallback(
+            repo_id, console=Console(file=io.StringIO(), force_terminal=True)
+        )
+        captured["callback"] = callback
+        return callback
+
+    def failing_download(repo_id: str, *, progress: RichProgressCallback) -> None:
+        progress.on_start(100)
+        assert progress._progress is not None
+        raise hf.HfNetworkError(repo_id, original=OSError("connection reset"))
+
+    monkeypatch.setattr(models_module, "RichProgressCallback", make_callback)
+    monkeypatch.setattr(hf, "validate_repo", MagicMock(return_value=_chat_metadata()))
+    monkeypatch.setattr(hf, "download_model", failing_download)
+    _mock_client(monkeypatch)
+
+    result = runner.invoke(models_module.app, ["add", CHAT_REPO])
+
+    assert result.exit_code == 1
+    assert captured["callback"]._progress is None
 
 
 # --- story 4.5: show / default / remove / pull -----------------------------
@@ -1130,6 +1218,29 @@ def test_remove_purge_refuses_path_outside_hf_cache(
     assert result.exit_code == 1
     rmtree.assert_not_called()
     assert "outside" in result.stderr
+
+
+def test_remove_purge_refuses_when_cache_dir_equals_hub_root(
+    registry_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard the degenerate case where the repo folder resolves to the root.
+
+    ``Path.is_relative_to`` returns True for equal paths, so a guard that only
+    checks ``is_relative_to`` would let an empty/degenerate repo folder rmtree
+    the entire HF cache root. The equal-path case must be refused.
+    """
+    _seed_chat_model(registry_path)
+    hub_root = tmp_path / "hub"
+    hub_root.mkdir()
+    monkeypatch.setattr(hf, "hf_hub_cache_root", lambda: hub_root)
+    monkeypatch.setattr(hf, "cache_dir_for_repo", lambda repo: hub_root)
+    rmtree = MagicMock()
+    monkeypatch.setattr(models_module.shutil, "rmtree", rmtree)
+
+    result = runner.invoke(models_module.app, ["remove", CHAT_ALIAS, "--purge"])
+
+    assert result.exit_code == 1
+    rmtree.assert_not_called()
 
 
 def test_remove_does_not_call_daemon(

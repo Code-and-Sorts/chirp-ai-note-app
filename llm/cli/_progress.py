@@ -71,3 +71,16 @@ class RichProgressCallback:
                 markup=False,
                 soft_wrap=True,
             )
+
+    def close(self) -> None:
+        """Tear down the live display without emitting a success line.
+
+        Idempotent cleanup for failure paths: if a download raises after
+        :meth:`on_start`, the Rich live region would otherwise stay running
+        and leave the terminal with a hidden cursor. Safe to call after a
+        successful :meth:`on_done` (no-op) or when no display was ever started.
+        """
+        if self._progress is not None:
+            self._progress.stop()
+            self._progress = None
+            self._task_id = None

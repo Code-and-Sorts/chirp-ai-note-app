@@ -35,10 +35,10 @@ from llm.cli._console import console, stdout_console
 from llm.cli._progress import RichProgressCallback
 from llm.client import LLMClient
 from llm.exceptions import (
-    LLMDaemonUnreachable,
     LLMMalformedResponse,
     LLMModelError,
     LLMModelNotFound,
+    LLMProtocolError,
     LLMTransportError,
 )
 from llm.registry import (
@@ -138,11 +138,14 @@ def _query_loaded_state() -> tuple[bool, set[str]]:
 
     ``list`` is a diagnostic command, so a missing daemon is a soft fail: we
     report loaded state as unknown rather than lazy-spawning one (which would
-    mask the very "is the daemon running?" question ``list`` answers).
+    mask the very "is the daemon running?" question ``list`` answers). Any
+    transport or protocol failure (daemon down, connection dropped, version
+    mismatch, malformed reply) is treated the same way — unknown — so a broken
+    or incompatible daemon never crashes the very command meant to diagnose it.
     """
     try:
         models = LLMClient().model_list_sync(spawn_if_absent=False)
-    except LLMDaemonUnreachable:
+    except (LLMTransportError, LLMProtocolError):
         return False, set()
     loaded_aliases = {
         model["alias"]
@@ -413,10 +416,10 @@ def _purge_cache(hf_repo: str) -> str | None:
     """
     cache_dir = hf.cache_dir_for_repo(hf_repo).resolve()
     hub_root = hf.hf_hub_cache_root().resolve()
-    if not cache_dir.is_relative_to(hub_root):
+    if cache_dir == hub_root or not cache_dir.is_relative_to(hub_root):
         _exit(
-            f"Error: refusing to purge {cache_dir}: path is outside the "
-            f"HuggingFace cache root {hub_root}.",
+            f"Error: refusing to purge {cache_dir}: path is not a "
+            f"subdirectory of the HuggingFace cache root {hub_root}.",
             1,
         )
     try:
@@ -513,6 +516,8 @@ def _download(hf_repo: str, alias: str) -> hf.DownloadResult:
         )
     except hf.HfError as err:
         _exit(f"Error: Download failed for {hf_repo}: {err}.", 1)
+    finally:
+        callback.close()
 
 
 def _read_registry() -> Registry:
