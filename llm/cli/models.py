@@ -158,7 +158,11 @@ def _compose_rows(registry: Registry, loaded_aliases: set[str]) -> list[ListRow]
     Sorted by ``(role, alias)`` ascending — ``chat`` sorts before ``embed`` —
     so the table order is stable across runs.
     """
-    defaults = {registry.default_chat, registry.default_embed}
+    defaults = {
+        alias
+        for alias in (registry.default_chat, registry.default_embed)
+        if alias is not None
+    }
     rows = [
         ListRow(
             alias=alias,
