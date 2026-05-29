@@ -50,3 +50,34 @@ the daemon's `model.load` miss the alias. Remove the temp `models.toml` and stop
 
 All progress, status, and error output goes to **stderr**; stdout stays empty,
 so `chirp models add … && …` pipelines stay clean.
+
+## `chirp models show` / `default` / `remove` / `pull` (story 4.5)
+
+Same harness as `add` — invoke the sub-app directly until story 4.6 wires
+`models` into the top-level CLI:
+
+```bash
+run_models() { uv run python -c "import sys; from llm.cli.models import app; sys.argv=['models',*sys.argv[1:]]; app()" "$@"; }
+export CHIRP_REGISTRY_PATH="$(mktemp -d)/models.toml"
+```
+
+End-to-end sequence (AC-19), run on an Apple-silicon Mac with network access:
+
+```bash
+run_models add mlx-community/bge-small-en-v1.5 --no-warm   # register an embed model
+run_models show bge-small-en-v1.5                          # panel: role embed, default yes, cache_path set
+run_models add mlx-community/gemma-4-4b-it-4bit --no-warm  # register a chat model
+run_models default bge-small-en-v1.5                       # flip embed default (no-op if already set)
+run_models pull bge-small-en-v1.5 --no-warm                # cache-hit fast path: "Pulled … (cache hit)."
+run_models remove bge-small-en-v1.5 --purge                # "Removed … and purged cache (<path>)."
+run_models list                                            # bge gone; cache directory gone
+```
+
+JSON contract spot-check:
+
+```bash
+run_models show gemma-4-4b-it-4bit --json | jq -e .default   # -> true
+```
+
+`show` writes its panel (TTY) or JSON document to **stdout**; `default`,
+`remove`, and `pull` print only to **stderr** under every condition.

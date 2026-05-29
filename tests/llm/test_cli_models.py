@@ -747,3 +747,482 @@ def test_rich_progress_callback_tty_uses_progress_bar() -> None:
     callback.on_done()
 
     assert f"Downloading {CHAT_REPO}" in buffer.getvalue()
+
+
+# --- story 4.5: show / default / remove / pull -----------------------------
+
+CHAT_ALIAS = "gemma-4-4b-it-4bit"
+EMBED_ALIAS = "bge-small-en-v1.5"
+
+
+def _seed_two_chat(path: Path) -> None:
+    _seed_registry(
+        path,
+        Registry(
+            schema_version=1,
+            default_chat="first",
+            default_embed=EMBED_ALIAS,
+            models={
+                "first": RegistryEntry(hf_repo="org/first", role="chat"),
+                "second": RegistryEntry(hf_repo="org/second", role="chat"),
+                EMBED_ALIAS: RegistryEntry(hf_repo=EMBED_REPO, role="embed"),
+            },
+        ),
+    )
+
+
+def _mock_cache_path(monkeypatch: pytest.MonkeyPatch, value: Path | None) -> None:
+    monkeypatch.setattr(hf, "resolved_cache_path", MagicMock(return_value=value))
+
+
+def _make_download_result(
+    *, cache_hit: bool = False, bytes_downloaded: int = 0
+) -> hf.DownloadResult:
+    return hf.DownloadResult(
+        repo_id=CHAT_REPO,
+        local_path=Path("/cache/snap"),
+        bytes_downloaded=bytes_downloaded,
+        cache_hit=cache_hit,
+    )
+
+
+# show -----------------------------------------------------------------------
+
+
+def test_show_tty_renders_panel(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_cache_path(monkeypatch, None)
+    _mock_list_client(monkeypatch, models=[{"alias": CHAT_ALIAS, "loaded": True}])
+
+    result = runner.invoke(models_module.app, ["show", CHAT_ALIAS])
+
+    assert result.exit_code == 0
+    assert CHAT_ALIAS in result.stdout
+    assert CHAT_REPO in result.stdout
+    assert "chat" in result.stdout
+
+
+def test_show_json_emits_schema(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_cache_path(monkeypatch, None)
+    _mock_list_client(monkeypatch, models=[{"alias": CHAT_ALIAS, "loaded": True}])
+
+    result = runner.invoke(models_module.app, ["show", CHAT_ALIAS, "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert set(payload) == {
+        "alias",
+        "hf_repo",
+        "role",
+        "default",
+        "loaded",
+        "cache_path",
+        "options",
+        "daemon_reachable",
+    }
+    assert payload["alias"] == CHAT_ALIAS
+    assert payload["hf_repo"] == CHAT_REPO
+    assert payload["role"] == "chat"
+    assert payload["default"] is True
+    assert payload["loaded"] is True
+    assert payload["daemon_reachable"] is True
+
+
+def test_show_renders_options_rows(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
+) -> None:
+    _seed_registry(
+        registry_path,
+        Registry(
+            schema_version=1,
+            default_chat=CHAT_ALIAS,
+            models={
+                CHAT_ALIAS: RegistryEntry(
+                    hf_repo=CHAT_REPO, role="chat", options={"temperature": 0.7}
+                )
+            },
+        ),
+    )
+    _mock_cache_path(monkeypatch, None)
+    _mock_list_client(monkeypatch, models=[])
+
+    tty = runner.invoke(models_module.app, ["show", CHAT_ALIAS])
+    js = runner.invoke(models_module.app, ["show", CHAT_ALIAS, "--json"])
+
+    assert tty.exit_code == 0
+    assert "options.temperature" in tty.stdout
+    assert "0.7" in tty.stdout
+    assert js.exit_code == 0
+    assert json.loads(js.stdout)["options"] == {"temperature": 0.7}
+
+
+def test_show_unknown_alias_exits_5(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_cache_path(monkeypatch, None)
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["show", "nope"])
+
+    assert result.exit_code == 5
+    assert "not registered" in result.stderr
+    assert "chirp models list" in result.stderr
+
+
+def test_show_daemon_unreachable_loaded_null_in_json(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_cache_path(monkeypatch, None)
+    _mock_list_client(monkeypatch, unreachable=True)
+
+    result = runner.invoke(models_module.app, ["show", CHAT_ALIAS, "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["daemon_reachable"] is False
+    assert payload["loaded"] is None
+
+
+def test_show_cache_path_null_when_not_cached(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_cache_path(monkeypatch, None)
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["show", CHAT_ALIAS, "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["cache_path"] is None
+
+
+def test_show_cache_path_resolved_when_cached(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    snapshot = Path("/cache/hub/models--mlx-community--gemma/snapshots/abc")
+    _mock_cache_path(monkeypatch, snapshot)
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["show", CHAT_ALIAS, "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["cache_path"] == str(snapshot)
+
+
+# default --------------------------------------------------------------------
+
+
+def test_default_flips_chat(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_two_chat(registry_path)
+
+    result = runner.invoke(models_module.app, ["default", "second"])
+
+    assert result.exit_code == 0
+    registry = read_registry(path=registry_path)
+    assert registry.default_chat == "second"
+    assert "Set second as default chat." in result.stderr
+
+
+def test_default_flips_embed(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_registry(
+        registry_path,
+        Registry(
+            schema_version=1,
+            default_embed=None,
+            models={EMBED_ALIAS: RegistryEntry(hf_repo=EMBED_REPO, role="embed")},
+        ),
+    )
+
+    result = runner.invoke(models_module.app, ["default", EMBED_ALIAS])
+
+    assert result.exit_code == 0
+    registry = read_registry(path=registry_path)
+    assert registry.default_embed == EMBED_ALIAS
+    assert "default embed" in result.stderr
+
+
+def test_default_unknown_alias_exits_5(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+
+    result = runner.invoke(models_module.app, ["default", "nope"])
+
+    assert result.exit_code == 5
+    assert "not registered" in result.stderr
+
+
+def test_default_invalid_role_exits_1(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    monkeypatch.setattr(
+        models_module,
+        "set_default_for_role",
+        MagicMock(side_effect=ValueError("unsupported role")),
+    )
+
+    result = runner.invoke(models_module.app, ["default", CHAT_ALIAS])
+
+    assert result.exit_code == 1
+    assert "invalid role" in result.stderr
+
+
+def test_default_does_not_warm(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_two_chat(registry_path)
+    factory = _mock_client(monkeypatch)
+
+    result = runner.invoke(models_module.app, ["default", "second"])
+
+    assert result.exit_code == 0
+    factory.assert_not_called()
+
+
+def test_default_does_not_modify_other_default(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_two_chat(registry_path)
+
+    result = runner.invoke(models_module.app, ["default", "second"])
+
+    assert result.exit_code == 0
+    registry = read_registry(path=registry_path)
+    assert registry.default_chat == "second"
+    assert registry.default_embed == EMBED_ALIAS
+
+
+# remove ---------------------------------------------------------------------
+
+
+def test_remove_drops_entry(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_and_embed(registry_path)
+
+    result = runner.invoke(models_module.app, ["remove", EMBED_ALIAS])
+
+    assert result.exit_code == 0
+    registry = read_registry(path=registry_path)
+    assert EMBED_ALIAS not in registry.models
+    assert CHAT_ALIAS in registry.models
+    assert "Removed bge-small-en-v1.5." in result.stderr
+
+
+def test_remove_clears_default_when_removed_alias_was_default(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+
+    result = runner.invoke(models_module.app, ["remove", CHAT_ALIAS])
+
+    assert result.exit_code == 0
+    registry = read_registry(path=registry_path)
+    assert registry.default_chat is None
+    assert CHAT_ALIAS not in registry.models
+
+
+def test_remove_unknown_alias_exits_5(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+
+    result = runner.invoke(models_module.app, ["remove", "nope"])
+
+    assert result.exit_code == 5
+    assert "not registered" in result.stderr
+
+
+def test_remove_purge_deletes_cache_dir(
+    registry_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    hub_root = tmp_path / "hub"
+    cache_dir = hub_root / "models--mlx-community--gemma-4-4b-it-4bit"
+    cache_dir.mkdir(parents=True)
+    monkeypatch.setattr(hf, "hf_hub_cache_root", lambda: hub_root)
+    monkeypatch.setattr(hf, "cache_dir_for_repo", lambda repo: cache_dir)
+    rmtree = MagicMock()
+    monkeypatch.setattr(models_module.shutil, "rmtree", rmtree)
+
+    result = runner.invoke(models_module.app, ["remove", CHAT_ALIAS, "--purge"])
+
+    assert result.exit_code == 0
+    rmtree.assert_called_once_with(cache_dir.resolve(), ignore_errors=False)
+    assert "purged cache" in result.stderr
+
+
+def test_remove_purge_warns_if_cache_missing(
+    registry_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    hub_root = tmp_path / "hub"
+    cache_dir = hub_root / "models--mlx-community--gemma-4-4b-it-4bit"
+    cache_dir.mkdir(parents=True)
+    monkeypatch.setattr(hf, "hf_hub_cache_root", lambda: hub_root)
+    monkeypatch.setattr(hf, "cache_dir_for_repo", lambda repo: cache_dir)
+    monkeypatch.setattr(
+        models_module.shutil,
+        "rmtree",
+        MagicMock(side_effect=FileNotFoundError("gone")),
+    )
+
+    result = runner.invoke(models_module.app, ["remove", CHAT_ALIAS, "--purge"])
+
+    assert result.exit_code == 0
+    assert "Warning" in result.stderr
+    assert "not found" in result.stderr
+    registry = read_registry(path=registry_path)
+    assert CHAT_ALIAS not in registry.models
+
+
+def test_remove_purge_warns_on_permission_error(
+    registry_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    hub_root = tmp_path / "hub"
+    cache_dir = hub_root / "models--mlx-community--gemma-4-4b-it-4bit"
+    cache_dir.mkdir(parents=True)
+    monkeypatch.setattr(hf, "hf_hub_cache_root", lambda: hub_root)
+    monkeypatch.setattr(hf, "cache_dir_for_repo", lambda repo: cache_dir)
+    monkeypatch.setattr(
+        models_module.shutil,
+        "rmtree",
+        MagicMock(side_effect=PermissionError("denied")),
+    )
+
+    result = runner.invoke(models_module.app, ["remove", CHAT_ALIAS, "--purge"])
+
+    assert result.exit_code == 0
+    assert "Warning" in result.stderr
+    assert str(cache_dir.resolve()) in result.stderr
+    assert CHAT_ALIAS not in read_registry(path=registry_path).models
+
+
+def test_remove_purge_refuses_path_outside_hf_cache(
+    registry_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    hub_root = tmp_path / "hub"
+    hub_root.mkdir()
+    outside = tmp_path / "outside"
+    monkeypatch.setattr(hf, "hf_hub_cache_root", lambda: hub_root)
+    monkeypatch.setattr(hf, "cache_dir_for_repo", lambda repo: outside)
+    rmtree = MagicMock()
+    monkeypatch.setattr(models_module.shutil, "rmtree", rmtree)
+
+    result = runner.invoke(models_module.app, ["remove", CHAT_ALIAS, "--purge"])
+
+    assert result.exit_code == 1
+    rmtree.assert_not_called()
+    assert "outside" in result.stderr
+
+
+def test_remove_does_not_call_daemon(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    factory = _mock_client(monkeypatch)
+
+    result = runner.invoke(models_module.app, ["remove", EMBED_ALIAS])
+
+    assert result.exit_code == 0
+    factory.assert_not_called()
+
+
+# pull -----------------------------------------------------------------------
+
+
+def test_pull_redownloads_and_warms(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    download = MagicMock(return_value=_make_download_result(bytes_downloaded=123))
+    monkeypatch.setattr(hf, "download_model", download)
+    factory = _mock_client(monkeypatch)
+
+    result = runner.invoke(models_module.app, ["pull", CHAT_ALIAS])
+
+    assert result.exit_code == 0
+    download.assert_called_once()
+    factory.return_value.model_load_sync.assert_called_once_with(CHAT_ALIAS, "chat")
+    assert "Pulled gemma-4-4b-it-4bit (123 bytes)." in result.stderr
+    assert "Warmed gemma-4-4b-it-4bit." in result.stderr
+
+
+def test_pull_no_warm_skips_model_load(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    monkeypatch.setattr(
+        hf,
+        "download_model",
+        MagicMock(return_value=_make_download_result(cache_hit=True)),
+    )
+    factory = _mock_client(monkeypatch)
+
+    result = runner.invoke(models_module.app, ["pull", CHAT_ALIAS, "--no-warm"])
+
+    assert result.exit_code == 0
+    factory.assert_not_called()
+    assert "cache hit" in result.stderr
+    assert "Skipped warm" in result.stderr
+
+
+def test_pull_unknown_alias_exits_5(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    download = MagicMock()
+    monkeypatch.setattr(hf, "download_model", download)
+
+    result = runner.invoke(models_module.app, ["pull", "nope"])
+
+    assert result.exit_code == 5
+    download.assert_not_called()
+
+
+def test_pull_download_failed_exits_1(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    monkeypatch.setattr(
+        hf,
+        "download_model",
+        MagicMock(side_effect=hf.HfDownloadFailed(CHAT_REPO, original=OSError("io"))),
+    )
+    factory = _mock_client(monkeypatch)
+
+    result = runner.invoke(models_module.app, ["pull", CHAT_ALIAS])
+
+    assert result.exit_code == 1
+    factory.assert_not_called()
+
+
+def test_pull_does_not_modify_registry(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    before = registry_path.read_bytes()
+    monkeypatch.setattr(
+        hf, "download_model", MagicMock(return_value=_make_download_result())
+    )
+    _mock_client(monkeypatch)
+
+    result = runner.invoke(models_module.app, ["pull", CHAT_ALIAS])
+
+    assert result.exit_code == 0
+    assert registry_path.read_bytes() == before

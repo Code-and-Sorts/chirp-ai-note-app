@@ -29,8 +29,11 @@ from llm.hf import (
     HfUnexpectedError,
     RoleInferenceAmbiguous,
     _status_code_from,
+    cache_dir_for_repo,
     download_model,
+    hf_hub_cache_root,
     infer_role,
+    resolved_cache_path,
     validate_repo,
 )
 
@@ -466,3 +469,33 @@ def test_download_model_cache_hit_reports_zero_bytes(tmp_path: Path) -> None:
     assert recorder.dones == 1
     assert result.bytes_downloaded == 0
     assert result.cache_hit is True
+
+
+# --- story 4.5: cache-path helpers -----------------------------------------
+
+
+def test_resolved_cache_path_returns_snapshot_dir_when_cached(tmp_path: Path) -> None:
+    config_file = tmp_path / "snapshots" / "abc" / "config.json"
+    with patch("llm.hf.try_to_load_from_cache", return_value=str(config_file)) as probe:
+        result = resolved_cache_path("mlx-community/gemma-4-4b-it-4bit")
+
+    probe.assert_called_once_with(
+        repo_id="mlx-community/gemma-4-4b-it-4bit", filename="config.json"
+    )
+    assert result == config_file.parent
+
+
+def test_resolved_cache_path_none_when_not_cached() -> None:
+    with patch("llm.hf.try_to_load_from_cache", return_value=None):
+        assert resolved_cache_path("mlx-community/gemma-4-4b-it-4bit") is None
+
+
+def test_resolved_cache_path_none_when_known_absent_sentinel() -> None:
+    with patch("llm.hf.try_to_load_from_cache", return_value=object()):
+        assert resolved_cache_path("mlx-community/gemma-4-4b-it-4bit") is None
+
+
+def test_cache_dir_for_repo_lives_under_hub_root() -> None:
+    cache_dir = cache_dir_for_repo("mlx-community/gemma-4-4b-it-4bit")
+    assert cache_dir.is_relative_to(hf_hub_cache_root())
+    assert cache_dir.name == "models--mlx-community--gemma-4-4b-it-4bit"

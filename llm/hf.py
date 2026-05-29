@@ -19,12 +19,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from huggingface_hub import HfApi, hf_hub_download, snapshot_download
+from huggingface_hub import (
+    HfApi,
+    hf_hub_download,
+    snapshot_download,
+    try_to_load_from_cache,
+)
+from huggingface_hub import constants as _hf_constants
 from huggingface_hub.errors import (
     EntryNotFoundError,
     HfHubHTTPError,
     RepositoryNotFoundError,
 )
+from huggingface_hub.file_download import repo_folder_name
 from tqdm import tqdm as _BaseTqdm
 
 _EMBED_TAGS = frozenset({"sentence-transformers", "feature-extraction"})
@@ -288,3 +295,34 @@ def _build_tqdm_adapter(
                     progress.on_progress(state["bytes"], self.total or None)
 
     return _CallbackTqdm
+
+
+def resolved_cache_path(hf_repo: str) -> Path | None:
+    """Return the local snapshot directory for ``hf_repo`` if cached, else ``None``.
+
+    Probes the HF cache for ``config.json`` (present in every MLX / transformers
+    snapshot) via :func:`huggingface_hub.try_to_load_from_cache`, which returns
+    the cached file path (``str``), ``None`` when the repo isn't cached, or a
+    sentinel object when the file is known-absent. Only a real path string
+    yields a result, and the snapshot directory is that file's parent.
+    """
+    cached = try_to_load_from_cache(repo_id=hf_repo, filename="config.json")
+    if isinstance(cached, str):
+        return Path(cached).parent
+    return None
+
+
+def hf_hub_cache_root() -> Path:
+    """Return the HuggingFace hub cache root (``~/.cache/huggingface/hub``)."""
+    return Path(_hf_constants.HF_HUB_CACHE)
+
+
+def cache_dir_for_repo(hf_repo: str) -> Path:
+    """Return the top-level cache directory for ``hf_repo``.
+
+    This is the ``models--<org>--<name>`` directory under the hub cache root —
+    the deletion target for ``chirp models remove --purge``. The directory is
+    not guaranteed to exist; callers handle a missing path.
+    """
+    folder: str = repo_folder_name(repo_id=hf_repo, repo_type="model")
+    return hf_hub_cache_root() / folder
