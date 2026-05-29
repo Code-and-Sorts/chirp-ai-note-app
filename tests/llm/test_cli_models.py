@@ -833,6 +833,34 @@ def test_show_json_emits_schema(
     assert payload["daemon_reachable"] is True
 
 
+def test_show_renders_options_rows(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
+) -> None:
+    _seed_registry(
+        registry_path,
+        Registry(
+            schema_version=1,
+            default_chat=CHAT_ALIAS,
+            models={
+                CHAT_ALIAS: RegistryEntry(
+                    hf_repo=CHAT_REPO, role="chat", options={"temperature": 0.7}
+                )
+            },
+        ),
+    )
+    _mock_cache_path(monkeypatch, None)
+    _mock_list_client(monkeypatch, models=[])
+
+    tty = runner.invoke(models_module.app, ["show", CHAT_ALIAS])
+    js = runner.invoke(models_module.app, ["show", CHAT_ALIAS, "--json"])
+
+    assert tty.exit_code == 0
+    assert "options.temperature" in tty.stdout
+    assert "0.7" in tty.stdout
+    assert js.exit_code == 0
+    assert json.loads(js.stdout)["options"] == {"temperature": 0.7}
+
+
 def test_show_unknown_alias_exits_5(
     registry_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -934,6 +962,22 @@ def test_default_unknown_alias_exits_5(
 
     assert result.exit_code == 5
     assert "not registered" in result.stderr
+
+
+def test_default_invalid_role_exits_1(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    monkeypatch.setattr(
+        models_module,
+        "set_default_for_role",
+        MagicMock(side_effect=ValueError("unsupported role")),
+    )
+
+    result = runner.invoke(models_module.app, ["default", CHAT_ALIAS])
+
+    assert result.exit_code == 1
+    assert "invalid role" in result.stderr
 
 
 def test_default_does_not_warm(
@@ -1043,6 +1087,29 @@ def test_remove_purge_warns_if_cache_missing(
     assert "not found" in result.stderr
     registry = read_registry(path=registry_path)
     assert CHAT_ALIAS not in registry.models
+
+
+def test_remove_purge_warns_on_permission_error(
+    registry_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    hub_root = tmp_path / "hub"
+    cache_dir = hub_root / "models--mlx-community--gemma-4-4b-it-4bit"
+    cache_dir.mkdir(parents=True)
+    monkeypatch.setattr(hf, "hf_hub_cache_root", lambda: hub_root)
+    monkeypatch.setattr(hf, "cache_dir_for_repo", lambda repo: cache_dir)
+    monkeypatch.setattr(
+        models_module.shutil,
+        "rmtree",
+        MagicMock(side_effect=PermissionError("denied")),
+    )
+
+    result = runner.invoke(models_module.app, ["remove", CHAT_ALIAS, "--purge"])
+
+    assert result.exit_code == 0
+    assert "Warning" in result.stderr
+    assert str(cache_dir.resolve()) in result.stderr
+    assert CHAT_ALIAS not in read_registry(path=registry_path).models
 
 
 def test_remove_purge_refuses_path_outside_hf_cache(
