@@ -2,8 +2,9 @@
 
 The automated suite under `tests/llm/` mocks every I/O boundary — HuggingFace
 (`llm.hf`), the daemon client (`llm.client.LLMClient`), and the registry path
-(redirected with the `CHIRP_REGISTRY_PATH` env var) — so it runs on Linux CI
-with no MLX, network, or daemon subprocess.
+(redirected with the `CHIRP_REGISTRY_PATH` env var) — so it runs in CI (the PR
+checks use `macos-latest`) with no MLX, network, or daemon subprocess, and
+needs no Apple-silicon hardware.
 
 A few behaviors need a real Mac to confirm. Run these by hand before moving a
 story to Review.

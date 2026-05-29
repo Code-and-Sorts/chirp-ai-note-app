@@ -94,7 +94,7 @@ def add_command(
     previous_entry = registry.models.get(resolved_alias)
     default_was_unset = _default_unset_for_role(registry, resolved_role)
     registry = _mutate(registry, resolved_alias, hf_repo, resolved_role)
-    if default_was_unset:
+    if default_was_unset and previous_entry is None:
         registry = set_default_for_role(registry, resolved_alias)
     _write(registry)
 

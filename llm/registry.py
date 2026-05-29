@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import re
 import tomllib
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 
@@ -154,10 +155,12 @@ def write_registry(registry: Registry, *, path: Path | None = None) -> None:
     """Atomically persist ``registry`` to ``path`` (or :data:`MODELS_TOML_PATH`).
 
     Renders TOML via :func:`tomli_w.dumps` with a stable :data:`HEADER_COMMENT`
-    prepended, writes to a sibling ``<path>.tmp`` (fsynced), then swaps via
-    :func:`os.replace`. A failure during the dump-or-replace sequence leaves
-    any pre-existing registry file untouched and removes the partial
-    ``<path>.tmp`` so concurrent or retrying writers don't see stale state.
+    prepended, writes to a sibling temp file named uniquely per invocation
+    (pid + random suffix, fsynced), then swaps via :func:`os.replace`. The
+    unique name keeps concurrent writers from clobbering each other's temp
+    file. A failure during the dump-or-replace sequence leaves any
+    pre-existing registry file untouched and removes this writer's partial
+    temp file so concurrent or retrying writers don't see stale state.
 
     A best-effort directory fsync runs after the rename succeeds; on macOS
     APFS this is documented as a no-op (Apple recommends ``F_FULLFSYNC`` on
@@ -168,7 +171,7 @@ def write_registry(registry: Registry, *, path: Path | None = None) -> None:
     target = path if path is not None else MODELS_TOML_PATH
     payload = registry.model_dump(exclude_none=True, mode="python")
     rendered = HEADER_COMMENT + tomli_w.dumps(payload)
-    tmp_path = target.with_name(target.name + ".tmp")
+    tmp_path = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(tmp_path, "wb") as handle:
@@ -188,6 +191,8 @@ def _safe_unlink(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
     except OSError:
+        # Best-effort cleanup of the temp file; a failure here is intentionally
+        # ignored so it can't mask the original write error being propagated.
         pass
 
 
@@ -199,7 +204,9 @@ def _fsync_directory_best_effort(directory: Path) -> None:
     try:
         os.fsync(fd)
     except OSError:
-        pass
+        # Directory fsync is best-effort durability (a documented no-op on
+        # macOS APFS); the registry is already renamed into place, so ignore.
+        return
     finally:
         os.close(fd)
 
@@ -248,14 +255,14 @@ def set_default_for_role(registry: Registry, alias: str) -> Registry:
             schema_version=registry.schema_version,
             default_chat=alias,
             default_embed=registry.default_embed,
-            models=registry.models,
+            models={**registry.models},
         )
     if entry.role == "embed":
         return Registry(
             schema_version=registry.schema_version,
             default_chat=registry.default_chat,
             default_embed=alias,
-            models=registry.models,
+            models={**registry.models},
         )
     raise ValueError(f"alias {alias!r} has unsupported role {entry.role!r}")
 

@@ -386,7 +386,7 @@ def test_download_model_progress_callback_invoked(tmp_path: Path) -> None:
 
 
 def test_download_model_mirrors_huggingface_two_bar_usage(tmp_path: Path) -> None:
-    """Replay how huggingface_hub 1.8 actually drives ``tqdm_class``.
+    """Replay how huggingface_hub (as of 1.8.x) actually drives ``tqdm_class``.
 
     ``snapshot_download`` constructs the class twice: a shared byte bar
     (``unit="B"``) whose ``total`` is grown after construction as files are

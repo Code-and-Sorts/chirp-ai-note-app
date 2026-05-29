@@ -130,9 +130,14 @@ class DownloadResult:
 
 
 class ProgressCallback(Protocol):
-    def on_start(self, total_bytes: int | None) -> None: ...
-    def on_progress(self, bytes_downloaded: int, total_bytes: int | None) -> None: ...
-    def on_done(self) -> None: ...
+    def on_start(self, total_bytes: int | None) -> None:
+        pass
+
+    def on_progress(self, bytes_downloaded: int, total_bytes: int | None) -> None:
+        pass
+
+    def on_done(self) -> None:
+        pass
 
 
 def validate_repo(repo_id: str) -> HfRepoMetadata:

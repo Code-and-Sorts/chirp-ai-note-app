@@ -329,6 +329,7 @@ def test_add_role_change_warning(
     registry = read_registry(path=registry_path)
     assert registry.models[alias].role == "embed"
     assert registry.default_chat == alias
+    assert registry.default_embed is None
 
 
 def test_add_alias_override_coexists_with_inferred(

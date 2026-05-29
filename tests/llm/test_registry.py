@@ -260,7 +260,7 @@ def test_write_is_atomic_on_replace_failure(
 
     assert target.read_bytes() == original_bytes
     assert read_registry(target) == original
-    assert not target.with_name(target.name + ".tmp").exists()
+    assert not list(target.parent.glob(f"{target.name}.*.tmp"))
 
 
 def test_write_wraps_mkdir_failure_as_registry_write_error(
@@ -463,3 +463,19 @@ def test_unicode_options_round_trip(tmp_path: Path) -> None:
     assert loaded.models["gemma-4-4b-it-4bit"].options["system_prompt"] == (
         'you are a助手 with "quotes" and \\backslashes\\'
     )
+
+
+def test_dotted_alias_round_trips_as_single_key(tmp_path: Path) -> None:
+    """A dotted alias must stay one ``models`` key, not nest as a TOML table.
+
+    ``_ALIAS_RE`` permits dots, and TOML treats an unquoted dotted key as a
+    nesting operator — so this guards that ``tomli_w`` quotes the key on write.
+    """
+    target = tmp_path / "models.toml"
+    alias = "qwen2.5-0.5b-instruct-4bit"
+    original = Registry(schema_version=1, models={alias: _chat_entry()})
+    write_registry(original, path=target)
+
+    parsed = tomllib.loads(target.read_text(encoding="utf-8"))
+    assert list(parsed["models"]) == [alias]
+    assert read_registry(target) == original
