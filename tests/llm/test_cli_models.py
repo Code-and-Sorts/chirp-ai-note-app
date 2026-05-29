@@ -9,6 +9,7 @@ network, or daemon subprocess.
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -485,6 +486,241 @@ def test_add_registry_write_error_exits_1(
 
     assert result.exit_code == 1
     assert "Could not write registry" in result.stderr
+
+
+def _mock_list_client(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    models: list[dict[str, object]] | None = None,
+    unreachable: bool = False,
+) -> MagicMock:
+    client = MagicMock()
+    if unreachable:
+        client.model_list_sync.side_effect = LLMDaemonUnreachable("no socket")
+    else:
+        client.model_list_sync.return_value = models or []
+    factory = MagicMock(return_value=client)
+    monkeypatch.setattr(models_module, "LLMClient", factory)
+    return client
+
+
+@pytest.fixture
+def wide_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Widen the stdout table console so cells are not ellipsized in capture."""
+    monkeypatch.setattr(models_module, "stdout_console", Console(width=200))
+
+
+def _seed_chat_model(path: Path, alias: str = "gemma-4-4b-it-4bit") -> None:
+    _seed_registry(
+        path,
+        Registry(
+            schema_version=1,
+            default_chat=alias,
+            models={alias: RegistryEntry(hf_repo=CHAT_REPO, role="chat")},
+        ),
+    )
+
+
+def _seed_chat_and_embed(path: Path) -> None:
+    _seed_registry(
+        path,
+        Registry(
+            schema_version=1,
+            default_chat="gemma-4-4b-it-4bit",
+            default_embed="bge-small-en-v1.5",
+            models={
+                "gemma-4-4b-it-4bit": RegistryEntry(hf_repo=CHAT_REPO, role="chat"),
+                "bge-small-en-v1.5": RegistryEntry(hf_repo=EMBED_REPO, role="embed"),
+            },
+        ),
+    )
+
+
+def test_list_empty_registry_tty(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list"])
+
+    assert result.exit_code == 0
+    assert "chirp models add" in result.stderr
+    assert result.stdout == ""
+
+
+def test_list_empty_registry_json(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["models"] == []
+    assert payload["default_chat"] is None
+    assert payload["daemon_reachable"] is True
+
+
+def test_list_one_chat_model_tty(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_list_client(
+        monkeypatch, models=[{"alias": "gemma-4-4b-it-4bit", "loaded": True}]
+    )
+
+    result = runner.invoke(models_module.app, ["list"])
+
+    assert result.exit_code == 0
+    assert "gemma-4-4b-it-4bit" in result.stdout
+    assert "★" in result.stdout
+    assert "●" in result.stdout
+
+
+def test_list_one_chat_model_json(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_list_client(
+        monkeypatch, models=[{"alias": "gemma-4-4b-it-4bit", "loaded": True}]
+    )
+
+    result = runner.invoke(models_module.app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["default_chat"] == "gemma-4-4b-it-4bit"
+    assert len(payload["models"]) == 1
+    model = payload["models"][0]
+    assert model["alias"] == "gemma-4-4b-it-4bit"
+    assert model["role"] == "chat"
+    assert model["default"] is True
+    assert model["loaded"] is True
+
+
+def test_list_chat_and_embed_tty(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    _mock_list_client(
+        monkeypatch, models=[{"alias": "bge-small-en-v1.5", "loaded": True}]
+    )
+
+    result = runner.invoke(models_module.app, ["list"])
+
+    assert result.exit_code == 0
+    assert "gemma-4-4b-it-4bit" in result.stdout
+    assert "bge-small-en-v1.5" in result.stdout
+    assert result.stdout.count("★") == 2
+
+
+def test_list_chat_and_embed_json(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    _mock_list_client(
+        monkeypatch, models=[{"alias": "bge-small-en-v1.5", "loaded": True}]
+    )
+
+    result = runner.invoke(models_module.app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    by_alias = {model["alias"]: model for model in payload["models"]}
+    assert by_alias["gemma-4-4b-it-4bit"]["loaded"] is False
+    assert by_alias["bge-small-en-v1.5"]["loaded"] is True
+    assert by_alias["bge-small-en-v1.5"]["role"] == "embed"
+    assert payload["default_embed"] == "bge-small-en-v1.5"
+
+
+def test_list_daemon_unreachable_tty(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_list_client(monkeypatch, unreachable=True)
+
+    result = runner.invoke(models_module.app, ["list"])
+
+    assert result.exit_code == 0
+    assert "daemon not running" in result.stderr
+    assert "●" not in result.stdout
+    assert "—" in result.stdout
+
+
+def test_list_daemon_unreachable_json(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_list_client(monkeypatch, unreachable=True)
+
+    result = runner.invoke(models_module.app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["daemon_reachable"] is False
+    assert all(model["loaded"] is None for model in payload["models"])
+
+
+def test_list_does_not_spawn_daemon(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    client = _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list"])
+
+    assert result.exit_code == 0
+    client.model_list_sync.assert_called_once_with(spawn_if_absent=False)
+
+
+def test_list_unsupported_schema_version_exits_1(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry_path.write_text("schema_version = 99\n", encoding="utf-8")
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list"])
+
+    assert result.exit_code == 1
+    assert "schema version" in result.stderr
+
+
+def test_list_json_is_jq_compatible(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_list_client(
+        monkeypatch, models=[{"alias": "gemma-4-4b-it-4bit", "loaded": True}]
+    )
+
+    result = runner.invoke(models_module.app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert set(payload) == {
+        "schema_version",
+        "default_chat",
+        "default_embed",
+        "models",
+        "daemon_reachable",
+    }
+
+
+def test_list_stdout_clean_in_json_mode(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_model(registry_path)
+    _mock_list_client(
+        monkeypatch, models=[{"alias": "gemma-4-4b-it-4bit", "loaded": True}]
+    )
+
+    result = runner.invoke(models_module.app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) is not None
+    assert result.stdout.endswith("}\n")
+    assert result.stderr == ""
 
 
 def test_rich_progress_callback_non_tty_emits_status_lines() -> None:
