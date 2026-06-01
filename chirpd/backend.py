@@ -70,6 +70,13 @@ class MLXBackend:
                 details={"repo": repo, "role": role},
             ) from err
 
+        if role == "embed":
+            return await self._load_embed(repo, role, local_path)
+        return await self._load_chat(repo, role, local_path)
+
+    async def _load_chat(  # pragma: no cover — opt-in @slow @integration
+        self, repo: str, role: ModelRole, local_path: str
+    ) -> dict[str, Any]:
         try:
             from mlx_lm import load as mlx_load
         except ImportError as err:
@@ -99,10 +106,47 @@ class MLXBackend:
             "tokenizer": loaded[1],
         }
 
+    async def _load_embed(  # pragma: no cover — opt-in @slow @integration
+        self, repo: str, role: ModelRole, local_path: str
+    ) -> dict[str, Any]:
+        try:
+            from mlx_embeddings import load as mlx_embeddings_load
+        except ImportError as err:
+            raise LLMModelLoadFailed(
+                "mlx_embeddings is not installed; chirpd requires "
+                "Apple Silicon dependencies",
+                details={"error": str(err)},
+            ) from err
+
+        try:
+            # mlx_embeddings.load returns (model, tokenizer); for text models the
+            # second element is a TokenizerWrapper. It is stored under "processor"
+            # to match generate()'s parameter name and to read uniformly in embed().
+            loaded = await asyncio.to_thread(mlx_embeddings_load, local_path)
+        except Exception as err:  # noqa: BLE001 — wrap any mlx error
+            raise LLMModelLoadFailed(
+                f"mlx_embeddings.load failed for {repo!r}: {err}",
+                details={
+                    "repo": repo,
+                    "role": role,
+                    "local_path": str(local_path),
+                    "exception_type": type(err).__name__,
+                },
+            ) from err
+
+        return {
+            "repo": repo,
+            "role": role,
+            "local_path": str(local_path),
+            "model": loaded[0],
+            "processor": loaded[1],
+        }
+
     async def unload(self, handle: Any) -> None:
         if isinstance(handle, dict):
             handle.pop("model", None)
             handle.pop("tokenizer", None)
+            handle.pop("processor", None)
         await asyncio.to_thread(gc.collect)
 
     async def stream_generate(  # pragma: no cover — exercised via opt-in @slow tests
@@ -172,33 +216,38 @@ class MLXBackend:
         handle: Any,
         inputs: list[str],
     ) -> list[list[float]]:
+        from llm.exceptions import LLMGenerationFailed
+
+        if not inputs:
+            return []
+
         model = handle["model"]
-        tokenizer = handle["tokenizer"]
+        processor = handle["processor"]
+
+        try:
+            from mlx_embeddings import generate as mlx_embeddings_generate
+        except ImportError as err:
+            raise LLMGenerationFailed(
+                "mlx_embeddings is not installed; chirpd requires "
+                "Apple Silicon dependencies",
+                details={"error": str(err)},
+            ) from err
 
         def _run() -> list[list[float]]:
-            results: list[list[float]] = []
-            for text in inputs:
-                token_ids = tokenizer.encode(text)
-                vector = _invoke_embed(model, token_ids, handle.get("repo"))
-                results.append(_vector_to_floats(vector))
-            return results
+            output = mlx_embeddings_generate(model, processor, texts=inputs)
+            text_embeds = output.text_embeds
+            return [_vector_to_floats(vector) for vector in text_embeds]
 
-        return await asyncio.to_thread(_run)
-
-
-def _invoke_embed(model: Any, token_ids: Any, repo: Any) -> Any:  # pragma: no cover
-    from llm.exceptions import LLMGenerationFailed
-
-    embed_callable = getattr(model, "embed", None)
-    if callable(embed_callable):
-        return embed_callable(token_ids)
-    embed_tokens = getattr(model, "embed_tokens", None)
-    if callable(embed_tokens):
-        return embed_tokens(token_ids)
-    raise LLMGenerationFailed(
-        "loaded model does not expose an 'embed' or 'embed_tokens' callable",
-        details={"repo": repo, "model_type": type(model).__name__},
-    )
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception as err:  # noqa: BLE001 — surface to dispatcher
+            raise LLMGenerationFailed(
+                f"mlx_embeddings.generate failed for {handle.get('repo')!r}: {err}",
+                details={
+                    "repo": handle.get("repo"),
+                    "exception_type": type(err).__name__,
+                },
+            ) from err
 
 
 def _extract_token_text(piece: Any) -> str | None:

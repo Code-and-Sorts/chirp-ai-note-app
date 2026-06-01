@@ -1,6 +1,6 @@
 # BUG: chirpd does not re-read the registry per op, and cannot load embed models
 
-- **Status:** Issue 2 fixed (`chirpd/state.py`, PR #70); Issue 1 promoted to a story and deferred to cutover — see "Resolution" under each issue below.
+- **Status:** Both fixed. Issue 2 — `chirpd/state.py` (PR #70). Issue 1 — story 3.8 on branch `feat/story-3.8-embed-model-load`. See "Resolution" under each issue below.
 - **Severity:** High (blocks the Maya/Priya end-to-end journeys: a freshly `add`ed model can't be warmed; no embed model can be warmed at all)
 - **Owning epic:** EPIC-CHIRPD-CORE
 - **Owning stories:** 3.5-model-lifecycle (Issue 2), 3.6-backend-and-inference (Issue 1) — both currently marked **Done**
@@ -16,9 +16,9 @@ Two independent daemon-side defects, both discovered while validating `chirp mod
 
 ---
 
-## Issue 1 — `MLXBackend.load` cannot load embed (`bert`) models  → promoted to STORY 3.8
+## Issue 1 — `MLXBackend.load` cannot load embed (`bert`) models  ✅ FIXED via STORY 3.8
 
-- **Resolution:** Promoted to [EPIC-CHIRPD-CORE story 3.8](../planning-artifacts/epic-chirpd-core/stories/3.8-embed-model-load-and-pooled-inference.md) (Draft) rather than fixed inline. The fix introduces a new runtime dependency (`mlx-embeddings`) and reworks the embed inference contract (the current `_invoke_embed` returns token-level lookup vectors, not pooled sentence vectors — a second latent defect documented in 3.8). It is **deferred to EPIC-INTEGRATION-CUTOVER 6.3**, the first story with a real `embed`-op consumer and a locked `default_embed` model, so the loader and its consumer are verified together against real MLX (no production caller exists today; `client.embed` has zero non-test callers). Story 3.8 blocks 6.3.
+- **Resolution:** Fixed via [EPIC-CHIRPD-CORE story 3.8](../planning-artifacts/epic-chirpd-core/stories/3.8-embed-model-load-and-pooled-inference.md) on branch `feat/story-3.8-embed-model-load`. `MLXBackend.load` now branches on role: chat → `mlx_lm.load` (unchanged); embed → `mlx_embeddings.load` (new arm64-gated `mlx-embeddings==0.1.0` dependency). `MLXBackend.embed` was reworked to return pooled sentence vectors via `mlx_embeddings.generate(model, processor, texts=...).text_embeds`, fixing the second latent defect (the old `_invoke_embed` returned token-level lookup vectors, not sentence embeddings — now deleted). Verified by an opt-in `@slow @integration` test that passes against real MLX (`mlx-community/bge-small-en-v1.5-bf16`): correct vector count, uniform dimensionality, determinism, and cosine-similarity sanity. EPIC-INTEGRATION-CUTOVER 6.3 remains the first real consumer and will exercise this end-to-end through the retrieval/index pipeline.
 - **Owning story:** 3.6-backend-and-inference (embed inference path)
 - **Symptom:**
   ```
@@ -68,4 +68,4 @@ Two independent daemon-side defects, both discovered while validating `chirp mod
 **Resolved as follows:**
 
 - **Issue 2** — fixed directly (PR #70). It broke the core "`add` then use" loop for chat models too, was a small isolated contract fix in `chirpd/state.py`, and was on a live path, so it did not warrant a story.
-- **Issue 1** — promoted to **EPIC-CHIRPD-CORE story 3.8** and deferred to **EPIC-INTEGRATION-CUTOVER 6.3**. It needs a new dependency and a reworked inference contract, has no production consumer yet, and can only be verified end-to-end against real MLX with a registered embed model — so it is sequenced to land with its first consumer rather than as isolated, CI-unverifiable code.
+- **Issue 1** — fixed via **EPIC-CHIRPD-CORE story 3.8** (`feat/story-3.8-embed-model-load`). Initially scoped to defer to cutover, but implemented now: the loader branch + pooled-inference rework land with an opt-in `@slow @integration` test that passes against a real `bge` model, so the daemon-side embed capability is verified ahead of its first consumer. **EPIC-INTEGRATION-CUTOVER 6.3** still depends on 3.8 and provides the end-to-end pipeline verification.
