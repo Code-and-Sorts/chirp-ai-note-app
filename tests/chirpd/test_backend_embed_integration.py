@@ -75,8 +75,10 @@ async def test_embed_returns_pooled_order_preserving_vectors() -> None:
     assert dimensionality > 0
     assert all(len(vector) == dimensionality for vector in vectors)
 
-    # Order preserved + deterministic: the repeated input yields an identical vector.
-    assert vectors[0] == vectors[2]
+    # Order preserved + deterministic: the repeated input yields the same vector.
+    # Compare by cosine ~= 1.0 rather than exact float equality so the assertion
+    # stays robust to minor float drift across MLX / dependency versions.
+    assert _cosine(vectors[0], vectors[2]) == pytest.approx(1.0, abs=1e-6)
 
     cat = vectors[0]
     unrelated = vectors[1]
