@@ -2,10 +2,10 @@
 
 - **Epic ID:** EPIC-MODEL-REGISTRY
 - **Owner:** Colby
-- **Status:** Draft
+- **Status:** Done — all six stories (4.1–4.6) complete; SC-1..SC-13 verified end-to-end on Apple Silicon (macOS 26.5, arm64) on 2026-05-31. See **§7 → Smoke evidence**. Pending merge of PR #72 (story 4.6 wiring) to land on `main`.
 - **Created:** 2026-05-15
 - **Design source:** `_bmad-output/planning-artifacts/prd.md` (§Functional Requirements FR24–FR38, §CLI Tool Specific Requirements, §User Journeys — Maya, Priya); `_bmad-output/planning-artifacts/architecture.md` (§Configuration & Persistence, §Project Structure → `llm/` package, §Implementation Patterns → CLI Output Patterns, §Model Registry Read/Write); `_bmad-output/planning-artifacts/implementation-readiness-report-2026-05-12.md` (Minor concerns: `models.toml` created on first use)
-- **Related branch (current work):** TBD
+- **Related branch (current work):** `feat/story-4.6-models-typer-wiring` (PR #72)
 
 ## 1. Goal
 
@@ -123,6 +123,28 @@ End-to-end on a clean Apple Silicon Mac with CHIRPD-CORE landed and `make dev-in
 - **SC-11** Atomic write resilience: a pytest test that kills the writer mid-flight (between `tomli_w.dumps` and `os.replace`) leaves the existing `models.toml` intact, with no partial `.tmp` artifact visible to the reader.
 - **SC-12** `uv run pytest tests/llm/test_registry.py tests/llm/test_hf.py tests/llm/test_cli_models.py` passes with the new modules at ≥ 90% line coverage (NFR-M1).
 - **SC-13** `uv run ruff check .` and `uv run mypy chirp llm` (or whatever the project's mypy invocation is for `llm/`) report no issues.
+
+### Smoke evidence
+
+Verified end-to-end on 2026-05-31, Apple Silicon (arm64, macOS 26.5), `mlx_lm` present, HuggingFace reachable, branch `feat/story-4.6-models-typer-wiring`, starting from no `models.toml`. **All 13 SCs passed.**
+
+Because the PRD's `mlx-community/gemma-4-4b-it-4bit` does not exist on HF and `Llama-3.2-3B-Instruct-4bit` was not cached, the run substituted already-cached models to exercise the same code paths without multi-GB downloads: primary chat = `mlx-community/Llama-3.2-1B-Instruct-4bit` (alias `llama-3.2-1b-instruct-4bit`); second model = `mlx-community/Qwen2.5-0.5B-Instruct-4bit` (alias `fast`).
+
+| SC | Evidence |
+|----|----------|
+| SC-1 | `chirp models --help` lists `add`/`list`/`show`/`default`/`remove`/`pull`; `chirp --help` shows the `Models` panel. |
+| SC-2 | `chirp models add …Llama-3.2-1B…` → validate → cache-hit download → lazy-spawned `chirpd` → `model.load` → `Ready.` in ~3.6 s. |
+| SC-3 | `models.toml` written with header comment, `schema_version = 1`, `default_chat`, and the `[models."…"]` entry; valid TOML. |
+| SC-4 | `chirp models list` Rich table with `alias`/`role`/`default`/`loaded`/`hf_repo`; default ★, loaded ●. |
+| SC-5 | `chirp models list --json` single JSON doc, `jq -e .` exit 0, `daemon_reachable`/`loaded` true. |
+| SC-6 | Adding a second model with a chat default already set did **not** auto-promote; `chirp models default fast` flipped `default_chat`. |
+| SC-7 | `chirp models show fast --json` returned alias/hf_repo/role/options/resolved `cache_path`. |
+| SC-8 | `chirp models remove fast --purge` dropped the entry and deleted the HF cache dir; `llama` entry and `default_chat` unchanged. |
+| SC-9 | `chirp models pull` on a healthy cache was a ~0.33 s no-op (`cache hit`), then re-warmed. |
+| SC-10 | `_complete_alias` returned the registered aliases against the live registry; the real zsh completion protocol (`_CHIRP_COMPLETE=complete_zsh`) returned both aliases with prefix filtering. |
+| SC-11 | `test_write_is_atomic_on_replace_failure` passes (pre-existing file intact, no `.tmp` leftover). |
+| SC-12 | `pytest test_registry.py test_hf.py test_cli_models.py` → 154 passed; coverage `registry` 96% / `hf` 98% / `cli.models` 100% (99% total). |
+| SC-13 | `ruff check .` clean; `mypy chirp llm` clean. |
 
 ## 8. Out of scope / deferred
 
