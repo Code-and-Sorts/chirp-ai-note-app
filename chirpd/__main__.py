@@ -56,6 +56,7 @@ def main() -> int:
                 backend=backend,
                 registry=registry,
                 idle_timeout_s=resolve_idle_timeout_seconds(),
+                registry_reader=read_registry,
             )
             dispatcher = Dispatcher(state=state)
             logger.info("chirpd starting", extra={"op": "startup"})

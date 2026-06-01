@@ -1,6 +1,6 @@
 # BUG: chirpd does not re-read the registry per op, and cannot load embed models
 
-- **Status:** Both fixed. Issue 2 — `chirpd/state.py` (PR #70). Issue 1 — story 3.8 on branch `feat/story-3.8-embed-model-load`. See "Resolution" under each issue below.
+- **Status:** Both fixed. Issue 2 — `chirpd/state.py` (PR #70). Issue 1 — story 3.8 (PR #71). See "Resolution" under each issue below.
 - **Severity:** High (blocks the Maya/Priya end-to-end journeys: a freshly `add`ed model can't be warmed; no embed model can be warmed at all)
 - **Owning epic:** EPIC-CHIRPD-CORE
 - **Owning stories:** 3.5-model-lifecycle (Issue 2), 3.6-backend-and-inference (Issue 1) — both currently marked **Done**
@@ -38,7 +38,7 @@ Two independent daemon-side defects, both discovered while validating `chirp mod
 
 ## Issue 2 — daemon caches the registry at startup; never re-reads per op  ✅ FIXED (PR #70)
 
-- **Resolution:** Fixed directly in `chirpd/state.py` (PR #70, branch `fix/chirpd-registry-reread`). `DaemonState` now takes an optional `registry_reader`; the daemon passes `read_registry`, and `model.load` / `model.list` / `resolve_canonical_alias` re-read `models.toml` per op via `DaemonState._refresh_registry()` before resolving (refresh happens before lock acquisition in `load`, preserving the `_registry_locks` discipline). Plain per-op read, no file watcher (hot-reload stays out of scope). Regression tests: `tests/chirpd/test_state.py::test_load_sees_alias_added_after_startup`, `::test_list_models_reflects_registry_changes_after_startup`, `::test_registry_reader_absent_keeps_in_memory_registry`. Not story-tracked (small, isolated contract fix).
+- **Resolution:** Fixed in `chirpd/state.py` (PR #70). `DaemonState` takes an optional `registry_reader`; the daemon passes `read_registry`, and the model ops re-read `models.toml` per op via `DaemonState._refresh_registry()` before resolving. A chat request resolves the registry exactly once via `DaemonState.resolve()` and threads that `(entry, alias)` snapshot into `load(..., resolved=...)`, so the announced alias can't diverge from the generated one if `models.toml` changes mid-request. Refresh happens before lock acquisition in `load`, preserving the `_registry_locks` discipline. Plain per-op read, no file watcher (hot-reload stays out of scope). Regression tests: `tests/chirpd/test_state.py::test_load_sees_alias_added_after_startup`, `::test_list_models_reflects_registry_changes_after_startup`, `::test_registry_reader_absent_keeps_in_memory_registry`, `::test_resolved_snapshot_survives_mid_request_default_change`. Not story-tracked (small, isolated contract fix).
 - **Owning story:** 3.5-model-lifecycle (per-op registry read)
 - **Symptom:** after a daemon is already running, registering a new alias and warming it fails until the daemon is restarted:
   ```

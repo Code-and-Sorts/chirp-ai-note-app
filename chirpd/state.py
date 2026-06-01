@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -15,7 +16,7 @@ import psutil
 from chirpd.backend import LLMBackend, ModelRole
 from llm.exceptions import LLMError
 from llm.protocol import OP_MODEL_LOAD, OP_MODEL_UNLOAD, package_version
-from llm.registry import Registry, resolve_alias
+from llm.registry import Registry, RegistryEntry, resolve_alias
 
 _logger = logging.getLogger("chirpd.state")
 
@@ -41,9 +42,12 @@ class DaemonState:
         backend: LLMBackend,
         registry: Registry,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
+        *,
+        registry_reader: Callable[[], Registry] | None = None,
     ) -> None:
         self._backend = backend
         self._registry = registry
+        self._registry_reader = registry_reader
         self._idle_timeout_s = idle_timeout_s
         self._models: dict[str, LoadedModel] = {}
         self._registry_locks: dict[str, asyncio.Lock] = {}
@@ -54,6 +58,17 @@ class DaemonState:
 
     @property
     def registry(self) -> Registry:
+        return self._registry
+
+    def _refresh_registry(self) -> Registry:
+        """Re-read ``models.toml`` so aliases added since startup are visible.
+
+        Per-op reads keep the daemon honest without a file watcher (hot-reload
+        is out of scope). Tests that pass no reader keep their in-memory
+        registry untouched.
+        """
+        if self._registry_reader is not None:
+            self._registry = self._registry_reader()
         return self._registry
 
     @property
@@ -74,22 +89,35 @@ class DaemonState:
     def get(self, alias: str) -> LoadedModel | None:
         return self._models.get(alias)
 
+    def resolve(self, identifier: str, role: ModelRole) -> tuple[RegistryEntry, str]:
+        """Re-read the registry once and resolve ``identifier`` to (entry, alias).
+
+        A request that both announces a model (``loading`` event) and loads it
+        must resolve once and reuse the result. Resolving twice would read the
+        registry twice, so a ``models.toml`` edit landing between the two reads
+        could make the announced alias diverge from the one actually generated.
+        """
+        registry = self._refresh_registry()
+        entry = resolve_alias(registry, identifier, role)
+        alias = (
+            identifier
+            if identifier != "default"
+            else _alias_for_default(registry, role)
+        )
+        return entry, alias
+
     def resolve_canonical_alias(self, identifier: str, role: ModelRole) -> str:
-        resolve_alias(self._registry, identifier, role)
-        if identifier == "default":
-            return _alias_for_default(self._registry, role)
-        return identifier
+        return self.resolve(identifier, role)[1]
 
     async def load(
         self,
         identifier: str,
         role: ModelRole = "chat",
+        *,
+        resolved: tuple[RegistryEntry, str] | None = None,
     ) -> LoadedModel:
-        entry = resolve_alias(self._registry, identifier, role)
-        alias = (
-            identifier
-            if identifier != "default"
-            else _alias_for_default(self._registry, role)
+        entry, alias = (
+            resolved if resolved is not None else self.resolve(identifier, role)
         )
 
         lock = self._registry_locks.setdefault(alias, asyncio.Lock())
@@ -139,10 +167,11 @@ class DaemonState:
         )
 
     def list_models(self) -> list[dict[str, Any]]:
+        registry = self._refresh_registry()
         out: list[dict[str, Any]] = []
         seen: set[str] = set()
         now = datetime.now(UTC)
-        for alias, entry in self._registry.models.items():
+        for alias, entry in registry.models.items():
             seen.add(alias)
             loaded = self._models.get(alias)
             out.append(
