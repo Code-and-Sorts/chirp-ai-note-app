@@ -10,6 +10,7 @@ import pytest
 
 from chirpd.backend import FakeBackend
 from chirpd.state import DaemonState
+from llm.exceptions import LLMModelNotFound
 from llm.registry import Registry, RegistryEntry
 
 
@@ -236,3 +237,47 @@ async def test_schedule_idle_unload_on_embed_is_noop() -> None:
     loaded = await state.load("nomic", "embed")
     state.schedule_idle_unload(loaded, keep_alive=None)
     assert loaded.idle_unload_task is None
+
+
+async def test_load_sees_alias_added_after_startup() -> None:
+    backend = FakeBackend()
+    current = _registry()
+    state = DaemonState(
+        backend=backend,
+        registry=current,
+        idle_timeout_s=60.0,
+        registry_reader=lambda: current,
+    )
+
+    with pytest.raises(LLMModelNotFound):
+        await state.load("gemma", "chat")
+
+    current = _registry(gemma=_chat_entry())
+    loaded = await state.load("gemma", "chat")
+    assert loaded.alias == "gemma"
+
+
+async def test_list_models_reflects_registry_changes_after_startup() -> None:
+    backend = FakeBackend()
+    current = _registry()
+    state = DaemonState(
+        backend=backend,
+        registry=current,
+        idle_timeout_s=60.0,
+        registry_reader=lambda: current,
+    )
+
+    assert state.list_models() == []
+
+    current = _registry(gemma=_chat_entry())
+    aliases = [item["alias"] for item in state.list_models()]
+    assert aliases == ["gemma"]
+
+
+async def test_registry_reader_absent_keeps_in_memory_registry() -> None:
+    backend = FakeBackend()
+    registry = _registry(gemma=_chat_entry())
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=60.0)
+
+    state.list_models()
+    assert state.registry is registry
