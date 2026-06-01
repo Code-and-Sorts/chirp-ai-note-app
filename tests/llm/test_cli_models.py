@@ -1338,3 +1338,61 @@ def test_pull_does_not_modify_registry(
 
     assert result.exit_code == 0
     assert registry_path.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# Typer registration + alias completion (Story 4.6)
+# ---------------------------------------------------------------------------
+
+
+def test_completion_returns_matching_aliases(registry_path: Path) -> None:
+    _seed_chat_and_embed(registry_path)
+    assert models_module._complete_alias("gem") == [CHAT_ALIAS]
+    assert models_module._complete_alias("bge") == [EMBED_ALIAS]
+    assert models_module._complete_alias("") == sorted([CHAT_ALIAS, EMBED_ALIAS])
+
+
+def test_completion_no_registry_returns_empty(registry_path: Path) -> None:
+    assert not registry_path.exists()
+    assert models_module._complete_alias("") == []
+
+
+def test_completion_unreadable_registry_returns_empty(registry_path: Path) -> None:
+    registry_path.write_text("schema_version = 1\nthis is not valid toml")
+    assert models_module._complete_alias("") == []
+
+
+def test_completion_does_not_spawn_daemon(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    client = MagicMock()
+    monkeypatch.setattr(models_module, "LLMClient", client)
+    read_spy = MagicMock(wraps=models_module.read_registry)
+    monkeypatch.setattr(models_module, "read_registry", read_spy)
+
+    assert models_module._complete_alias("") == sorted([CHAT_ALIAS, EMBED_ALIAS])
+
+    # Resolves purely through the passive registry reader, never the daemon client.
+    read_spy.assert_called_once()
+    client.assert_not_called()
+
+
+def test_models_subapp_registered_under_chirp() -> None:
+    from chirp.cli import app as chirp_app
+
+    result = runner.invoke(chirp_app, ["--help"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0
+    assert "models" in result.stdout
+    assert "Models" in result.stdout
+
+
+def test_chirp_models_help_lists_six_subcommands() -> None:
+    from chirp.cli import app as chirp_app
+
+    result = runner.invoke(chirp_app, ["models", "--help"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0
+    for name in ("add", "list", "show", "default", "remove", "pull"):
+        assert name in result.stdout

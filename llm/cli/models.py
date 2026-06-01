@@ -67,6 +67,27 @@ def models_main() -> None:
     """
 
 
+_MAX_ALIAS_COMPLETIONS = 200
+
+
+def _complete_alias(incomplete: str) -> list[str]:
+    """Suggest registered aliases for ``<TAB>`` on alias arguments.
+
+    Reads the registry passively and returns matching aliases sorted for
+    stable ordering across shells. Shell completion runs in a tight loop as
+    the user types, so any failure (missing/unreadable registry, unexpected
+    error) is swallowed and yields no suggestions rather than a traceback.
+    """
+    try:
+        registry = read_registry(path=_registry_path())
+        matches = sorted(
+            alias for alias in registry.models if alias.startswith(incomplete)
+        )
+        return matches[:_MAX_ALIAS_COMPLETIONS]
+    except Exception:  # noqa: BLE001 — shell completion must never raise
+        return []
+
+
 @app.command("add")
 def add_command(
     hf_repo: str = typer.Argument(
@@ -249,7 +270,11 @@ class ShowState:
 
 @app.command("show")
 def show_command(
-    alias: str = typer.Argument(..., help="Registered model alias to inspect."),
+    alias: str = typer.Argument(
+        ...,
+        help="Registered model alias to inspect.",
+        autocompletion=_complete_alias,
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -272,7 +297,11 @@ def show_command(
 
 @app.command("default")
 def set_default_command(
-    alias: str = typer.Argument(..., help="Registered alias to make its role default."),
+    alias: str = typer.Argument(
+        ...,
+        help="Registered alias to make its role default.",
+        autocompletion=_complete_alias,
+    ),
 ) -> None:
     """Flip the default model for the alias's role (chat or embed)."""
     registry = _read_registry()
@@ -292,7 +321,9 @@ def set_default_command(
 @app.command("remove")
 def remove_command(
     alias: str = typer.Argument(
-        ..., help="Registered alias to drop from the registry."
+        ...,
+        help="Registered alias to drop from the registry.",
+        autocompletion=_complete_alias,
     ),
     purge: bool = typer.Option(
         False,
@@ -320,7 +351,11 @@ def remove_command(
 
 @app.command("pull")
 def pull_command(
-    alias: str = typer.Argument(..., help="Registered alias to force-redownload."),
+    alias: str = typer.Argument(
+        ...,
+        help="Registered alias to force-redownload.",
+        autocompletion=_complete_alias,
+    ),
     no_warm: bool = typer.Option(
         False,
         "--no-warm",

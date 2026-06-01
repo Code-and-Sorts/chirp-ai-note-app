@@ -18,6 +18,7 @@ from typer.core import TyperGroup
 import audio_capture
 from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingError
 from config.settings import ChirpSettings, get_settings
+from llm.cli.models import app as models_app
 from utils.file_utils import NoteRecord, list_notes
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ app = typer.Typer(
 console = Console()
 
 MAIN_PANEL = "Commands"
+MODELS_PANEL = "Models"
 
 
 def _prompt_title() -> str:
@@ -524,6 +526,8 @@ def _run_regen_pipeline(settings) -> None:
 
 notes_app = typer.Typer(help="Browse, view, edit, or delete your notes")
 app.add_typer(notes_app, name="notes", rich_help_panel=MAIN_PANEL)
+
+app.add_typer(models_app, name="models", rich_help_panel=MODELS_PANEL)
 
 
 class NoteNotFound(Exception):
