@@ -16,7 +16,7 @@ import psutil
 from chirpd.backend import LLMBackend, ModelRole
 from llm.exceptions import LLMError
 from llm.protocol import OP_MODEL_LOAD, OP_MODEL_UNLOAD, package_version
-from llm.registry import Registry, resolve_alias
+from llm.registry import Registry, RegistryEntry, resolve_alias
 
 _logger = logging.getLogger("chirpd.state")
 
@@ -89,24 +89,35 @@ class DaemonState:
     def get(self, alias: str) -> LoadedModel | None:
         return self._models.get(alias)
 
-    def resolve_canonical_alias(self, identifier: str, role: ModelRole) -> str:
-        registry = self._refresh_registry()
-        resolve_alias(registry, identifier, role)
-        if identifier == "default":
-            return _alias_for_default(registry, role)
-        return identifier
+    def resolve(self, identifier: str, role: ModelRole) -> tuple[RegistryEntry, str]:
+        """Re-read the registry once and resolve ``identifier`` to (entry, alias).
 
-    async def load(
-        self,
-        identifier: str,
-        role: ModelRole = "chat",
-    ) -> LoadedModel:
+        A request that both announces a model (``loading`` event) and loads it
+        must resolve once and reuse the result. Resolving twice would read the
+        registry twice, so a ``models.toml`` edit landing between the two reads
+        could make the announced alias diverge from the one actually generated.
+        """
         registry = self._refresh_registry()
         entry = resolve_alias(registry, identifier, role)
         alias = (
             identifier
             if identifier != "default"
             else _alias_for_default(registry, role)
+        )
+        return entry, alias
+
+    def resolve_canonical_alias(self, identifier: str, role: ModelRole) -> str:
+        return self.resolve(identifier, role)[1]
+
+    async def load(
+        self,
+        identifier: str,
+        role: ModelRole = "chat",
+        *,
+        resolved: tuple[RegistryEntry, str] | None = None,
+    ) -> LoadedModel:
+        entry, alias = (
+            resolved if resolved is not None else self.resolve(identifier, role)
         )
 
         lock = self._registry_locks.setdefault(alias, asyncio.Lock())

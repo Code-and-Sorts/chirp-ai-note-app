@@ -281,3 +281,55 @@ async def test_registry_reader_absent_keeps_in_memory_registry() -> None:
 
     state.list_models()
     assert state.registry is registry
+
+
+def _two_alias_registry(default_alias: str) -> Registry:
+    return Registry(
+        schema_version=1,
+        default_chat=default_alias,
+        models={
+            "gemma": _chat_entry("mlx-community/gemma-4-4b-it-4bit"),
+            "other": _chat_entry("mlx-community/other-4bit"),
+        },
+    )
+
+
+async def test_resolved_snapshot_survives_mid_request_default_change() -> None:
+    # The chat dispatcher resolves once (for the 'loading' event) and then loads.
+    # If models.toml flips 'default' between those steps, the load must still use
+    # the alias that was announced — one registry snapshot per request.
+    backend = FakeBackend()
+    current = _two_alias_registry("gemma")
+    state = DaemonState(
+        backend=backend,
+        registry=current,
+        idle_timeout_s=60.0,
+        registry_reader=lambda: current,
+    )
+
+    entry, alias = state.resolve("default", "chat")
+    assert alias == "gemma"
+
+    current = _two_alias_registry("other")  # default flips mid-request
+
+    loaded = await state.load("default", "chat", resolved=(entry, alias))
+    assert loaded.alias == "gemma"
+    assert backend.load_calls[-1] == ("mlx-community/gemma-4-4b-it-4bit", "chat")
+
+
+async def test_load_without_snapshot_reresolves_current_default() -> None:
+    # Without a snapshot (e.g. the embed path), load does its own single read and
+    # resolves against the live registry.
+    backend = FakeBackend()
+    current = _two_alias_registry("gemma")
+    state = DaemonState(
+        backend=backend,
+        registry=current,
+        idle_timeout_s=60.0,
+        registry_reader=lambda: current,
+    )
+
+    current = _two_alias_registry("other")
+
+    loaded = await state.load("default", "chat")
+    assert loaded.alias == "other"
