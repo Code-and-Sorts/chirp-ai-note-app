@@ -94,7 +94,7 @@ def test_apple_silicon_check_passes_on_arm64(
 ) -> None:
     monkeypatch.setattr("chirpd.__main__.platform.machine", lambda: "arm64")
     _patch_lock(monkeypatch, acquired=False)
-    monkeypatch.setattr("chirpd.__main__.configure_logging", lambda: None)
+    monkeypatch.setattr("chirpd.__main__.configure_logging", lambda **_: None)
     monkeypatch.setattr("chirpd.__main__.ensure_runtime_dirs", lambda: None)
     assert chirpd_main.main() == 0
 
@@ -129,7 +129,7 @@ def test_main_returns_zero_when_lock_already_held(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("chirpd.__main__.platform.machine", lambda: "arm64")
-    monkeypatch.setattr("chirpd.__main__.configure_logging", lambda: None)
+    monkeypatch.setattr("chirpd.__main__.configure_logging", lambda **_: None)
     monkeypatch.setattr("chirpd.__main__.ensure_runtime_dirs", lambda: None)
     _patch_lock(monkeypatch, acquired=False)
     assert chirpd_main.main() == 0
@@ -144,7 +144,7 @@ def test_main_runs_serve_until_cancelled(
     socket_path = tmp_dir / "s"
     monkeypatch.setenv("CHIRP_DAEMON_SOCKET", str(socket_path))
     monkeypatch.setattr("chirpd.__main__.platform.machine", lambda: "arm64")
-    monkeypatch.setattr("chirpd.__main__.configure_logging", lambda: None)
+    monkeypatch.setattr("chirpd.__main__.configure_logging", lambda **_: None)
     monkeypatch.setattr("chirpd.__main__.ensure_runtime_dirs", lambda: None)
     _patch_lock(monkeypatch, acquired=True)
 
