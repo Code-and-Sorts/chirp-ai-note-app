@@ -55,6 +55,7 @@ class DaemonState:
         self._start_monotonic = time.monotonic()
         self._daemon_version = package_version()
         self._proc = psutil.Process(os.getpid())
+        self._last_request_at: datetime | None = None
 
     @property
     def registry(self) -> Registry:
@@ -85,6 +86,16 @@ class DaemonState:
 
     def uptime_seconds(self) -> float:
         return time.monotonic() - self._start_monotonic
+
+    def mark_request(self) -> None:
+        """Stamp the wall-clock time of the latest user-facing inference op.
+
+        ``chirp daemon status`` reports this so a user can tell "never reached"
+        (``None``) from "served a request a while ago". Only the work ops (chat,
+        embed) call this — ``health`` / ``model.status`` must not, or the status
+        command would always report itself as the last request.
+        """
+        self._last_request_at = datetime.now(UTC)
 
     def get(self, alias: str) -> LoadedModel | None:
         return self._models.get(alias)
@@ -227,6 +238,11 @@ class DaemonState:
             "daemon_version": self._daemon_version,
             "rss_bytes": rss_bytes,
             "idle_timeout_seconds": self._idle_timeout_s,
+            "last_request_at": (
+                self._last_request_at.isoformat()
+                if self._last_request_at is not None
+                else None
+            ),
             "models": loaded_payload,
         }
 

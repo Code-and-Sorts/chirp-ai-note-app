@@ -131,6 +131,12 @@ class LLMClient:
         self.spawn_timeout_s = spawn_timeout_s
         self.retry_on_version_mismatch = retry_on_version_mismatch
         self._client_version = package_version()
+        # Latch (never reset) so a caller can inspect, after a sequence of ops on
+        # one client, whether the daemon was cold-started or version-respawned
+        # during this client's life. ``chirp daemon status`` reads these to print
+        # the "started a new instance" / "restarted to match version" notices.
+        self.daemon_lazy_spawned = False
+        self.daemon_respawned = False
 
     async def health(self) -> dict[str, Any]:
         envelope = {"id": new_request_id(), "op": OP_HEALTH}
@@ -353,6 +359,7 @@ class LLMClient:
                         },
                     ) from err
                 attempted_respawn = True
+                self.daemon_respawned = True
                 await self._wait_for_socket_gone(VERSION_MISMATCH_RESPAWN_WAIT_S)
                 continue
 
@@ -373,6 +380,7 @@ class LLMClient:
                 await _close_writer(writer)
 
             attempted_respawn = True
+            self.daemon_respawned = True
             await self._wait_for_socket_gone(VERSION_MISMATCH_RESPAWN_WAIT_S)
 
     async def _connect_with_handshake(
@@ -435,6 +443,7 @@ class LLMClient:
             ) from err
 
     async def _spawn_daemon(self) -> None:
+        self.daemon_lazy_spawned = True
         # Force the child to bind the same socket the client is polling. Without
         # this, a client constructed with a non-default ``socket_path`` would
         # spawn a chirpd that binds the default socket, then time out waiting
