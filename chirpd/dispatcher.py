@@ -305,7 +305,7 @@ class Dispatcher:
             )
             return
 
-        alias = state.resolve_canonical_alias(identifier, "chat")
+        entry, alias = state.resolve(identifier, "chat")
         already_loaded = state.get(alias) is not None
         if not already_loaded:
             await _write_event(
@@ -313,7 +313,7 @@ class Dispatcher:
                 {"id": request_id, "event": EVENT_LOADING, "model": alias},
             )
 
-        loaded = await state.load(identifier, "chat")
+        loaded = await state.load(identifier, "chat", resolved=(entry, alias))
         should_stop = asyncio.Event()
         state.register_cancellation(request_id, should_stop)
         start_ns = time.perf_counter_ns()

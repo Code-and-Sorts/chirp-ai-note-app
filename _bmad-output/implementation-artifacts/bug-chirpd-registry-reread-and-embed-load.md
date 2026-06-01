@@ -1,6 +1,6 @@
 # BUG: chirpd does not re-read the registry per op, and cannot load embed models
 
-- **Status:** Open
+- **Status:** Partially fixed — Issue 2 (per-op registry re-read) resolved; Issue 1 (embed model load) still Open
 - **Severity:** High (blocks the Maya/Priya end-to-end journeys: a freshly `add`ed model can't be warmed; no embed model can be warmed at all)
 - **Owning epic:** EPIC-CHIRPD-CORE
 - **Owning stories:** 3.5-model-lifecycle (Issue 2), 3.6-backend-and-inference (Issue 1) — both currently marked **Done**
@@ -35,8 +35,9 @@ Two independent daemon-side defects, both discovered while validating `chirp mod
 
 ---
 
-## Issue 2 — daemon caches the registry at startup; never re-reads per op
+## Issue 2 — daemon caches the registry at startup; never re-reads per op  ✅ FIXED
 
+- **Resolution:** `DaemonState` now takes an optional `registry_reader` callable. When provided (the daemon passes `read_registry` from `chirpd/__main__.py`), `model.load`, `model.list`, and `resolve_canonical_alias` re-read `models.toml` per op via `DaemonState._refresh_registry()` before resolving. No file watcher (hot-reload stays out of scope). Tests that pass no reader keep their in-memory registry. Regression coverage: `tests/chirpd/test_state.py::test_load_sees_alias_added_after_startup`, `::test_list_models_reflects_registry_changes_after_startup`, `::test_registry_reader_absent_keeps_in_memory_registry`.
 - **Owning story:** 3.5-model-lifecycle (per-op registry read)
 - **Symptom:** after a daemon is already running, registering a new alias and warming it fails until the daemon is restarted:
   ```
