@@ -1,6 +1,6 @@
 # BUG: chirpd does not re-read the registry per op, and cannot load embed models
 
-- **Status:** Partially fixed — Issue 2 (per-op registry re-read) resolved; Issue 1 (embed model load) still Open
+- **Status:** Both fixed. Issue 2 — `chirpd/state.py` (PR #70). Issue 1 — story 3.8 (PR #71). See "Resolution" under each issue below.
 - **Severity:** High (blocks the Maya/Priya end-to-end journeys: a freshly `add`ed model can't be warmed; no embed model can be warmed at all)
 - **Owning epic:** EPIC-CHIRPD-CORE
 - **Owning stories:** 3.5-model-lifecycle (Issue 2), 3.6-backend-and-inference (Issue 1) — both currently marked **Done**
@@ -16,8 +16,9 @@ Two independent daemon-side defects, both discovered while validating `chirp mod
 
 ---
 
-## Issue 1 — `MLXBackend.load` cannot load embed (`bert`) models
+## Issue 1 — `MLXBackend.load` cannot load embed (`bert`) models  ✅ FIXED via STORY 3.8
 
+- **Resolution:** Fixed via [EPIC-CHIRPD-CORE story 3.8](../planning-artifacts/epic-chirpd-core/stories/3.8-embed-model-load-and-pooled-inference.md) on branch `feat/story-3.8-embed-model-load`. `MLXBackend.load` now branches on role: chat → `mlx_lm.load` (unchanged); embed → `mlx_embeddings.load` (new arm64-gated `mlx-embeddings==0.1.0` dependency). `MLXBackend.embed` was reworked to return pooled sentence vectors via `mlx_embeddings.generate(model, processor, texts=...).text_embeds`, fixing the second latent defect (the old `_invoke_embed` returned token-level lookup vectors, not sentence embeddings — now deleted). Verified by an opt-in `@slow @integration` test that passes against real MLX (`mlx-community/bge-small-en-v1.5-bf16`): correct vector count, uniform dimensionality, determinism, and cosine-similarity sanity. EPIC-INTEGRATION-CUTOVER 6.3 remains the first real consumer and will exercise this end-to-end through the retrieval/index pipeline.
 - **Owning story:** 3.6-backend-and-inference (embed inference path)
 - **Symptom:**
   ```
@@ -35,9 +36,9 @@ Two independent daemon-side defects, both discovered while validating `chirp mod
 
 ---
 
-## Issue 2 — daemon caches the registry at startup; never re-reads per op  ✅ FIXED
+## Issue 2 — daemon caches the registry at startup; never re-reads per op  ✅ FIXED (PR #70)
 
-- **Resolution:** `DaemonState` now takes an optional `registry_reader` callable. When provided (the daemon passes `read_registry` from `chirpd/__main__.py`), `model.load`, `model.list`, and `resolve_canonical_alias` re-read `models.toml` per op via `DaemonState._refresh_registry()` before resolving. No file watcher (hot-reload stays out of scope). Tests that pass no reader keep their in-memory registry. Regression coverage: `tests/chirpd/test_state.py::test_load_sees_alias_added_after_startup`, `::test_list_models_reflects_registry_changes_after_startup`, `::test_registry_reader_absent_keeps_in_memory_registry`.
+- **Resolution:** Fixed in `chirpd/state.py` (PR #70). `DaemonState` takes an optional `registry_reader`; the daemon passes `read_registry`, and the model ops re-read `models.toml` per op via `DaemonState._refresh_registry()` before resolving. A chat request resolves the registry exactly once via `DaemonState.resolve()` and threads that `(entry, alias)` snapshot into `load(..., resolved=...)`, so the announced alias can't diverge from the generated one if `models.toml` changes mid-request. Refresh happens before lock acquisition in `load`, preserving the `_registry_locks` discipline. Plain per-op read, no file watcher (hot-reload stays out of scope). Regression tests: `tests/chirpd/test_state.py::test_load_sees_alias_added_after_startup`, `::test_list_models_reflects_registry_changes_after_startup`, `::test_registry_reader_absent_keeps_in_memory_registry`, `::test_resolved_snapshot_survives_mid_request_default_change`. Not story-tracked (small, isolated contract fix).
 - **Owning story:** 3.5-model-lifecycle (per-op registry read)
 - **Symptom:** after a daemon is already running, registering a new alias and warming it fails until the daemon is restarted:
   ```
@@ -64,4 +65,7 @@ Two independent daemon-side defects, both discovered while validating `chirp mod
 
 ## Recommended handling
 
-Both owning stories are **Done**, so log via BMAD **correct course** against EPIC-CHIRPD-CORE (3.5 and 3.6) to record the deviation and schedule the fixes, or reopen 3.5/3.6 directly. Issue 2 is the higher priority — it breaks the core "`add` then use" loop for chat models too, not just embed.
+**Resolved as follows:**
+
+- **Issue 2** — fixed directly (PR #70). It broke the core "`add` then use" loop for chat models too, was a small isolated contract fix in `chirpd/state.py`, and was on a live path, so it did not warrant a story.
+- **Issue 1** — fixed via **EPIC-CHIRPD-CORE story 3.8** (`feat/story-3.8-embed-model-load`). Initially scoped to defer to cutover, but implemented now: the loader branch + pooled-inference rework land with an opt-in `@slow @integration` test that passes against a real `bge` model, so the daemon-side embed capability is verified ahead of its first consumer. **EPIC-INTEGRATION-CUTOVER 6.3** still depends on 3.8 and provides the end-to-end pipeline verification.

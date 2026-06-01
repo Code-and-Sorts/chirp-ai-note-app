@@ -100,7 +100,7 @@ Story 6.1 is the precondition that closes this gap. Until it lands, stories 6.2 
 |----|-------|-------------|------------|------|
 | 6.1 | Regression corpus capture (precondition gate) | FR46 (precondition) | — | [stories/6.1-regression-corpus-capture.md](stories/6.1-regression-corpus-capture.md) |
 | 6.2 | Cut over `notes/note_generator.py` to `llm.client` | FR46 (note generation), FR48 | 6.1; EPIC-CHIRPD-CORE 3.6 | [stories/6.2-note-generator-cutover.md](stories/6.2-note-generator-cutover.md) |
-| 6.3 | Cut over `notes_chat/retrieval.py` + `notes_chat/index.py` embeddings to `llm.client.embed` | FR47, FR48 | 6.1; EPIC-CHIRPD-CORE 3.6; EPIC-MODEL-REGISTRY (embed alias registered) | [stories/6.3-retrieval-embed-cutover.md](stories/6.3-retrieval-embed-cutover.md) |
+| 6.3 | Cut over `notes_chat/retrieval.py` + `notes_chat/index.py` embeddings to `llm.client.embed` | FR47, FR48 | 6.1; EPIC-CHIRPD-CORE 3.6 **and 3.8** (embed-model load + pooled inference); EPIC-MODEL-REGISTRY (embed alias registered) | [stories/6.3-retrieval-embed-cutover.md](stories/6.3-retrieval-embed-cutover.md) |
 | 6.4 | Cut over `notes_chat` interactive chat (`cli.py` + `interactive.py`) to `llm.client` streaming | FR46 (chat), FR48 | 6.1; EPIC-CHIRPD-CORE 3.6 + 3.7 | [stories/6.4-interactive-chat-cutover.md](stories/6.4-interactive-chat-cutover.md) |
 | 6.5 | Migrate `tests/notes/` and `tests/notes_chat/` fixtures from Ollama mocks to FakeBackend / mocked `llm.client` | NFR-M1, NFR-M2 | 6.2, 6.3, 6.4 | [stories/6.5-test-fixture-migration.md](stories/6.5-test-fixture-migration.md) |
 | 6.6 | Run the regression comparison; verify ≥80% equal-or-better; close the epic | FR46 (acceptance), PRD §Success Criteria → User Success | 6.1, 6.2, 6.3, 6.4, 6.5; EPIC-MODEL-REGISTRY (chat alias registered) | [stories/6.6-regression-comparison-run.md](stories/6.6-regression-comparison-run.md) |
@@ -121,6 +121,7 @@ Story 6.1 is the precondition that closes this gap. Until it lands, stories 6.2 
   - Story 3.6 (`chat` streaming, `embed`, `cancel` ops) — required by every cutover story.
   - Story 3.7 (the `chirp ask` one-shot vertical slice) — establishes the pattern this epic extends to the rest of the surface; also de-risks the streaming token-flush conventions before 6.4.
 - **EPIC-MODEL-REGISTRY** must be complete enough that the operator running stories 6.1 and 6.6 can register both a chat model (`chirp models add <mlx-chat-repo>`) and an embedding model (`chirp models add <mlx-embed-repo>`) before the runs. Specifically: `chirp models add`, `chirp models default`, and `chirp models list` must work.
+- **EPIC-CHIRPD-CORE story 3.8** (embed-model loading + pooled inference) must land before **story 6.3**. The daemon's `embed` op cannot load a `bge`/`bert` model or return pooled sentence vectors until 3.8 is fixed — without it, `chirp models add <mlx-embed-repo>` fails to warm and 6.3 has nothing to cut over to. 3.8 is the daemon-side capability; 6.3 is its first real consumer and end-to-end verification.
 
 **Cross-epic dependencies (outgoing — what this epic blocks):**
 
