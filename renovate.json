@@ -4,5 +4,15 @@
     "config:recommended"
   ],
   "automerge": true,
-  "platformAutomerge": true
+  "platformAutomerge": true,
+  "packageRules": [
+    {
+      "description": "gh-aw manages github/gh-aw-actions pins via the agentic-workflows toolchain; Renovate must not touch them",
+      "matchPackageNames": [
+        "github/gh-aw-actions",
+        "github/gh-aw-actions/**"
+      ],
+      "enabled": false
+    }
+  ]
 }
