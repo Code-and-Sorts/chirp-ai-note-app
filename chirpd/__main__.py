@@ -41,7 +41,7 @@ def main() -> int:
         )
         return 2
 
-    configure_logging()
+    configure_logging(to_stderr=sys.stdout.isatty())
     ensure_runtime_dirs()
 
     logger = logging.getLogger("chirpd")
