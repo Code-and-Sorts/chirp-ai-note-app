@@ -341,29 +341,29 @@ class TestNotesResolveAndTagFilter:
         assert "matches 2 notes" in result.stdout
 
     def test_resolve_full_id(self, tmp_path, monkeypatch):
-        from chirp.cli import _resolve_note
+        import chirp.cli
         from utils.file_utils import list_notes
 
         _write_note(tmp_path, "alpha-2026-04-20", "Alpha", "x")
         _write_note(tmp_path, "beta-2026-04-21", "Beta", "x")
         records = [r for r in list_notes(tmp_path) if r.notes is not None]
 
-        record = _resolve_note(records, "alpha-2026-04-20")
+        record = chirp.cli._resolve_note(records, "alpha-2026-04-20")
         assert record.slug == "alpha-2026-04-20"
 
     def test_resolve_unique_prefix(self, tmp_path, monkeypatch):
-        from chirp.cli import _resolve_note
+        import chirp.cli
         from utils.file_utils import list_notes
 
         _write_note(tmp_path, "alpha-2026-04-20", "Alpha", "x")
         _write_note(tmp_path, "beta-2026-04-21", "Beta", "x")
         records = [r for r in list_notes(tmp_path) if r.notes is not None]
 
-        record = _resolve_note(records, "alpha")
+        record = chirp.cli._resolve_note(records, "alpha")
         assert record.slug == "alpha-2026-04-20"
 
     def test_resolve_integer_id_uses_newest_first(self, tmp_path, monkeypatch):
-        from chirp.cli import NoteNotFound, _resolve_note
+        import chirp.cli
         from utils.file_utils import list_notes
 
         # `list_notes` sorts oldest-first; the newest-first index 1 should
@@ -394,11 +394,11 @@ class TestNotesResolveAndTagFilter:
             )
         records = [r for r in list_notes(tmp_path) if r.notes is not None]
 
-        assert _resolve_note(records, "1").slug == "newer"
-        assert _resolve_note(records, "2").slug == "older"
+        assert chirp.cli._resolve_note(records, "1").slug == "newer"
+        assert chirp.cli._resolve_note(records, "2").slug == "older"
 
-        with pytest.raises(NoteNotFound):
-            _resolve_note(records, "99")
+        with pytest.raises(chirp.cli.NoteNotFound):
+            chirp.cli._resolve_note(records, "99")
 
 
 class TestNotesDelete:
