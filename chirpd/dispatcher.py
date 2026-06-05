@@ -305,6 +305,7 @@ class Dispatcher:
             )
             return
 
+        state.mark_request()
         entry, alias = state.resolve(identifier, "chat")
         already_loaded = state.get(alias) is not None
         if not already_loaded:
@@ -466,6 +467,7 @@ class Dispatcher:
             )
             return
 
+        state.mark_request()
         loaded = await state.load(identifier, "embed")
         async with loaded.lock:
             try:
