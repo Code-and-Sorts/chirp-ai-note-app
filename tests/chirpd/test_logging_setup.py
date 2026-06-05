@@ -192,6 +192,21 @@ def test_log_op_event_emits_result_field(tmp_path: Path) -> None:
     assert "result=spawned" in _read_log(tmp_path)
 
 
+def test_log_op_event_emits_chirpd_path_field(tmp_path: Path) -> None:
+    """``chirpd_path`` (added by story 5.4) passes through to the rendered line."""
+    configure_logging(log_dir=tmp_path)
+    log_op_event(
+        logging.getLogger(CHIRP_LOGGER),
+        logging.INFO,
+        "daemon_enable: installed",
+        req_id="r-1",
+        op="daemon_enable",
+        result="installed",
+        chirpd_path="/usr/local/bin/chirpd",
+    )
+    assert "chirpd_path=/usr/local/bin/chirpd" in _read_log(tmp_path)
+
+
 def test_log_op_event_truncates_long_msg(tmp_path: Path) -> None:
     configure_logging(log_dir=tmp_path)
     long_msg = "x" * 500

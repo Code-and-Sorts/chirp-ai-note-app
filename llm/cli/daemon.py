@@ -16,6 +16,11 @@ command that needs the daemon performs).
 spawns ``chirpd`` via :func:`subprocess.Popen` and polls the socket; ``stop`` and
 ``restart`` shut the daemon down.
 
+``enable`` / ``disable`` (5.4) install and remove the ``com.chirp.chirpd``
+LaunchAgent so the daemon auto-starts at login. These commands are thin wrappers:
+the real work — plist generation, ``launchctl load``/``unload``, the typed error
+surface — lives in :mod:`chirpd.launchd`, which ``chirp init`` also imports.
+
 **Shutdown mechanism (story 5.3 task 1).** CHIRPD-CORE ships a *signal-based*
 shutdown, not a wire ``shutdown`` op: ``chirpd/__main__.py`` installs ``SIGTERM`` /
 ``SIGINT`` handlers that cancel the asyncio serve task and exit cleanly (option
@@ -47,6 +52,17 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
+from chirpd.launchd import (
+    LAUNCH_AGENT_PLIST_PATH,
+    LaunchAgentAlreadyInstalled,
+    LaunchAgentError,
+    LaunchAgentNotInstalled,
+    LaunchctlFailed,
+    install_launch_agent,
+    installed_chirpd_path,
+    is_launch_agent_installed,
+    uninstall_launch_agent,
+)
 from chirpd.logging_setup import configure_logging, log_op_event
 from config.settings import CHIRP_DAEMON_SOCKET_ENV
 from llm.cli._console import console, stdout_console
@@ -757,7 +773,9 @@ def _emit_json(payload: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
-def _log_lifecycle(op: str, start_ns: int, *, result: str) -> None:
+def _log_lifecycle(
+    op: str, start_ns: int, *, result: str, chirpd_path: str | None = None
+) -> None:
     duration_ms = max(int((time.perf_counter_ns() - start_ns) / 1_000_000), 0)
     log_op_event(
         _logger,
@@ -767,4 +785,171 @@ def _log_lifecycle(op: str, start_ns: int, *, result: str) -> None:
         op=op,
         duration_ms=duration_ms,
         result=result,
+        chirpd_path=chirpd_path,
     )
+
+
+# --- LaunchAgent: enable / disable (story 5.4) ------------------------------
+
+
+@daemon_app.command("enable")
+def enable(
+    force: bool = typer.Option(
+        False, "--force", help="Reinstall even if a LaunchAgent is already present."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON to stdout."
+    ),
+) -> None:
+    """Install a LaunchAgent so chirpd starts at login and restarts on crash."""
+    use_json = _should_use_json(json_output)
+    _ensure_logging()
+    start_ns = time.perf_counter_ns()
+
+    try:
+        plist_path = install_launch_agent(force=force)
+    except LaunchAgentAlreadyInstalled as err:
+        _log_lifecycle(
+            "daemon_enable",
+            start_ns,
+            result="already_installed",
+            chirpd_path=shutil.which("chirpd"),
+        )
+        message = f"LaunchAgent already installed at {err}. Pass --force to reinstall."
+        _emit_enable_failure(err, message, use_json)
+        raise typer.Exit(code=1) from err
+    except LaunchctlFailed as err:
+        _log_lifecycle("daemon_enable", start_ns, result="launchctl_failed")
+        _emit_enable_failure(err, _format_launchctl_error(err), use_json)
+        raise typer.Exit(code=1) from err
+    except LaunchAgentError as err:
+        result = "missing_binary" if "not found on PATH" in str(err) else "error"
+        _log_lifecycle("daemon_enable", start_ns, result=result)
+        _emit_enable_failure(err, str(err), use_json)
+        raise typer.Exit(code=1) from err
+
+    # Report the path actually baked into the plist (AC-8), not a re-resolution.
+    chirpd_path = installed_chirpd_path(plist_path) or shutil.which("chirpd")
+    _log_lifecycle(
+        "daemon_enable", start_ns, result="installed", chirpd_path=chirpd_path
+    )
+    if use_json:
+        _emit_json(
+            {
+                "action": "enable",
+                "installed": True,
+                "plist_path": str(plist_path),
+                "chirpd_path": chirpd_path,
+            }
+        )
+    else:
+        stdout_console.print(
+            f"LaunchAgent installed at {plist_path}\nDaemon will auto-start at login.",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+
+
+@daemon_app.command("disable")
+def disable(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON to stdout."
+    ),
+) -> None:
+    """Remove the LaunchAgent. Daemon will no longer auto-start at login."""
+    use_json = _should_use_json(json_output)
+    _ensure_logging()
+    start_ns = time.perf_counter_ns()
+
+    try:
+        uninstall_launch_agent()
+    except LaunchAgentNotInstalled:
+        # Idempotent: disabling a clean machine is a no-op, not an error (exit 0).
+        _log_lifecycle("daemon_disable", start_ns, result="not_installed")
+        if use_json:
+            _emit_json(
+                {"action": "disable", "installed": False, "was_installed": False}
+            )
+        else:
+            console.print(
+                "LaunchAgent is not installed; nothing to do.",
+                markup=False,
+                soft_wrap=True,
+            )
+        return
+    except LaunchctlFailed as err:
+        _log_lifecycle("daemon_disable", start_ns, result="launchctl_failed")
+        if use_json:
+            _emit_json(_disable_error_payload(err))
+        else:
+            console.print(
+                _format_launchctl_error(err), style="red", markup=False, soft_wrap=True
+            )
+        raise typer.Exit(code=1) from err
+    except LaunchAgentError as err:
+        _log_lifecycle("daemon_disable", start_ns, result="error")
+        if use_json:
+            _emit_json(_disable_error_payload(err))
+        else:
+            console.print(str(err), style="red", markup=False, soft_wrap=True)
+        raise typer.Exit(code=1) from err
+
+    _log_lifecycle("daemon_disable", start_ns, result="removed")
+    if use_json:
+        _emit_json({"action": "disable", "installed": False, "was_installed": True})
+    else:
+        stdout_console.print(
+            "LaunchAgent removed.\nDaemon will no longer auto-start at login.",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
+
+
+def _emit_enable_failure(err: LaunchAgentError, message: str, use_json: bool) -> None:
+    """Render an ``enable`` failure: JSON error object or a red stderr message."""
+    if use_json:
+        _emit_json(
+            {
+                "action": "enable",
+                "installed": _safe_is_installed(),
+                "error": _error_object(err),
+            }
+        )
+    else:
+        console.print(message, style="red", markup=False, soft_wrap=True)
+
+
+def _disable_error_payload(err: LaunchAgentError) -> dict[str, Any]:
+    return {
+        "action": "disable",
+        "installed": _safe_is_installed(),
+        "error": _error_object(err),
+    }
+
+
+def _error_object(err: LaunchAgentError) -> dict[str, Any]:
+    return {
+        "code": type(err).__name__,
+        "message": str(err),
+        "launchctl_stderr": getattr(err, "stderr", None),
+    }
+
+
+def _format_launchctl_error(err: LaunchctlFailed) -> str:
+    """Multi-line CLI rendering that preserves launchctl's own stderr verbatim."""
+    invocation = " ".join(err.command[:2]) if len(err.command) > 1 else err.command[0]
+    lines = [f"{invocation} failed (exit {err.returncode}):"]
+    stderr = (err.stderr or "").strip()
+    lines.extend(f"  {line}" for line in stderr.splitlines())
+    lines.append(f"plist at: {LAUNCH_AGENT_PLIST_PATH}")
+    return "\n".join(lines)
+
+
+def _safe_is_installed() -> bool:
+    """Best-effort current install state for JSON error payloads."""
+    try:
+        return is_launch_agent_installed()
+    except OSError:
+        return False

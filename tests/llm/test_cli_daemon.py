@@ -22,6 +22,12 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
+from chirpd.launchd import (
+    LaunchAgentAlreadyInstalled,
+    LaunchAgentError,
+    LaunchAgentNotInstalled,
+    LaunchctlFailed,
+)
 from llm.cli import daemon as daemon_module
 from llm.exceptions import LLMDaemonUnreachable, LLMProtocolError
 
@@ -878,3 +884,274 @@ def test_log_event_emitted_for_each_command(
     assert "daemon_start" in ops
     assert "daemon_stop" in ops
     assert "daemon_restart" in ops
+
+
+# ===========================================================================
+# LaunchAgent: enable / disable (story 5.4)
+#
+# The ``chirpd.launchd`` functions are patched on the daemon module namespace;
+# the CLI layer is the unit under test (argument parsing, exit codes, message
+# rendering, JSON shape). No test touches ``launchctl`` or the real plist path.
+# ===========================================================================
+
+PLIST_PATH = Path("/Users/u/Library/LaunchAgents/com.chirp.chirpd.plist")
+
+
+def _patch_install(monkeypatch: pytest.MonkeyPatch, result: object) -> MagicMock:
+    mock = (
+        MagicMock(side_effect=result)
+        if isinstance(result, Exception)
+        else (MagicMock(return_value=result))
+    )
+    monkeypatch.setattr(daemon_module, "install_launch_agent", mock)
+    return mock
+
+
+def _patch_uninstall(monkeypatch: pytest.MonkeyPatch, result: object) -> MagicMock:
+    mock = (
+        MagicMock(side_effect=result)
+        if isinstance(result, Exception)
+        else (MagicMock(return_value=result))
+    )
+    monkeypatch.setattr(daemon_module, "uninstall_launch_agent", mock)
+    return mock
+
+
+# --- enable -----------------------------------------------------------------
+
+
+def test_enable_success(monkeypatch: pytest.MonkeyPatch, force_tty: None) -> None:
+    _patch_install(monkeypatch, PLIST_PATH)
+
+    result = runner.invoke(daemon_module.daemon_app, ["enable"])
+
+    assert result.exit_code == 0
+    assert "LaunchAgent installed at" in result.stdout
+    assert "auto-start at login" in result.stdout
+
+
+def test_enable_already_installed_without_force(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_install(monkeypatch, LaunchAgentAlreadyInstalled(str(PLIST_PATH)))
+
+    result = runner.invoke(daemon_module.daemon_app, ["enable"])
+
+    assert result.exit_code == 1
+    assert "already installed" in result.stderr
+    assert "--force" in result.stderr
+
+
+def test_enable_force_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    install = _patch_install(monkeypatch, PLIST_PATH)
+
+    runner.invoke(daemon_module.daemon_app, ["enable", "--force"])
+
+    assert install.call_args.kwargs == {"force": True}
+
+
+def test_enable_launchctl_failure_surfaces_stderr(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    err = LaunchctlFailed(
+        ["launchctl", "load", "-w", str(PLIST_PATH)],
+        returncode=5,
+        stderr="Load failed: 5: Input/output error",
+    )
+    _patch_install(monkeypatch, err)
+
+    result = runner.invoke(daemon_module.daemon_app, ["enable"])
+
+    assert result.exit_code == 1
+    assert "Load failed" in result.stderr
+    assert "exit 5" in result.stderr
+
+
+def test_enable_missing_chirpd_binary(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_install(
+        monkeypatch,
+        LaunchAgentError(
+            "chirpd binary not found on PATH — is chirp installed correctly?"
+        ),
+    )
+
+    result = runner.invoke(daemon_module.daemon_app, ["enable"])
+
+    assert result.exit_code == 1
+    assert "not found on PATH" in result.stderr
+
+
+def test_enable_json_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_install(monkeypatch, PLIST_PATH)
+    monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: CHIRPD_PATH)
+
+    result = runner.invoke(daemon_module.daemon_app, ["enable", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["action"] == "enable"
+    assert payload["installed"] is True
+    assert payload["plist_path"] == str(PLIST_PATH)
+    assert payload["chirpd_path"] == CHIRPD_PATH
+
+
+def test_enable_json_failure_includes_error_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    err = LaunchctlFailed(
+        ["launchctl", "load", "-w", str(PLIST_PATH)],
+        returncode=5,
+        stderr="Load failed: 5: Input/output error",
+    )
+    _patch_install(monkeypatch, err)
+    monkeypatch.setattr(daemon_module, "is_launch_agent_installed", lambda: False)
+
+    result = runner.invoke(daemon_module.daemon_app, ["enable", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["installed"] is False
+    assert payload["error"]["code"] == "LaunchctlFailed"
+    assert payload["error"]["launchctl_stderr"] == "Load failed: 5: Input/output error"
+
+
+def test_enable_json_already_installed_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_install(monkeypatch, LaunchAgentAlreadyInstalled(str(PLIST_PATH)))
+    monkeypatch.setattr(daemon_module, "is_launch_agent_installed", lambda: True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["enable", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "LaunchAgentAlreadyInstalled"
+    # Non-launchctl errors carry no launchctl stderr — must be JSON null.
+    assert payload["error"]["launchctl_stderr"] is None
+
+
+# --- disable ----------------------------------------------------------------
+
+
+def test_disable_success(monkeypatch: pytest.MonkeyPatch, force_tty: None) -> None:
+    _patch_uninstall(monkeypatch, None)
+
+    result = runner.invoke(daemon_module.daemon_app, ["disable"])
+
+    assert result.exit_code == 0
+    assert "LaunchAgent removed" in result.stdout
+
+
+def test_disable_idempotent_when_not_installed(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_uninstall(monkeypatch, LaunchAgentNotInstalled(str(PLIST_PATH)))
+
+    result = runner.invoke(daemon_module.daemon_app, ["disable"])
+
+    assert result.exit_code == 0
+    assert "not installed" in result.stderr
+
+
+def test_disable_launchctl_failure(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    err = LaunchctlFailed(
+        ["launchctl", "unload", "-w", str(PLIST_PATH)],
+        returncode=3,
+        stderr="Unload failed: 3: No such process",
+    )
+    _patch_uninstall(monkeypatch, err)
+
+    result = runner.invoke(daemon_module.daemon_app, ["disable"])
+
+    assert result.exit_code == 1
+    assert "Unload failed" in result.stderr
+
+
+def test_disable_json_idempotent_was_not_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_uninstall(monkeypatch, LaunchAgentNotInstalled(str(PLIST_PATH)))
+
+    result = runner.invoke(daemon_module.daemon_app, ["disable", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload == {"action": "disable", "installed": False, "was_installed": False}
+
+
+def test_disable_json_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_uninstall(monkeypatch, None)
+
+    result = runner.invoke(daemon_module.daemon_app, ["disable", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload == {"action": "disable", "installed": False, "was_installed": True}
+
+
+def test_disable_json_launchctl_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    err = LaunchctlFailed(
+        ["launchctl", "unload", "-w", str(PLIST_PATH)],
+        returncode=3,
+        stderr="Unload failed: 3: No such process",
+    )
+    _patch_uninstall(monkeypatch, err)
+    monkeypatch.setattr(daemon_module, "is_launch_agent_installed", lambda: True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["disable", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["action"] == "disable"
+    assert payload["installed"] is True
+    assert payload["error"]["code"] == "LaunchctlFailed"
+    assert payload["error"]["launchctl_stderr"] == "Unload failed: 3: No such process"
+
+
+# --- diagnostic logging -----------------------------------------------------
+
+
+def test_log_event_emitted_for_enable_and_disable(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    log_mock = MagicMock()
+    monkeypatch.setattr(daemon_module, "log_op_event", log_mock)
+
+    _patch_install(monkeypatch, PLIST_PATH)
+    monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: CHIRPD_PATH)
+    runner.invoke(daemon_module.daemon_app, ["enable"])
+
+    _patch_uninstall(monkeypatch, None)
+    runner.invoke(daemon_module.daemon_app, ["disable"])
+
+    ops = [call.kwargs["op"] for call in log_mock.call_args_list]
+    assert ops.count("daemon_enable") == 1
+    assert ops.count("daemon_disable") == 1
+    enable_call = next(
+        c for c in log_mock.call_args_list if c.kwargs["op"] == "daemon_enable"
+    )
+    assert enable_call.kwargs["chirpd_path"] == CHIRPD_PATH
+
+
+# --- help discipline --------------------------------------------------------
+
+
+def test_enable_help_text(force_tty: None) -> None:
+    result = runner.invoke(daemon_module.daemon_app, ["enable", "--help"])
+
+    help_text = _ANSI_RE.sub("", result.stdout)
+    assert result.exit_code == 0
+    assert "--force" in help_text
+    assert "--json" in help_text
+    assert "restarts on crash" in help_text
+
+
+def test_disable_help_text(force_tty: None) -> None:
+    result = runner.invoke(daemon_module.daemon_app, ["disable", "--help"])
+
+    help_text = _ANSI_RE.sub("", result.stdout)
+    assert result.exit_code == 0
+    assert "--json" in help_text
+    assert "no longer auto-start" in help_text
