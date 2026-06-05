@@ -973,7 +973,7 @@ def logs(
         "--follow",
         help="Follow the log file for new output. Re-opens across rotation.",
     ),
-    lines: int = typer.Option(
+    lines: int | None = typer.Option(
         None,
         "-n",
         "--lines",
@@ -1020,9 +1020,11 @@ def _logs_result(*, follow: bool, lines: int | None, path: Path) -> str:
     """Classify the run for the diagnostic log line: cat|tail|follow|missing."""
     if follow:
         return "follow"
-    if lines is not None:
-        return "tail"
-    return "cat" if path.exists() else "missing"
+    # A missing file short-circuits to the notice before any cat/tail happens, so
+    # report "missing" even when -n was passed — the tail never ran.
+    if not path.exists():
+        return "missing"
+    return "tail" if lines is not None else "cat"
 
 
 def _cat_log_file(path: Path) -> None:
@@ -1057,7 +1059,11 @@ def _follow_log_file(path: Path, *, start_at_end: bool) -> None:
         seek_to_end = start_at_end and path.exists()
         _wait_for_log_file(path)
         fh = path.open("r", encoding="utf-8", errors="replace")
-        inode = path.stat().st_ino
+        # Read the inode off the open handle, not the name: if rotation slips in
+        # between open() and the stat, a name-based stat would describe the new
+        # file while fh still points at the old one, and the loop would never
+        # detect the swap. os.fstat keeps inode and handle consistent.
+        inode = os.fstat(fh.fileno()).st_ino
         if seek_to_end:
             fh.seek(0, os.SEEK_END)
         try:
@@ -1082,10 +1088,12 @@ def _follow_log_file(path: Path, *, start_at_end: bool) -> None:
                         continue
                     fh.close()
                     fh = new_fh
-                    inode = new_inode
+                    # Track the inode of the handle we now hold (see above).
+                    inode = os.fstat(fh.fileno()).st_ino
         finally:
             fh.close()
     except KeyboardInterrupt:
+        # An interactive ^C during follow is a clean exit, not an error (AC-7).
         pass
 
 

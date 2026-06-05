@@ -86,7 +86,9 @@ def _run_in_thread(
     def run() -> None:
         try:
             target()
-        except BaseException as exc:  # noqa: BLE001 — surfaced to the assertion
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except Exception as exc:  # noqa: BLE001 — surfaced to the assertion
             captured["exc"] = exc
 
     thread = threading.Thread(target=run, daemon=True)
@@ -353,6 +355,21 @@ def test_logs_diagnostic_result_missing_when_no_file(
     result = runner.invoke(daemon_module.daemon_app, ["logs"])
 
     assert result.exit_code == 0
+    assert log_mock.call_args.kwargs["result"] == "missing"
+
+
+def test_logs_diagnostic_result_missing_when_no_file_with_n(
+    log_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # -n on a machine that has not produced a log yet prints the notice and never
+    # tails, so the diagnostic must say "missing", not "tail".
+    log_mock = MagicMock()
+    monkeypatch.setattr(daemon_module, "log_op_event", log_mock)
+
+    result = runner.invoke(daemon_module.daemon_app, ["logs", "-n", "10"])
+
+    assert result.exit_code == 0
+    assert "no log file" in result.stderr
     assert log_mock.call_args.kwargs["result"] == "missing"
 
 
