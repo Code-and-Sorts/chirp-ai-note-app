@@ -169,6 +169,18 @@ def _default_log_dir() -> Path:
     return Path.home() / subpath
 
 
+def resolve_log_path(log_dir: Path | None = None) -> Path:
+    """Return the full path to ``chirpd.log`` — the canonical log location.
+
+    Single source of truth shared between the writer (``configure_logging``) and
+    any reader (``chirp daemon logs``): ``~/Library/Logs/chirp/chirpd.log`` on
+    Darwin, ``~/.cache/chirp/chirpd.log`` elsewhere. Pass ``log_dir`` to override
+    the directory (tests, non-default installs).
+    """
+    target_dir = log_dir if log_dir is not None else _default_log_dir()
+    return target_dir / LOG_FILE_NAME
+
+
 def configure_logging(
     *,
     log_dir: Path | None = None,
@@ -187,8 +199,8 @@ def configure_logging(
     if not isinstance(numeric_level, int):
         raise ValueError(f"unknown log level {level!r}")
 
-    target_dir = log_dir if log_dir is not None else _default_log_dir()
-    log_file = target_dir / LOG_FILE_NAME
+    log_file = resolve_log_path(log_dir)
+    target_dir = log_file.parent
 
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
