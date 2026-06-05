@@ -11,7 +11,11 @@ from __future__ import annotations
 import io
 import json
 import re
+import signal
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -358,3 +362,519 @@ def test_status_help_mentions_loaded_models_and_idle() -> None:
     assert "--json" in help_text
     assert "loaded models" in help_text
     assert "idle" in help_text
+
+
+# ===========================================================================
+# Lifecycle: start / stop / restart (story 5.3)
+#
+# CHIRPD-CORE ships signal-based shutdown (no wire ``shutdown`` op), so ``stop``
+# is mocked at ``os.kill`` and ``_wait_for_socket`` rather than a client
+# ``shutdown()`` method. The daemon ``pid`` rides on ``model.status``, and the
+# non-spawning probe is ``model_status_sync(spawn_if_absent=False)``.
+# ===========================================================================
+
+CHIRPD_PATH = "/usr/local/bin/chirpd"
+
+
+def _status_payload_pid(pid: int) -> dict[str, object]:
+    payload = _status_payload()
+    payload["pid"] = pid
+    return payload
+
+
+def _status_payload_no_pid() -> dict[str, object]:
+    payload = _status_payload()
+    del payload["pid"]
+    return payload
+
+
+def _patch_client(monkeypatch: pytest.MonkeyPatch, model_status: object) -> MagicMock:
+    """Patch ``LLMClient`` so ``model_status_sync`` drives the running/pid probe.
+
+    ``model_status`` may be a payload dict (always running), an exception
+    instance (always unreachable), or a list used as ``side_effect`` to sequence
+    successive probes (e.g. absent then present across a spawn).
+    """
+    client = MagicMock()
+    if isinstance(model_status, list | Exception):
+        client.model_status_sync.side_effect = model_status
+    else:
+        client.model_status_sync.return_value = model_status
+    monkeypatch.setattr(daemon_module, "LLMClient", MagicMock(return_value=client))
+    return client
+
+
+def _patch_spawn(
+    monkeypatch: pytest.MonkeyPatch, *, which: str | None = CHIRPD_PATH
+) -> MagicMock:
+    monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: which)
+    popen = MagicMock()
+    monkeypatch.setattr(daemon_module.subprocess, "Popen", popen)
+    return popen
+
+
+def _patch_wait(
+    monkeypatch: pytest.MonkeyPatch, result: bool | Callable[..., bool]
+) -> None:
+    if callable(result):
+        fn = result
+    else:
+
+        def fn(_socket_path: Any, *, present: bool, timeout: float) -> bool:
+            return result
+
+    monkeypatch.setattr(daemon_module, "_wait_for_socket", fn)
+
+
+def _patch_kill(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    kill = MagicMock()
+    monkeypatch.setattr(daemon_module.os, "kill", kill)
+    return kill
+
+
+# --- start ------------------------------------------------------------------
+
+
+def test_start_noop_when_daemon_running(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(monkeypatch, _status_payload())
+    popen = _patch_spawn(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start"])
+
+    assert result.exit_code == 0
+    assert "already running" in result.stderr
+    popen.assert_not_called()
+
+
+def test_start_spawns_when_daemon_absent(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(monkeypatch, [LLMDaemonUnreachable("absent"), _status_payload()])
+    popen = _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start"])
+
+    assert result.exit_code == 0
+    assert "daemon started (pid=12345)" in result.stdout
+    assert popen.call_args.args[0] == [CHIRPD_PATH]
+
+
+def test_start_fails_when_socket_never_accepts(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, False)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start"])
+
+    assert result.exit_code == 1
+    assert "failed to start within 5 seconds" in result.stderr
+
+
+def test_start_fails_when_chirpd_not_on_path(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    popen = _patch_spawn(monkeypatch, which=None)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start"])
+
+    assert result.exit_code == 1
+    assert "not found on PATH" in result.stderr
+    popen.assert_not_called()
+
+
+def test_start_handles_spawn_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    popen = _patch_spawn(monkeypatch)
+    popen.side_effect = OSError("exec format error")
+
+    result = runner.invoke(daemon_module.daemon_app, ["start", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["running"] is False
+    assert payload["spawned"] is False
+    assert set(payload["error"]) == {"code", "message"}
+
+
+def test_start_timeout_reports_spawned_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A spawn was attempted, so the timeout failure must not claim spawned=false
+    # (which AC-9 reserves for "was already running").
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, False)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["spawned"] is True
+
+
+def test_start_message_pid_unknown_when_missing(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(
+        monkeypatch,
+        [LLMDaemonUnreachable("absent"), _status_payload_no_pid()],
+    )
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start"])
+
+    assert result.exit_code == 0
+    assert "daemon started (pid=unknown)" in result.stdout
+
+
+# --- stop -------------------------------------------------------------------
+
+
+def test_stop_noop_when_daemon_not_running(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    kill = _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    assert result.exit_code == 0
+    assert "not running" in result.stderr
+    kill.assert_not_called()
+
+
+def test_stop_succeeds_via_sigterm(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(monkeypatch, _status_payload())
+    _patch_wait(monkeypatch, True)
+    kill = _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    assert result.exit_code == 0
+    assert "daemon stopped" in result.stdout
+    kill.assert_any_call(12345, signal.SIGTERM)
+
+
+def test_stop_escalates_to_sigkill_on_timeout(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(monkeypatch, _status_payload())
+    _patch_wait(monkeypatch, False)
+    kill = _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    assert result.exit_code == 1
+    assert "sent SIGKILL" in result.stderr
+    kill.assert_any_call(12345, signal.SIGKILL)
+
+
+def test_stop_does_not_lazy_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+
+    runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    assert client.model_status_sync.call_args.kwargs == {"spawn_if_absent": False}
+
+
+def test_stop_json_sigkill_escalation(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_client(monkeypatch, _status_payload())
+    _patch_wait(monkeypatch, False)
+    _patch_kill(monkeypatch)
+    # Socket has vacated by the time we re-probe after SIGKILL.
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: False)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["killed"] is True
+    assert payload["running"] is False
+    assert set(payload["error"]) == {"code", "message"}
+
+
+def test_stop_json_sigkill_reports_running_when_socket_still_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # SIGKILL delivery is async: if the socket is still accepting on re-probe,
+    # `running` must reflect that truth rather than assume the daemon is down.
+    _patch_client(monkeypatch, _status_payload())
+    _patch_wait(monkeypatch, False)
+    _patch_kill(monkeypatch)
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["killed"] is True
+    assert payload["running"] is True
+
+
+def test_stop_timeout_without_pid_does_not_claim_sigkill(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    # Running daemon whose status payload carries no pid: SIGTERM/SIGKILL are
+    # impossible, so the message must not claim a SIGKILL was sent.
+    _patch_client(monkeypatch, _status_payload_no_pid())
+    _patch_wait(monkeypatch, False)
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    assert result.exit_code == 1
+    assert "did not stop" in result.stderr
+    assert "SIGKILL" not in result.stderr
+
+
+def test_stop_timeout_without_pid_succeeds_when_socket_vacated(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    # No pid, the vacate poll missed it, but the socket no longer answers: the
+    # daemon did stop, so report success rather than a false SIGKILL failure.
+    _patch_client(monkeypatch, _status_payload_no_pid())
+    _patch_wait(monkeypatch, False)
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: False)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    assert result.exit_code == 0
+    assert "daemon stopped" in result.stdout
+
+
+# --- restart ----------------------------------------------------------------
+
+
+def test_restart_when_not_running_just_starts(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(
+        monkeypatch,
+        [
+            LLMDaemonUnreachable("absent"),  # stop probe: not running
+            LLMDaemonUnreachable("absent"),  # start probe: still absent
+            _status_payload(),  # post-spawn pid
+        ],
+    )
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["restart"])
+
+    assert result.exit_code == 0
+    assert "starting fresh instance" in result.stderr
+
+
+def test_restart_when_running_stops_then_starts(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(
+        monkeypatch,
+        [
+            _status_payload_pid(111),  # stop probe: running (old pid)
+            LLMDaemonUnreachable("absent"),  # start probe: now down
+            _status_payload_pid(222),  # post-spawn pid (new)
+        ],
+    )
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+    _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["restart"])
+
+    assert result.exit_code == 0
+    assert "daemon restarted (pid=222)" in result.stdout
+
+
+def test_restart_aborts_on_stop_failure(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(monkeypatch, _status_payload_pid(111))
+    popen = _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, False)  # socket never vacates → stop fails
+    _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["restart"])
+
+    assert result.exit_code == 1
+    assert "sent SIGKILL" in result.stderr
+    popen.assert_not_called()  # start path must not run
+
+
+def test_restart_reports_partial_failure_when_start_fails(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(
+        monkeypatch,
+        [
+            _status_payload_pid(111),  # stop probe: running
+            LLMDaemonUnreachable("absent"),  # start probe: down after stop
+        ],
+    )
+    _patch_spawn(monkeypatch)
+    # stop's wait (present=False) succeeds; start's wait (present=True) times out.
+    _patch_wait(monkeypatch, lambda _p, *, present, timeout: not present)
+    _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["restart"])
+
+    assert result.exit_code == 1
+    assert "was stopped but did not restart" in result.stderr
+
+
+def test_restart_message_pid_unknown_when_missing(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(
+        monkeypatch,
+        [
+            _status_payload_pid(111),  # stop probe: running (old pid)
+            LLMDaemonUnreachable("absent"),  # start probe: down after stop
+            _status_payload_no_pid(),  # post-spawn payload without a pid
+        ],
+    )
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+    _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["restart"])
+
+    assert result.exit_code == 0
+    assert "daemon restarted (pid=unknown)" in result.stdout
+
+
+# --- --json output ----------------------------------------------------------
+
+
+def test_json_output_start_spawned(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_client(monkeypatch, [LLMDaemonUnreachable("absent"), _status_payload()])
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["action"] == "start"
+    assert payload["spawned"] is True
+    assert payload["running"] is True
+    assert payload["pid"] == 12345
+
+
+def test_json_output_stop_was_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_client(monkeypatch, _status_payload())
+    _patch_wait(monkeypatch, True)
+    _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["action"] == "stop"
+    assert payload["was_running"] is True
+    assert payload["killed"] is False
+    assert payload["running"] is False
+
+
+def test_json_output_restart(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_client(
+        monkeypatch,
+        [
+            _status_payload_pid(111),
+            LLMDaemonUnreachable("absent"),
+            _status_payload_pid(222),
+        ],
+    )
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+    _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["restart", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["action"] == "restart"
+    assert payload["old_pid"] == 111
+    assert payload["new_pid"] == 222
+
+
+def test_json_output_failure_includes_error_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    _patch_spawn(monkeypatch, which=None)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start", "--json"])
+
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["running"] is False
+    assert set(payload["error"]) == {"code", "message"}
+
+
+# --- _wait_for_socket / _socket_accepting helpers ---------------------------
+
+
+def test_wait_for_socket_returns_true_on_immediate_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: True)
+    assert (
+        daemon_module._wait_for_socket(tmp_path / "s.sock", present=True, timeout=1.0)
+        is True
+    )
+
+
+def test_wait_for_socket_returns_false_on_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: False)
+    assert (
+        daemon_module._wait_for_socket(tmp_path / "s.sock", present=True, timeout=0.0)
+        is False
+    )
+
+
+def test_socket_accepting_false_for_absent_path(tmp_path: Path) -> None:
+    assert daemon_module._socket_accepting(tmp_path / "missing.sock") is False
+
+
+# --- diagnostic logging -----------------------------------------------------
+
+
+def test_log_event_emitted_for_each_command(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    log_mock = MagicMock()
+    monkeypatch.setattr(daemon_module, "log_op_event", log_mock)
+
+    _patch_client(monkeypatch, _status_payload())
+    _patch_spawn(monkeypatch)
+    runner.invoke(daemon_module.daemon_app, ["start"])
+
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    _patch_client(
+        monkeypatch,
+        [
+            LLMDaemonUnreachable("absent"),
+            LLMDaemonUnreachable("absent"),
+            _status_payload(),
+        ],
+    )
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+    runner.invoke(daemon_module.daemon_app, ["restart"])
+
+    ops = [call.kwargs["op"] for call in log_mock.call_args_list]
+    assert "daemon_start" in ops
+    assert "daemon_stop" in ops
+    assert "daemon_restart" in ops

@@ -16,7 +16,8 @@ Public surface:
 Redaction rule (NFR-S5, hard constraint): no user prompt text, chat messages,
 note content, embed input text, or transcript text ever reaches the log. Logged
 metadata is limited to op name, model alias, request id, token counts, durations,
-and error classifications. A forbidden-looking field that slips in via ``extra=``
+operation results (``result=spawned|stopped|...``), and error classifications. A
+forbidden-looking field that slips in via ``extra=``
 is rendered ``<redacted>`` by the formatter and triggers exactly one
 ``err_type=RedactionViolation`` warning line (emitted by a logger-level filter, so
 it fires once per record regardless of how many handlers are attached). Example::
@@ -47,7 +48,7 @@ DEFAULT_LOG_DIR_FALLBACK: Final[Path] = Path.home() / _FALLBACK_LOG_SUBPATH
 
 LOGFMT_REQUIRED_FIELDS: Final[tuple[str, ...]] = ("ts", "level", "component", "msg")
 LOGFMT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset(
-    {"req_id", "op", "model", "duration_ms", "tokens", "err_code", "err_type"}
+    {"req_id", "op", "model", "duration_ms", "tokens", "err_code", "err_type", "result"}
 )
 
 FORBIDDEN_EXTRA_KEY_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -242,6 +243,7 @@ def log_op_event(
     tokens: int | None = None,
     err_code: str | None = None,
     err_type: str | None = None,
+    result: str | None = None,
     **extra: object,
 ) -> None:
     """Emit an op-level log line — the only sanctioned op emitter in ``chirpd/``.
@@ -268,6 +270,7 @@ def log_op_event(
         "tokens": tokens,
         "err_code": err_code,
         "err_type": err_type,
+        "result": result,
     }
     fields.update({key: value for key, value in optional.items() if value is not None})
     logger.log(level, msg, extra=fields)
