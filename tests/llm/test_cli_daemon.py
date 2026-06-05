@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -25,6 +26,8 @@ runner = CliRunner()
 CHAT_ALIAS = "gemma-4-4b-it-4bit"
 EMBED_ALIAS = "bge-small-en-v1.5"
 LAST_USED = "2026-05-15T14:32:01.234+00:00"
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 @pytest.fixture(autouse=True)
@@ -347,7 +350,11 @@ def test_diagnostic_log_line_emitted(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_status_help_mentions_loaded_models_and_idle() -> None:
     result = runner.invoke(daemon_module.daemon_app, ["status", "--help"])
 
+    # When Rich colorizes Typer's help (CI forces color, local non-TTY does not),
+    # the ``--json`` option is split by ANSI codes between the dashes — strip them
+    # so the assertion checks the rendered text, not its styling.
+    help_text = _ANSI_RE.sub("", result.stdout)
     assert result.exit_code == 0
-    assert "--json" in result.stdout
-    assert "loaded models" in result.stdout
-    assert "idle" in result.stdout
+    assert "--json" in help_text
+    assert "loaded models" in help_text
+    assert "idle" in help_text
