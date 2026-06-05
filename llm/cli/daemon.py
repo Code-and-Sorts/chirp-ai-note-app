@@ -951,5 +951,5 @@ def _safe_is_installed() -> bool:
     """Best-effort current install state for JSON error payloads."""
     try:
         return is_launch_agent_installed()
-    except OSError:
+    except (OSError, LaunchAgentError):
         return False

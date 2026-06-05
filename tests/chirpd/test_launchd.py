@@ -222,6 +222,45 @@ def test_write_plist_atomic_cleans_up_tmp_on_failure(
     assert not target.exists()
 
 
+def test_install_creates_log_dir_for_launchd_redirect(
+    monkeypatch: pytest.MonkeyPatch, plist_path: Path, tmp_path: Path
+) -> None:
+    # launchd opens StandardOut/ErrorPath itself and won't create parents, so a
+    # fresh machine needs the log dir created at install time.
+    log_path = tmp_path / "Logs" / "chirp" / "chirpd.log"
+    monkeypatch.setattr(launchd, "LAUNCH_AGENT_LOG_PATH", log_path)
+    monkeypatch.setattr(launchd.shutil, "which", lambda _name: CHIRPD_PATH)
+    _patch_launchctl(monkeypatch, _success_handler)
+
+    launchd.install_launch_agent()
+
+    assert log_path.parent.is_dir()
+
+
+def test_run_launchctl_wraps_timeout_as_launchctl_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(cmd="launchctl", timeout=10.0)
+
+    monkeypatch.setattr(launchd.subprocess, "run", boom)
+
+    with pytest.raises(launchd.LaunchctlFailed, match="timed out"):
+        launchd._run_launchctl(["list", "com.chirp.chirpd"])
+
+
+def test_run_launchctl_wraps_missing_binary_as_launch_agent_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError("launchctl")
+
+    monkeypatch.setattr(launchd.subprocess, "run", boom)
+
+    with pytest.raises(launchd.LaunchAgentError, match="launchctl not found"):
+        launchd._run_launchctl(["list", "com.chirp.chirpd"])
+
+
 # --- uninstall_launch_agent -------------------------------------------------
 
 
@@ -290,9 +329,40 @@ def test_is_launch_agent_installed_true_when_both_present(
 ) -> None:
     plist_path.parent.mkdir(parents=True)
     plist_path.write_text("present")
-    _patch_launchctl(monkeypatch, lambda command: _completed(command, returncode=0))
+    _patch_launchctl(
+        monkeypatch,
+        lambda command: _completed(command, returncode=0, stdout="{ ... };\n"),
+    )
 
     assert launchd.is_launch_agent_installed() is True
+
+
+def test_is_launch_agent_installed_false_when_list_exit_zero_but_empty(
+    monkeypatch: pytest.MonkeyPatch, plist_path: Path
+) -> None:
+    # exit 0 with empty stdout is an unexpected state — treat as not installed.
+    plist_path.parent.mkdir(parents=True)
+    plist_path.write_text("present")
+    _patch_launchctl(
+        monkeypatch, lambda command: _completed(command, returncode=0, stdout="")
+    )
+
+    assert launchd.is_launch_agent_installed() is False
+
+
+def test_is_launch_agent_installed_false_when_launchctl_times_out(
+    monkeypatch: pytest.MonkeyPatch, plist_path: Path
+) -> None:
+    # Honors the never-raises contract even when the probe times out.
+    plist_path.parent.mkdir(parents=True)
+    plist_path.write_text("present")
+
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(cmd="launchctl", timeout=10.0)
+
+    monkeypatch.setattr(launchd.subprocess, "run", boom)
+
+    assert launchd.is_launch_agent_installed() is False
 
 
 def test_is_launch_agent_installed_false_when_plist_missing(

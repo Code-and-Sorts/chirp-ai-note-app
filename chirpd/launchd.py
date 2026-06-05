@@ -92,14 +92,29 @@ def _require_darwin() -> None:
 
 
 def _run_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run ``launchctl <args>`` capturing text output with a hard timeout."""
+    """Run ``launchctl <args>`` capturing text output with a hard timeout.
+
+    Normalizes the two ways the call itself can fail into the module's typed
+    surface so they never escape as raw ``subprocess`` exceptions: a missing
+    ``launchctl`` binary raises :class:`LaunchAgentError`, and a hung call that
+    blows the timeout raises :class:`LaunchctlFailed` (returncode ``-1``).
+    """
     command = ["launchctl", *args]
-    return subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=_LAUNCHCTL_TIMEOUT_S,
-    )
+    try:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=_LAUNCHCTL_TIMEOUT_S,
+        )
+    except FileNotFoundError as err:
+        raise LaunchAgentError(
+            "launchctl not found — LaunchAgent management requires macOS"
+        ) from err
+    except subprocess.TimeoutExpired as err:
+        raise LaunchctlFailed(
+            command, -1, f"launchctl timed out after {_LAUNCHCTL_TIMEOUT_S:g}s"
+        ) from err
 
 
 def _build_plist(chirpd_path: Path) -> dict[str, Any]:
@@ -161,6 +176,11 @@ def install_launch_agent(*, force: bool = False) -> Path:
 
     payload = _build_plist(Path(chirpd_path))
     LAUNCH_AGENT_PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # launchd opens StandardOut/ErrorPath itself and does NOT create missing
+    # parent dirs — on a fresh machine the daemon would fail to start unless the
+    # log dir already exists (the Python logging handler from story 5.1 only runs
+    # after the process is up, too late for launchd's own redirect).
+    LAUNCH_AGENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     _write_plist_atomic(payload, LAUNCH_AGENT_PLIST_PATH)
 
     if force and plist_existed:
@@ -248,5 +268,12 @@ def is_launch_agent_installed() -> bool:
         return False
     if not LAUNCH_AGENT_PLIST_PATH.exists():
         return False
-    listing = _run_launchctl(["list", LAUNCH_AGENT_LABEL])
-    return listing.returncode == 0
+    try:
+        listing = _run_launchctl(["list", LAUNCH_AGENT_LABEL])
+    except LaunchAgentError:
+        # Honor the never-raises contract: a missing binary or a launchctl
+        # timeout means we cannot confirm the agent is loaded → not installed.
+        return False
+    # exit 0 with empty stdout is the same unexpected state install rejects, so
+    # require launchctl to actually echo the agent's plist back.
+    return listing.returncode == 0 and bool(listing.stdout.strip())
