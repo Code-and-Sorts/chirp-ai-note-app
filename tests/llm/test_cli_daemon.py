@@ -488,6 +488,50 @@ def test_start_fails_when_chirpd_not_on_path(
     popen.assert_not_called()
 
 
+def test_start_handles_spawn_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    popen = _patch_spawn(monkeypatch)
+    popen.side_effect = OSError("exec format error")
+
+    result = runner.invoke(daemon_module.daemon_app, ["start", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["running"] is False
+    assert payload["spawned"] is False
+    assert set(payload["error"]) == {"code", "message"}
+
+
+def test_start_timeout_reports_spawned_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A spawn was attempted, so the timeout failure must not claim spawned=false
+    # (which AC-9 reserves for "was already running").
+    _patch_client(monkeypatch, LLMDaemonUnreachable("absent"))
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, False)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["spawned"] is True
+
+
+def test_start_message_pid_unknown_when_missing(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(
+        monkeypatch,
+        [LLMDaemonUnreachable("absent"), _status_payload_no_pid()],
+    )
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["start"])
+
+    assert result.exit_code == 0
+    assert "daemon started (pid=unknown)" in result.stdout
+
+
 # --- stop -------------------------------------------------------------------
 
 
@@ -544,6 +588,8 @@ def test_stop_json_sigkill_escalation(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_client(monkeypatch, _status_payload())
     _patch_wait(monkeypatch, False)
     _patch_kill(monkeypatch)
+    # Socket has vacated by the time we re-probe after SIGKILL.
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: False)
 
     result = runner.invoke(daemon_module.daemon_app, ["stop", "--json"])
 
@@ -552,6 +598,24 @@ def test_stop_json_sigkill_escalation(monkeypatch: pytest.MonkeyPatch) -> None:
     assert payload["killed"] is True
     assert payload["running"] is False
     assert set(payload["error"]) == {"code", "message"}
+
+
+def test_stop_json_sigkill_reports_running_when_socket_still_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # SIGKILL delivery is async: if the socket is still accepting on re-probe,
+    # `running` must reflect that truth rather than assume the daemon is down.
+    _patch_client(monkeypatch, _status_payload())
+    _patch_wait(monkeypatch, False)
+    _patch_kill(monkeypatch)
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["killed"] is True
+    assert payload["running"] is True
 
 
 def test_stop_timeout_without_pid_does_not_claim_sigkill(
@@ -663,6 +727,27 @@ def test_restart_reports_partial_failure_when_start_fails(
 
     assert result.exit_code == 1
     assert "was stopped but did not restart" in result.stderr
+
+
+def test_restart_message_pid_unknown_when_missing(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _patch_client(
+        monkeypatch,
+        [
+            _status_payload_pid(111),  # stop probe: running (old pid)
+            LLMDaemonUnreachable("absent"),  # start probe: down after stop
+            _status_payload_no_pid(),  # post-spawn payload without a pid
+        ],
+    )
+    _patch_spawn(monkeypatch)
+    _patch_wait(monkeypatch, True)
+    _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["restart"])
+
+    assert result.exit_code == 0
+    assert "daemon restarted (pid=unknown)" in result.stdout
 
 
 # --- --json output ----------------------------------------------------------

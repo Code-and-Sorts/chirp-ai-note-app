@@ -326,6 +326,7 @@ _ERR_NOT_ON_PATH = "DAEMON_NOT_ON_PATH"
 _ERR_START_TIMEOUT = "DAEMON_START_TIMEOUT"
 _ERR_UNREACHABLE = "DAEMON_UNREACHABLE"
 _ERR_STOP_TIMEOUT = "DAEMON_STOP_TIMEOUT"
+_ERR_SPAWN_FAILED = "DAEMON_SPAWN_FAILED"
 
 
 @daemon_app.command("start")
@@ -358,7 +359,7 @@ def start(
             console.print("daemon is already running", markup=False, soft_wrap=True)
         else:
             stdout_console.print(
-                f"daemon started (pid={result['pid']})",
+                f"daemon started (pid={_format_pid(result['pid'])})",
                 markup=False,
                 highlight=False,
                 soft_wrap=True,
@@ -492,7 +493,7 @@ def restart(
             )
         else:
             stdout_console.print(
-                f"daemon restarted (pid={start_result['pid']})",
+                f"daemon restarted (pid={_format_pid(start_result['pid'])})",
                 markup=False,
                 highlight=False,
                 soft_wrap=True,
@@ -551,13 +552,25 @@ def _attempt_start(socket_path: Path) -> dict[str, Any]:
             },
         }
 
-    _spawn_chirpd(chirpd_path, socket_path)
+    try:
+        _spawn_chirpd(chirpd_path, socket_path)
+    except OSError as exc:
+        return {
+            "ok": False,
+            "pid": None,
+            "spawned": False,
+            "already": False,
+            "error": {
+                "code": _ERR_SPAWN_FAILED,
+                "message": f"failed to spawn chirpd ({chirpd_path}): {exc}",
+            },
+        }
 
     if not _wait_for_socket(socket_path, present=True, timeout=_START_TIMEOUT_S):
         return {
             "ok": False,
             "pid": None,
-            "spawned": False,
+            "spawned": True,
             "already": False,
             "error": {
                 "code": _ERR_START_TIMEOUT,
@@ -625,7 +638,9 @@ def _attempt_stop(socket_path: Path) -> dict[str, Any]:
             "was_running": True,
             "pid": pid,
             "killed": killed,
-            "running": False,
+            # SIGKILL delivery is not synchronous with the socket closing, so
+            # report the actually-observed state rather than assuming "down".
+            "running": _socket_accepting(socket_path),
             "error": {
                 "code": _ERR_STOP_TIMEOUT,
                 "message": f"{timeout_message}{suffix}",
@@ -725,6 +740,11 @@ def _signal_pid(pid: int, sig: int) -> bool:
 
 def _pid_alive(pid: int) -> bool:
     return _signal_pid(pid, 0)
+
+
+def _format_pid(pid: int | None) -> str:
+    """Render a pid for user-facing text — ``model.status`` may omit it."""
+    return str(pid) if pid is not None else "unknown"
 
 
 def _start_exit_code(error: dict[str, Any]) -> int:
