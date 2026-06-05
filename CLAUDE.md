@@ -17,4 +17,4 @@ Use `AGENTS.md` as the canonical contributor guide for this repository.
 ## Current CLI Surface
 
 - Visible commands: `record`, `transcribe`, `notes`, `ask`, `search`, `init`, `about`
-- Hidden maintenance commands: `config`, `devices`, `index`
+- Hidden maintenance commands: `config`, `devices`, `index`, `daemon`

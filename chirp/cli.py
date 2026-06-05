@@ -18,6 +18,7 @@ from typer.core import TyperGroup
 import audio_capture
 from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingError
 from config.settings import ChirpSettings, get_settings
+from llm.cli.daemon import daemon_app
 from llm.cli.models import app as models_app
 from utils.file_utils import NoteRecord, list_notes
 
@@ -528,6 +529,16 @@ notes_app = typer.Typer(help="Browse, view, edit, or delete your notes")
 app.add_typer(notes_app, name="notes", rich_help_panel=MAIN_PANEL)
 
 app.add_typer(models_app, name="models", rich_help_panel=MODELS_PANEL)
+
+# Hidden maintenance group: happy-path users never need the daemon, so it stays
+# out of `chirp --help` and is surfaced only via `chirp daemon --help`. Mirrors
+# the hidden flat commands `config`, `devices`, and `index` defined below.
+app.add_typer(
+    daemon_app,
+    name="daemon",
+    help="Daemon lifecycle and diagnostics (hidden).",
+    hidden=True,
+)
 
 
 class NoteNotFound(Exception):
