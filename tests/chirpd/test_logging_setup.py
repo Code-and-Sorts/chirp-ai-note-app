@@ -178,6 +178,20 @@ def test_log_op_event_rejects_unknown_keys(bad_key: str) -> None:
         )
 
 
+def test_log_op_event_emits_result_field(tmp_path: Path) -> None:
+    """``result`` (added by story 5.3) passes through to the rendered line."""
+    configure_logging(log_dir=tmp_path)
+    log_op_event(
+        logging.getLogger(CHIRP_LOGGER),
+        logging.INFO,
+        "daemon_start: spawned",
+        req_id="r-1",
+        op="daemon_start",
+        result="spawned",
+    )
+    assert "result=spawned" in _read_log(tmp_path)
+
+
 def test_log_op_event_truncates_long_msg(tmp_path: Path) -> None:
     configure_logging(log_dir=tmp_path)
     long_msg = "x" * 500

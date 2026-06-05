@@ -11,15 +11,35 @@ and renders the merged snapshot — a Rich table on a TTY, a single JSON documen
 when ``--json`` is passed or stdout is piped. It has no side effect beyond the
 read ops it issues (which may lazy-spawn a daemon, the one side effect any chirp
 command that needs the daemon performs).
+
+``start`` / ``stop`` / ``restart`` manage the daemon process explicitly. ``start``
+spawns ``chirpd`` via :func:`subprocess.Popen` and polls the socket; ``stop`` and
+``restart`` shut the daemon down.
+
+**Shutdown mechanism (story 5.3 task 1).** CHIRPD-CORE ships a *signal-based*
+shutdown, not a wire ``shutdown`` op: ``chirpd/__main__.py`` installs ``SIGTERM`` /
+``SIGINT`` handlers that cancel the asyncio serve task and exit cleanly (option
+(b) in the story). ``stop`` therefore reads the daemon ``pid`` from ``model.status``
+and sends ``SIGTERM`` (escalating to ``SIGKILL`` only if the socket does not vacate
+within the timeout). There is no ``LLMClient.shutdown()`` method to use. Because
+``stop`` must never *spawn* a daemon just to ask it to die, it probes with
+``model_status_sync(spawn_if_absent=False)`` (AC-4); the daemon ``pid`` comes from
+``model.status``, not ``health`` (``health`` carries only uptime/version).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
+import signal
+import socket as socketlib
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import IO, Any
 
 import typer
@@ -28,8 +48,9 @@ from rich.console import Console
 from rich.table import Table
 
 from chirpd.logging_setup import configure_logging, log_op_event
+from config.settings import CHIRP_DAEMON_SOCKET_ENV
 from llm.cli._console import console, stdout_console
-from llm.client import LLMClient
+from llm.client import LLMClient, resolve_socket_path
 from llm.exceptions import LLMDaemonUnreachable, LLMError
 from llm.protocol import new_request_id
 
@@ -290,4 +311,408 @@ def _log_status(req_id: str, start_ns: int, *, daemon_running: bool) -> None:
         req_id=req_id,
         op="status",
         duration_ms=duration_ms,
+    )
+
+
+# --- lifecycle: start / stop / restart (story 5.3) --------------------------
+
+_SOCKET_POLL_INTERVAL_S = 0.05
+_START_TIMEOUT_S = 5.0
+_STOP_TIMEOUT_S = 5.0
+_RESTART_SETTLE_S = 0.1
+_LOG_HINT = "~/Library/Logs/chirp/chirpd.log"
+
+_ERR_NOT_ON_PATH = "DAEMON_NOT_ON_PATH"
+_ERR_START_TIMEOUT = "DAEMON_START_TIMEOUT"
+_ERR_UNREACHABLE = "DAEMON_UNREACHABLE"
+_ERR_STOP_TIMEOUT = "DAEMON_STOP_TIMEOUT"
+
+
+@daemon_app.command("start")
+def start(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON to stdout."
+    ),
+) -> None:
+    """Spawn the daemon process. No-op if already running."""
+    use_json = _should_use_json(json_output)
+    _ensure_logging()
+    start_ns = time.perf_counter_ns()
+    socket_path = resolve_socket_path()
+
+    result = _attempt_start(socket_path)
+
+    if result["ok"]:
+        outcome = "already_running" if result["already"] else "spawned"
+        _log_lifecycle("daemon_start", start_ns, result=outcome)
+        if use_json:
+            _emit_json(
+                {
+                    "action": "start",
+                    "running": True,
+                    "pid": result["pid"],
+                    "spawned": result["spawned"],
+                }
+            )
+        elif result["already"]:
+            console.print("daemon is already running", markup=False, soft_wrap=True)
+        else:
+            stdout_console.print(
+                f"daemon started (pid={result['pid']})",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+        return
+
+    error = result["error"]
+    _log_lifecycle("daemon_start", start_ns, result="failed")
+    if use_json:
+        _emit_json(
+            {
+                "action": "start",
+                "running": False,
+                "pid": None,
+                "spawned": result["spawned"],
+                "error": error,
+            }
+        )
+    else:
+        console.print(error["message"], style="red", markup=False, soft_wrap=True)
+    raise typer.Exit(code=_start_exit_code(error))
+
+
+@daemon_app.command("stop")
+def stop(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON to stdout."
+    ),
+) -> None:
+    """Stop the daemon process. No-op if not running."""
+    use_json = _should_use_json(json_output)
+    _ensure_logging()
+    start_ns = time.perf_counter_ns()
+    socket_path = resolve_socket_path()
+
+    result = _attempt_stop(socket_path)
+
+    if result["ok"]:
+        outcome = "stopped" if result["was_running"] else "not_running"
+        _log_lifecycle("daemon_stop", start_ns, result=outcome)
+        if use_json:
+            _emit_json(
+                {
+                    "action": "stop",
+                    "running": False,
+                    "was_running": result["was_running"],
+                    "killed": False,
+                }
+            )
+        elif result["was_running"]:
+            stdout_console.print("daemon stopped", markup=False, soft_wrap=True)
+        else:
+            console.print("daemon is not running", markup=False, soft_wrap=True)
+        return
+
+    error = result["error"]
+    _log_lifecycle(
+        "daemon_stop", start_ns, result="killed" if result["killed"] else "failed"
+    )
+    if use_json:
+        _emit_json(
+            {
+                "action": "stop",
+                "running": not result["killed"],
+                "was_running": True,
+                "killed": result["killed"],
+                "error": error,
+            }
+        )
+    else:
+        console.print(error["message"], style="red", markup=False, soft_wrap=True)
+    raise typer.Exit(code=1)
+
+
+@daemon_app.command("restart")
+def restart(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON to stdout."
+    ),
+) -> None:
+    """Stop then start the daemon. Starts a fresh instance if not running."""
+    use_json = _should_use_json(json_output)
+    _ensure_logging()
+    start_ns = time.perf_counter_ns()
+    socket_path = resolve_socket_path()
+
+    stop_result = _attempt_stop(socket_path)
+    old_pid = stop_result["pid"]
+
+    if not stop_result["ok"]:
+        error = stop_result["error"]
+        _log_lifecycle("daemon_restart", start_ns, result="stop_failed")
+        if use_json:
+            _emit_json(
+                {
+                    "action": "restart",
+                    "running": not stop_result["killed"],
+                    "old_pid": old_pid,
+                    "new_pid": None,
+                    "error": error,
+                }
+            )
+        else:
+            console.print(error["message"], style="red", markup=False, soft_wrap=True)
+        raise typer.Exit(code=1)
+
+    was_running = stop_result["was_running"]
+    if was_running:
+        # Give the asyncio server time to unlink the socket and release the flock
+        # before a fresh chirpd races to bind the same path (see Dev notes).
+        time.sleep(_RESTART_SETTLE_S)
+    elif not use_json:
+        console.print(
+            "daemon is not running — starting fresh instance...",
+            markup=False,
+            soft_wrap=True,
+        )
+
+    start_result = _attempt_start(socket_path)
+
+    if start_result["ok"]:
+        _log_lifecycle("daemon_restart", start_ns, result="ok")
+        if use_json:
+            _emit_json(
+                {
+                    "action": "restart",
+                    "running": True,
+                    "old_pid": old_pid,
+                    "new_pid": start_result["pid"],
+                }
+            )
+        else:
+            stdout_console.print(
+                f"daemon restarted (pid={start_result['pid']})",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+        return
+
+    error = start_result["error"]
+    _log_lifecycle("daemon_restart", start_ns, result="start_failed")
+    if was_running:
+        message = f"daemon was stopped but did not restart — check {_LOG_HINT}"
+        exit_code = 1
+    else:
+        message = error["message"]
+        exit_code = _start_exit_code(error)
+    if use_json:
+        _emit_json(
+            {
+                "action": "restart",
+                "running": False,
+                "old_pid": old_pid,
+                "new_pid": None,
+                "error": {"code": error["code"], "message": message},
+            }
+        )
+    else:
+        console.print(message, style="red", markup=False, soft_wrap=True)
+    raise typer.Exit(code=exit_code)
+
+
+def _attempt_start(socket_path: Path) -> dict[str, Any]:
+    """Bring the daemon up. Returns an outcome dict; never prints or exits.
+
+    Keys: ``ok``, ``pid``, ``spawned``, ``already``, ``error`` (a
+    ``{"code", "message"}`` dict on failure, else ``None``).
+    """
+    running, pid = _probe_running(socket_path)
+    if running:
+        return {
+            "ok": True,
+            "pid": pid,
+            "spawned": False,
+            "already": True,
+            "error": None,
+        }
+
+    chirpd_path = shutil.which("chirpd")
+    if chirpd_path is None:
+        return {
+            "ok": False,
+            "pid": None,
+            "spawned": False,
+            "already": False,
+            "error": {
+                "code": _ERR_NOT_ON_PATH,
+                "message": "chirpd binary not found on PATH — is chirp installed correctly?",
+            },
+        }
+
+    _spawn_chirpd(chirpd_path, socket_path)
+
+    if not _wait_for_socket(socket_path, present=True, timeout=_START_TIMEOUT_S):
+        return {
+            "ok": False,
+            "pid": None,
+            "spawned": False,
+            "already": False,
+            "error": {
+                "code": _ERR_START_TIMEOUT,
+                "message": f"daemon failed to start within {int(_START_TIMEOUT_S)} seconds — check {_LOG_HINT}",
+            },
+        }
+
+    running, pid = _probe_running(socket_path)
+    if not running:
+        return {
+            "ok": False,
+            "pid": None,
+            "spawned": True,
+            "already": False,
+            "error": {
+                "code": _ERR_UNREACHABLE,
+                "message": f"daemon started but is not reachable — check {_LOG_HINT}",
+            },
+        }
+    return {"ok": True, "pid": pid, "spawned": True, "already": False, "error": None}
+
+
+def _attempt_stop(socket_path: Path) -> dict[str, Any]:
+    """Bring the daemon down via SIGTERM (SIGKILL escalation). Never prints/exits.
+
+    Keys: ``ok``, ``was_running``, ``pid`` (the pid found, for ``restart`` to
+    report as ``old_pid``), ``killed`` (SIGKILL had to escalate), ``error``.
+    """
+    running, pid = _probe_running(socket_path)
+    if not running:
+        return {
+            "ok": True,
+            "was_running": False,
+            "pid": None,
+            "killed": False,
+            "error": None,
+        }
+
+    if pid is not None:
+        _signal_pid(pid, signal.SIGTERM)
+
+    if _wait_for_socket(socket_path, present=False, timeout=_STOP_TIMEOUT_S):
+        return {
+            "ok": True,
+            "was_running": True,
+            "pid": pid,
+            "killed": False,
+            "error": None,
+        }
+
+    killed = False
+    if pid is not None and _pid_alive(pid):
+        killed = _signal_pid(pid, signal.SIGKILL)
+    return {
+        "ok": False,
+        "was_running": True,
+        "pid": pid,
+        "killed": killed,
+        "error": {
+            "code": _ERR_STOP_TIMEOUT,
+            "message": f"daemon did not stop within {int(_STOP_TIMEOUT_S)} seconds — sent SIGKILL",
+        },
+    }
+
+
+def _probe_running(socket_path: Path) -> tuple[bool, int | None]:
+    """Return ``(running, pid)`` without ever lazy-spawning the daemon (AC-4).
+
+    ``pid`` rides on the ``model.status`` payload; ``spawn_if_absent=False`` makes
+    an absent daemon raise :class:`LLMDaemonUnreachable` rather than be spawned.
+    """
+    try:
+        payload = LLMClient(socket_path=socket_path).model_status_sync(
+            spawn_if_absent=False
+        )
+    except LLMDaemonUnreachable:
+        return False, None
+    pid = payload.get("pid")
+    return True, int(pid) if pid is not None else None
+
+
+def _spawn_chirpd(chirpd_path: str, socket_path: Path) -> None:
+    """Detach a new ``chirpd`` bound to ``socket_path`` (no parent stdio inheritance)."""
+    env = os.environ.copy()
+    env[CHIRP_DAEMON_SOCKET_ENV] = str(socket_path)
+    subprocess.Popen(
+        [chirpd_path],
+        env=env,
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _wait_for_socket(socket_path: Path, *, present: bool, timeout: float) -> bool:
+    """Poll until the socket's accept state matches ``present``, or ``timeout``.
+
+    ``present=True`` waits for the socket to start accepting connections (start);
+    ``present=False`` waits for it to stop (stop). Returns True if the transition
+    occurred within ``timeout`` seconds, False on timeout.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if _socket_accepting(socket_path) == present:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_SOCKET_POLL_INTERVAL_S)
+
+
+def _socket_accepting(socket_path: Path) -> bool:
+    """True if a unix socket at ``socket_path`` accepts a connection right now."""
+    probe = socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM)
+    try:
+        probe.connect(str(socket_path))
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return True
+
+
+def _signal_pid(pid: int, sig: int) -> bool:
+    """Send ``sig`` to ``pid``; True if delivered, False if the process was gone."""
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # pragma: no cover — daemon is always same-user
+        return False
+    return True
+
+
+def _pid_alive(pid: int) -> bool:
+    return _signal_pid(pid, 0)
+
+
+def _start_exit_code(error: dict[str, Any]) -> int:
+    # AC-10: a post-spawn unreachable daemon is the rare exit-3 case; all other
+    # start failures (missing binary, spawn timeout) are operational exit-1.
+    return 3 if error["code"] == _ERR_UNREACHABLE else 1
+
+
+def _emit_json(payload: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def _log_lifecycle(op: str, start_ns: int, *, result: str) -> None:
+    duration_ms = max(int((time.perf_counter_ns() - start_ns) / 1_000_000), 0)
+    log_op_event(
+        _logger,
+        logging.INFO,
+        f"{op}: {result}",
+        req_id=new_request_id(),
+        op=op,
+        duration_ms=duration_ms,
+        result=result,
     )

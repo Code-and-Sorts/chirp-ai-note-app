@@ -502,7 +502,9 @@ def test_health_sync_invokes_async_health(
     temp_socket_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _stub_health(self: LLMClient) -> dict[str, Any]:
+    async def _stub_health(
+        self: LLMClient, *, spawn_if_absent: bool = True
+    ) -> dict[str, Any]:
         return {"status": "ok", "uptime_seconds": 0.0, "version": "test"}
 
     monkeypatch.setattr(LLMClient, "health", _stub_health)

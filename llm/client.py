@@ -138,10 +138,10 @@ class LLMClient:
         self.daemon_lazy_spawned = False
         self.daemon_respawned = False
 
-    async def health(self) -> dict[str, Any]:
+    async def health(self, *, spawn_if_absent: bool = True) -> dict[str, Any]:
         envelope = {"id": new_request_id(), "op": OP_HEALTH}
         ready_payload: dict[str, Any] | None = None
-        async for event in self._request(envelope):
+        async for event in self._request(envelope, spawn_if_absent=spawn_if_absent):
             if event.get("event") == EVENT_READY:
                 ready_payload = event
         if ready_payload is None:
@@ -150,8 +150,8 @@ class LLMClient:
             )
         return ready_payload
 
-    def health_sync(self) -> dict[str, Any]:
-        return _run_sync(self.health())
+    def health_sync(self, *, spawn_if_absent: bool = True) -> dict[str, Any]:
+        return _run_sync(self.health(spawn_if_absent=spawn_if_absent))
 
     async def model_list(self, *, spawn_if_absent: bool = True) -> list[dict[str, Any]]:
         envelope = {"id": new_request_id(), "op": OP_MODEL_LIST}
@@ -220,10 +220,10 @@ class LLMClient:
     def model_unload_sync(self, alias: str) -> dict[str, Any]:
         return _run_sync(self.model_unload(alias))
 
-    async def model_status(self) -> dict[str, Any]:
+    async def model_status(self, *, spawn_if_absent: bool = True) -> dict[str, Any]:
         envelope = {"id": new_request_id(), "op": OP_MODEL_STATUS}
         status_payload: dict[str, Any] | None = None
-        async for event in self._request(envelope):
+        async for event in self._request(envelope, spawn_if_absent=spawn_if_absent):
             if event.get("event") == EVENT_STATUS:
                 status_payload = event
         if status_payload is None:
@@ -232,8 +232,8 @@ class LLMClient:
             )
         return status_payload
 
-    def model_status_sync(self) -> dict[str, Any]:
-        return _run_sync(self.model_status())
+    def model_status_sync(self, *, spawn_if_absent: bool = True) -> dict[str, Any]:
+        return _run_sync(self.model_status(spawn_if_absent=spawn_if_absent))
 
     def chat_stream(
         self,
