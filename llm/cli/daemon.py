@@ -43,6 +43,7 @@ import socket as socketlib
 import subprocess
 import sys
 import time
+from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
@@ -63,7 +64,7 @@ from chirpd.launchd import (
     is_launch_agent_installed,
     uninstall_launch_agent,
 )
-from chirpd.logging_setup import configure_logging, log_op_event
+from chirpd.logging_setup import configure_logging, log_op_event, resolve_log_path
 from config.settings import CHIRP_DAEMON_SOCKET_ENV
 from llm.cli._console import console, stdout_console
 from llm.client import LLMClient, resolve_socket_path
@@ -953,3 +954,160 @@ def _safe_is_installed() -> bool:
         return is_launch_agent_installed()
     except (OSError, LaunchAgentError):
         return False
+
+
+# --- logs (story 5.5) -------------------------------------------------------
+
+# Read from module scope so tests can shrink them; production values keep the
+# follow loop responsive (200 ms) without burning CPU and poll for a not-yet-
+# existing log file once a second (AC-12).
+_FOLLOW_POLL_INTERVAL_SECONDS = 0.2
+_WAIT_FILE_POLL_INTERVAL_SECONDS = 1.0
+
+
+@daemon_app.command("logs")
+def logs(
+    follow: bool = typer.Option(
+        False,
+        "-f",
+        "--follow",
+        help="Follow the log file for new output. Re-opens across rotation.",
+    ),
+    lines: int = typer.Option(
+        None,
+        "-n",
+        "--lines",
+        min=1,
+        help="Show only the last N lines (or last N before following with -f).",
+    ),
+) -> None:
+    """Print the daemon log file. Tail with -f; show last N with -n."""
+    _ensure_logging()
+    path = resolve_log_path()
+    _log_daemon_logs(_logs_result(follow=follow, lines=lines, path=path))
+
+    try:
+        if follow:
+            # A fresh install may not have a log file yet; the follow loop waits
+            # for it to appear, so dump the tail only when there is something to.
+            # The follow loop then re-opens and seeks to a freshly-measured EOF,
+            # so a line the daemon writes in the microsecond gap between the dump
+            # and the seek is in neither — the same benign race `tail -n N -f`
+            # carries. Accepted: the alternative (threading the dump's end offset
+            # into the follow loop) tangles with the rotation re-open path.
+            if lines is not None and path.exists():
+                _tail_last_n_lines(path, lines)
+            _follow_log_file(path, start_at_end=True)
+            return
+
+        if not path.exists():
+            print(
+                f"no log file at {path} yet. logs are written when the daemon runs.",
+                file=sys.stderr,
+            )
+            return
+
+        if lines is not None:
+            _tail_last_n_lines(path, lines)
+        else:
+            _cat_log_file(path)
+    except OSError as err:
+        print(f"couldn't read log file: {err}", file=sys.stderr)
+        raise typer.Exit(code=1) from err
+
+
+def _logs_result(*, follow: bool, lines: int | None, path: Path) -> str:
+    """Classify the run for the diagnostic log line: cat|tail|follow|missing."""
+    if follow:
+        return "follow"
+    if lines is not None:
+        return "tail"
+    return "cat" if path.exists() else "missing"
+
+
+def _cat_log_file(path: Path) -> None:
+    """Stream the whole file to stdout byte-for-byte (no whole-file read)."""
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            sys.stdout.write(line)
+    sys.stdout.flush()
+
+
+def _tail_last_n_lines(path: Path, n: int) -> None:
+    """Write the last ``n`` lines to stdout, keeping only ``n`` in memory."""
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        tail = deque(fh, maxlen=n)
+    for line in tail:
+        sys.stdout.write(line)
+    sys.stdout.flush()
+
+
+def _follow_log_file(path: Path, *, start_at_end: bool) -> None:
+    """Follow the log file, re-opening across rotation (``tail -F`` semantics).
+
+    Waits for the file to appear (AC-8), then reads new lines as they land. When
+    the file's inode changes — rotation swapped ``chirpd.log`` for a fresh one —
+    re-opens by name and reads the new file from the start so the first post-
+    rotation lines are not lost. Exits cleanly on Ctrl-C (AC-7).
+    """
+    try:
+        # Seek past existing content only when the file is already there. If we
+        # had to wait for it to appear, the file is fresh and the first line is
+        # exactly what the user wants to watch arrive (AC-8 rationale).
+        seek_to_end = start_at_end and path.exists()
+        _wait_for_log_file(path)
+        fh = path.open("r", encoding="utf-8", errors="replace")
+        inode = path.stat().st_ino
+        if seek_to_end:
+            fh.seek(0, os.SEEK_END)
+        try:
+            while True:
+                line = fh.readline()
+                if line:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                    continue
+                time.sleep(_FOLLOW_POLL_INTERVAL_SECONDS)
+                try:
+                    new_inode = path.stat().st_ino
+                except FileNotFoundError:
+                    # The file vanished mid-rotation; keep polling for its return.
+                    continue
+                if new_inode != inode:
+                    try:
+                        new_fh = path.open("r", encoding="utf-8", errors="replace")
+                    except OSError:
+                        # Lost the race between stat and open (the fresh file is
+                        # not openable yet) — hold the current handle and retry.
+                        continue
+                    fh.close()
+                    fh = new_fh
+                    inode = new_inode
+        finally:
+            fh.close()
+    except KeyboardInterrupt:
+        pass
+
+
+def _wait_for_log_file(path: Path) -> None:
+    """Block until ``path`` exists, announcing the wait once (AC-8)."""
+    announced = False
+    while not path.exists():
+        if not announced:
+            print(f"waiting for log file at {path}...", file=sys.stderr)
+            announced = True
+        time.sleep(_WAIT_FILE_POLL_INTERVAL_SECONDS)
+
+
+def _log_daemon_logs(result: str) -> None:
+    # AC-13: emitted at command start (not exit), so duration_ms is 0 by design —
+    # a ``-f`` run may never "finish" for a duration to measure.
+    log_op_event(
+        _logger,
+        logging.INFO,
+        f"daemon logs: {result}",
+        req_id=new_request_id(),
+        op="daemon_logs",
+        duration_ms=0,
+        result=result,
+    )
