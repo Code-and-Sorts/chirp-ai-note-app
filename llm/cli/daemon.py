@@ -422,7 +422,7 @@ def stop(
         _emit_json(
             {
                 "action": "stop",
-                "running": not result["killed"],
+                "running": result["running"],
                 "was_running": True,
                 "killed": result["killed"],
                 "error": error,
@@ -455,7 +455,7 @@ def restart(
             _emit_json(
                 {
                     "action": "restart",
-                    "running": not stop_result["killed"],
+                    "running": stop_result["running"],
                     "old_pid": old_pid,
                     "new_pid": None,
                     "error": error,
@@ -584,7 +584,13 @@ def _attempt_stop(socket_path: Path) -> dict[str, Any]:
     """Bring the daemon down via SIGTERM (SIGKILL escalation). Never prints/exits.
 
     Keys: ``ok``, ``was_running``, ``pid`` (the pid found, for ``restart`` to
-    report as ``old_pid``), ``killed`` (SIGKILL had to escalate), ``error``.
+    report as ``old_pid``), ``killed`` (SIGKILL had to escalate), ``running``
+    (the daemon's true post-attempt state), ``error``.
+
+    The pid read from ``model.status`` is trusted for the lifetime of this call.
+    In the (alpha-acceptable) worst case the daemon exits and the OS recycles its
+    pid before the 5 s escalation fires, so SIGKILL could land on an unrelated
+    same-user process; the window is small and stop is operator-initiated.
     """
     running, pid = _probe_running(socket_path)
     if not running:
@@ -593,6 +599,7 @@ def _attempt_stop(socket_path: Path) -> dict[str, Any]:
             "was_running": False,
             "pid": None,
             "killed": False,
+            "running": False,
             "error": None,
         }
 
@@ -605,21 +612,46 @@ def _attempt_stop(socket_path: Path) -> dict[str, Any]:
             "was_running": True,
             "pid": pid,
             "killed": False,
+            "running": False,
             "error": None,
         }
 
-    killed = False
+    timeout_message = f"daemon did not stop within {int(_STOP_TIMEOUT_S)} seconds"
     if pid is not None and _pid_alive(pid):
         killed = _signal_pid(pid, signal.SIGKILL)
+        suffix = " — sent SIGKILL" if killed else ""
+        return {
+            "ok": False,
+            "was_running": True,
+            "pid": pid,
+            "killed": killed,
+            "running": False,
+            "error": {
+                "code": _ERR_STOP_TIMEOUT,
+                "message": f"{timeout_message}{suffix}",
+            },
+        }
+
+    # No live pid to signal: the daemon may still be holding the socket (we just
+    # have no pid to kill) or it may have exited just past the poll deadline.
+    # Re-probe instead of inferring state — and never claim a SIGKILL we did not
+    # send.
+    if not _socket_accepting(socket_path):
+        return {
+            "ok": True,
+            "was_running": True,
+            "pid": pid,
+            "killed": False,
+            "running": False,
+            "error": None,
+        }
     return {
         "ok": False,
         "was_running": True,
         "pid": pid,
-        "killed": killed,
-        "error": {
-            "code": _ERR_STOP_TIMEOUT,
-            "message": f"daemon did not stop within {int(_STOP_TIMEOUT_S)} seconds — sent SIGKILL",
-        },
+        "killed": False,
+        "running": True,
+        "error": {"code": _ERR_STOP_TIMEOUT, "message": timeout_message},
     }
 
 

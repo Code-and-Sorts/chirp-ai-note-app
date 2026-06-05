@@ -382,6 +382,12 @@ def _status_payload_pid(pid: int) -> dict[str, object]:
     return payload
 
 
+def _status_payload_no_pid() -> dict[str, object]:
+    payload = _status_payload()
+    del payload["pid"]
+    return payload
+
+
 def _patch_client(monkeypatch: pytest.MonkeyPatch, model_status: object) -> MagicMock:
     """Patch ``LLMClient`` so ``model_status_sync`` drives the running/pid probe.
 
@@ -532,6 +538,51 @@ def test_stop_does_not_lazy_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
     runner.invoke(daemon_module.daemon_app, ["stop"])
 
     assert client.model_status_sync.call_args.kwargs == {"spawn_if_absent": False}
+
+
+def test_stop_json_sigkill_escalation(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_client(monkeypatch, _status_payload())
+    _patch_wait(monkeypatch, False)
+    _patch_kill(monkeypatch)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["killed"] is True
+    assert payload["running"] is False
+    assert set(payload["error"]) == {"code", "message"}
+
+
+def test_stop_timeout_without_pid_does_not_claim_sigkill(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    # Running daemon whose status payload carries no pid: SIGTERM/SIGKILL are
+    # impossible, so the message must not claim a SIGKILL was sent.
+    _patch_client(monkeypatch, _status_payload_no_pid())
+    _patch_wait(monkeypatch, False)
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: True)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    assert result.exit_code == 1
+    assert "did not stop" in result.stderr
+    assert "SIGKILL" not in result.stderr
+
+
+def test_stop_timeout_without_pid_succeeds_when_socket_vacated(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    # No pid, the vacate poll missed it, but the socket no longer answers: the
+    # daemon did stop, so report success rather than a false SIGKILL failure.
+    _patch_client(monkeypatch, _status_payload_no_pid())
+    _patch_wait(monkeypatch, False)
+    monkeypatch.setattr(daemon_module, "_socket_accepting", lambda _p: False)
+
+    result = runner.invoke(daemon_module.daemon_app, ["stop"])
+
+    assert result.exit_code == 0
+    assert "daemon stopped" in result.stdout
 
 
 # --- restart ----------------------------------------------------------------
