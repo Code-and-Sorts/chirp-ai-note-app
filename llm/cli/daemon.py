@@ -49,6 +49,8 @@ def daemon_main() -> None:
 
 _logger = logging.getLogger("chirp.llm.cli.daemon")
 
+# The locked top-level JSON schema (epic §3 decision 10 / AC-4), in emit order.
+# Source of truth for ``_stopped_payload`` and asserted by the CLI tests.
 _JSON_STATUS_KEYS = (
     "running",
     "pid",
@@ -155,15 +157,10 @@ def _normalize_model(model: dict[str, Any]) -> dict[str, Any]:
 
 
 def _stopped_payload() -> dict[str, Any]:
-    return {
-        "running": False,
-        "pid": None,
-        "uptime_seconds": None,
-        "version": None,
-        "loaded_models": [],
-        "last_request_at": None,
-        "total_rss_bytes": None,
-    }
+    payload: dict[str, Any] = dict.fromkeys(_JSON_STATUS_KEYS, None)
+    payload["running"] = False
+    payload["loaded_models"] = []
+    return payload
 
 
 def _render_status_table(payload: dict[str, Any], target: Console) -> None:
@@ -277,6 +274,8 @@ def _ensure_logging() -> None:
     try:
         configure_logging(to_stderr=False)
     except OSError:
+        # A read-only home or un-creatable log dir must not break a read-only
+        # diagnostic command — degrade to no logging rather than failing.
         pass
 
 
