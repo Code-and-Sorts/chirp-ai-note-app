@@ -48,7 +48,17 @@ DEFAULT_LOG_DIR_FALLBACK: Final[Path] = Path.home() / _FALLBACK_LOG_SUBPATH
 
 LOGFMT_REQUIRED_FIELDS: Final[tuple[str, ...]] = ("ts", "level", "component", "msg")
 LOGFMT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset(
-    {"req_id", "op", "model", "duration_ms", "tokens", "err_code", "err_type", "result"}
+    {
+        "req_id",
+        "op",
+        "model",
+        "duration_ms",
+        "tokens",
+        "err_code",
+        "err_type",
+        "result",
+        "chirpd_path",
+    }
 )
 
 FORBIDDEN_EXTRA_KEY_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -244,6 +254,7 @@ def log_op_event(
     err_code: str | None = None,
     err_type: str | None = None,
     result: str | None = None,
+    chirpd_path: str | None = None,
     **extra: object,
 ) -> None:
     """Emit an op-level log line — the only sanctioned op emitter in ``chirpd/``.
@@ -271,6 +282,7 @@ def log_op_event(
         "err_code": err_code,
         "err_type": err_type,
         "result": result,
+        "chirpd_path": chirpd_path,
     }
     fields.update({key: value for key, value in optional.items() if value is not None})
     logger.log(level, msg, extra=fields)
