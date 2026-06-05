@@ -12,7 +12,7 @@ Chirp is a Typer-based CLI in `chirp/cli.py`. Runtime domains live in sibling pa
 
 ## Coding Style & Naming Conventions
 **Formatting:** Ruff enforces 88-char lines, double quotes, and import sorting. Use absolute imports and keep stdlib / third-party / first-party groups clean.
-**Naming:** Public CLI commands are `record`, `transcribe`, `notes`, `ask`, `search`, `init`, and `about`. Hidden maintenance commands such as `config`, `devices`, and `index` exist, but they are not the primary user workflow.
+**Naming:** Public CLI commands are `record`, `transcribe`, `notes`, `ask`, `search`, `init`, and `about`. Hidden maintenance commands such as `config`, `devices`, `index`, and `daemon` exist, but they are not the primary user workflow.
 **Types:** Add type hints where practical; mypy checks `chirp`, `config`, `notes`, `notes_chat`, `recorder`, `transcriber`, and `utils`.
 **Errors:** Prefer domain exceptions from `chirp.exceptions` and user-facing messages that explain the next recovery step.
 **Comments:** Keep them rare; prefer clearer names and smaller helpers over explanatory comments.

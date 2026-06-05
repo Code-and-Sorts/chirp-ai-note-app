@@ -439,6 +439,94 @@ class TestNotesDelete:
         assert (tmp_path / "safe-2026-04-20").exists()
 
 
+class TestDaemonRegistration:
+    """Story 5.6: the daemon subapp is wired in hidden and dispatches end-to-end.
+
+    These exercise the *top-level* ``chirp`` app, complementing
+    ``tests/llm/test_cli_daemon*.py`` which drive the subapp directly.
+    """
+
+    _SUBCOMMANDS = ("status", "start", "stop", "restart", "enable", "disable", "logs")
+
+    def test_daemon_subapp_is_hidden_in_top_help(self):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(chirp.cli.app, ["--help"])
+        assert result.exit_code == 0
+        assert "daemon" not in result.stdout
+
+    def test_visible_commands_unchanged(self):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(chirp.cli.app, ["--help"])
+        assert result.exit_code == 0
+        for command in chirp.cli.VISIBLE_COMMAND_ORDER:
+            assert command in result.stdout
+        for hidden in ("daemon", "config", "devices", "index"):
+            assert hidden not in result.stdout
+
+    def test_daemon_subapp_help_lists_all_seven_subcommands(self):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(chirp.cli.app, ["daemon", "--help"])
+        assert result.exit_code == 0
+        for subcommand in self._SUBCOMMANDS:
+            assert subcommand in result.stdout
+
+    def test_chirp_daemon_status_dispatch(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+        from llm.cli import daemon as daemon_module
+
+        client = MagicMock()
+        client.daemon_lazy_spawned = False
+        client.daemon_respawned = False
+        client.health_sync.return_value = {
+            "status": "ok",
+            "uptime_seconds": 12.0,
+            "version": "0.7.0",
+        }
+        client.model_status_sync.return_value = {
+            "pid": 4242,
+            "rss_bytes": 1024,
+            "last_request_at": None,
+            "models": [],
+        }
+        monkeypatch.setattr(daemon_module, "configure_logging", MagicMock())
+        monkeypatch.setattr(daemon_module, "LLMClient", MagicMock(return_value=client))
+
+        result = CliRunner().invoke(chirp.cli.app, ["daemon", "status"])
+        assert result.exit_code == 0
+        assert '"running": true' in result.stdout
+
+    def test_chirp_daemon_logs_dispatch(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+        from llm.cli import daemon as daemon_module
+
+        log_file = tmp_path / "chirpd.log"
+        log_file.write_text("first line\nsecond line\n", encoding="utf-8")
+        monkeypatch.setattr(daemon_module, "configure_logging", MagicMock())
+        monkeypatch.setattr(daemon_module, "resolve_log_path", lambda *a, **k: log_file)
+
+        result = CliRunner().invoke(chirp.cli.app, ["daemon", "logs"])
+        assert result.exit_code == 0
+        assert "first line" in result.stdout
+        assert "second line" in result.stdout
+
+
 class TestNotesReviewPatches:
     def _runner(self, tmp_path, monkeypatch):
         from typer.testing import CliRunner
