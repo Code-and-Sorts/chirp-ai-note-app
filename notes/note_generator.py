@@ -5,11 +5,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import requests
 import tomli_w
 from rich.console import Console
 
 from config.settings import ChirpSettings
+from llm.client import LLMClient
 from notes.constants import DEFAULT_MEETING_NAME
 from notes.template_engine import TemplateEngine
 from utils.file_utils import META_FILENAME, NOTES_FILENAME, NoteRecord, list_notes
@@ -137,11 +137,17 @@ Always produce notes using the canonical tags below. Never invent content.
 
 
 class NoteGenerator:
-    def __init__(self, settings: ChirpSettings, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        settings: ChirpSettings,
+        console: Console | None = None,
+        llm_client: LLMClient | None = None,
+    ) -> None:
         self.settings = settings
         self.template_engine = TemplateEngine(settings)
         self.popup_manager = PopupManager()
         self.console = console if console is not None else Console()
+        self._llm_client = llm_client
 
     def generate_for_records(
         self,
@@ -346,59 +352,40 @@ Transcript:
 Return ONLY the XML document, no additional text before or after."""
 
         try:
-            response = self._call_ollama(prompt)
+            response = self._call_llm(prompt)
             return self._parse_xml_response(response)
         except Exception as exc:  # noqa: BLE001 - topic extraction is best-effort; many failure modes
             logger.debug("Topic extraction failed: %s", exc)
             return None
 
-    def _call_ollama(self, prompt: str) -> str:
-        url = f"{self.settings.models.ollama_url}/api/generate"
-        num_predict = self.settings.models.num_predict
+    def _call_llm(self, prompt: str) -> str:
+        # Route note generation through chirpd via llm.client instead of the
+        # Ollama HTTP API. The transcript is sent as a single user message so
+        # the model's chat template wraps the existing SYSTEM_PROMPT + prompt
+        # verbatim, preserving the regression-corpus "before" prompt shape.
+        messages = [{"role": "user", "content": prompt}]
+        options = {"max_tokens": self.settings.models.num_predict}
+        client = self._llm_client or LLMClient()
 
-        payload = {
-            "model": self.settings.models.llm,
-            "prompt": prompt,
-            "stream": True,
-            "options": {"temperature": 0.3, "top_p": 0.9, "num_predict": num_predict},
-        }
-
-        import json
-
-        full_response: list[str] = []
+        deltas: list[str] = []
         chunk_count = 0
 
-        with requests.post(url, json=payload, timeout=300, stream=True) as response:
-            response.raise_for_status()
-
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError:
+        for token in client.chat_stream_sync(
+            messages, model="default", options=options
+        ):
+            if token:
+                deltas.append(token)
+                chunk_count += 1
+                if chunk_count % 20 == 0:
                     self.console.print(
-                        "[yellow]  ↳ Warning: skipped malformed stream chunk[/yellow]"
+                        f"[dim]  ↳ Generating... ({chunk_count} chunks)[/dim]",
+                        end="\r",
                     )
-                    continue
-
-                token = chunk.get("response", "")
-                if token:
-                    full_response.append(token)
-                    chunk_count += 1
-                    if chunk_count % 20 == 0:
-                        self.console.print(
-                            f"[dim]  ↳ Generating... ({chunk_count} chunks)[/dim]",
-                            end="\r",
-                        )
-
-                if chunk.get("done", False):
-                    break
 
         if chunk_count > 0:
             self.console.print(f"[dim]  ↳ Generated {chunk_count} chunks[/dim]       ")
 
-        return "".join(full_response).strip()
+        return "".join(deltas).strip()
 
     def _parse_xml_response(self, response: str) -> dict[str, Any] | None:
         try:

@@ -9,23 +9,6 @@ from notes.note_generator import NoteGenerator
 from utils.file_utils import NoteRecord
 
 
-def _make_streaming_response(text: str):
-    import json
-
-    lines = []
-    for char in text:
-        lines.append(json.dumps({"response": char, "done": False}).encode())
-    lines.append(json.dumps({"response": "", "done": True}).encode())
-
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = Mock()
-    mock_response.iter_lines = Mock(return_value=iter(lines))
-    mock_response.__enter__ = Mock(return_value=mock_response)
-    mock_response.__exit__ = Mock(return_value=False)
-    return mock_response
-
-
 @pytest.fixture
 def mock_settings():
     settings = Mock()
@@ -156,24 +139,6 @@ class TestNoteGenerator:
             assert result["decisions"] == []
             assert result["open_questions"] == []
             assert len(result["discussion_highlights"]) == 1
-
-    def test_call_ollama_success(self, mock_settings):
-        with (
-            patch("notes.note_generator.TemplateEngine"),
-            patch("notes.note_generator.PopupManager"),
-            patch("notes.note_generator.requests.post") as mock_post,
-        ):
-            mock_post.return_value = _make_streaming_response("Test response")
-
-            generator = NoteGenerator(mock_settings)
-            result = generator._call_ollama("test prompt")
-
-            assert result == "Test response"
-            mock_post.assert_called_once()
-            call_kwargs = mock_post.call_args
-            assert call_kwargs[1]["timeout"] == 300
-            payload = call_kwargs[1]["json"]
-            assert payload["options"]["num_predict"] == 4096
 
     def test_generate_for_record_writes_notes_and_updates_meta(
         self, mock_settings, tmp_path
