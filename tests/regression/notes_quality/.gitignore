@@ -1,0 +1,8 @@
+# Audio is never committed to the regression corpus (see README.md).
+# Transcripts + notes_before.md carry everything story 6.6 needs to compare.
+*.wav
+*.m4a
+*.mp3
+*.flac
+*.aiff
+*.ogg

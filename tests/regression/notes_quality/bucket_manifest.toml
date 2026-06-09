@@ -1,0 +1,111 @@
+# Bucket manifest for the notes-quality regression corpus (story 6.1).
+# One [recordings.<slug>] table per corpus subdirectory. The smoke test
+# (tests/regression/test_corpus_inventory.py) asserts this manifest matches
+# the directories on disk and covers the required speaker/domain buckets.
+#
+# speakers:           "single" | "two" | "multi"
+# domain:             "technical" | "non-technical"
+# word_count_bucket:  "short" (<300 words) | "medium" (300-3000) | "long" (>3000)
+# notes_before_model: models.llm from ~/.chirp/config.toml at capture time
+#
+# Baselines captured against the current Ollama pipeline EXACTLY as it ships
+# (no config overrides). All THREE long entries exceed the pipeline's default
+# 4096-token context window, so their notes_before.md are degraded:
+#   - karpathy-interview-long  (5906 w) and agentic-coding-talk-long (6153 w):
+#     XML-tag bleed / "Unable to parse structured notes" fallback.
+#   - parliament-recession-debate-long (4097 w, just over the window):
+#     structurally valid but EMPTY ("No summary available", all sections "None").
+# This is the genuine, unmodified "before" baseline. See deferred-work.md for
+# the root cause (missing num_ctx).
+
+schema_version = 1
+
+# --- short (<300 words) ---------------------------------------------------
+
+[recordings.mouseless-overlay-short]
+speakers = "single"
+domain = "technical"
+word_count_bucket = "short"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"
+
+[recordings.tensor-ops-musing-short]
+speakers = "single"
+domain = "technical"
+word_count_bucket = "short"
+recorded_on = "2026-05-03"
+notes_before_model = "llama3.1:8b"
+
+[recordings.podcast-interview-intro-short]
+speakers = "single"  # captured excerpt is the host's solo intro monologue
+domain = "non-technical"
+word_count_bucket = "short"
+recorded_on = "2026-04-28"
+notes_before_model = "llama3.1:8b"
+
+[recordings.podcast-woodchucks-chat-short]
+speakers = "two"
+domain = "non-technical"
+word_count_bucket = "short"
+recorded_on = "2026-04-28"
+notes_before_model = "llama3.1:8b"
+
+# --- medium (300-3000 words) ----------------------------------------------
+
+[recordings.neovim-intro-medium]
+speakers = "single"
+domain = "technical"
+word_count_bucket = "medium"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"
+
+[recordings.opengrid-tile-removal-medium]
+speakers = "single"
+domain = "non-technical"
+word_count_bucket = "medium"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"
+
+[recordings.usb-10gbe-review-medium]
+speakers = "single"
+domain = "technical"
+word_count_bucket = "medium"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"
+
+[recordings.copilot-statusline-medium]
+speakers = "single"
+domain = "technical"
+word_count_bucket = "medium"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"
+
+[recordings.llm-agents-tools-medium]
+speakers = "single"
+domain = "technical"
+word_count_bucket = "medium"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"
+
+# --- long (>3000 words) ---------------------------------------------------
+
+[recordings.parliament-recession-debate-long]
+speakers = "multi"
+domain = "non-technical"
+word_count_bucket = "long"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"
+
+[recordings.karpathy-interview-long]
+speakers = "multi"
+domain = "technical"
+word_count_bucket = "long"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"
+
+[recordings.agentic-coding-talk-long]
+speakers = "single"
+domain = "technical"
+word_count_bucket = "long"
+recorded_on = "2026-06-07"
+notes_before_model = "llama3.1:8b"

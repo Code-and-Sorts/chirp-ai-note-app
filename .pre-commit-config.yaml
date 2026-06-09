@@ -13,14 +13,16 @@ repos:
         args: [--write-changes]  # Auto-fix typos
         # Optional: only check specific file types
         files: \.(py|md|yaml|yml|txt|rst)$
+        # Verbatim regression-corpus transcripts/notes must not be auto-edited.
+        exclude: '^tests/regression/notes_quality/'
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
       - id: trailing-whitespace
-        exclude: '^\.github/workflows/.*\.lock\.yml$'
+        exclude: '^(\.github/workflows/.*\.lock\.yml|tests/regression/notes_quality/.*)$'
       - id: end-of-file-fixer
-        exclude: '^\.github/workflows/.*\.lock\.yml$'
+        exclude: '^(\.github/workflows/.*\.lock\.yml|tests/regression/notes_quality/.*)$'
       - id: check-yaml
       - id: check-merge-conflict
 
