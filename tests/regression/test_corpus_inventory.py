@@ -128,9 +128,9 @@ def test_manifest_covers_speaker_and_domain_buckets() -> None:
 
 def test_manifest_word_count_buckets_match_transcripts() -> None:
     recordings = load_manifest().get("recordings", {})
-    mismatches = {
-        slug: (entry["word_count_bucket"], length_bucket(transcript_word_count(slug)))
-        for slug, entry in recordings.items()
-        if entry["word_count_bucket"] != length_bucket(transcript_word_count(slug))
-    }
+    mismatches = {}
+    for slug, entry in recordings.items():
+        derived = length_bucket(transcript_word_count(slug))
+        if entry["word_count_bucket"] != derived:
+            mismatches[slug] = (entry["word_count_bucket"], derived)
     assert not mismatches, f"manifest bucket != derived bucket: {mismatches}"
