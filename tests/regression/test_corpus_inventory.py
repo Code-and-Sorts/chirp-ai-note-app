@@ -22,6 +22,7 @@ LONG_MIN_WORDS = 3000
 MIN_LENGTH_BUCKET_COUNTS = {"short": 3, "medium": 4, "long": 3}
 REQUIRED_SPEAKER_BUCKETS = {"single", "two", "multi"}
 REQUIRED_DOMAIN_BUCKETS = {"technical", "non-technical"}
+REQUIRED_MANIFEST_FIELDS = {"speakers", "domain", "word_count_bucket"}
 
 
 def corpus_slugs() -> list[str]:
@@ -32,6 +33,7 @@ def corpus_slugs() -> list[str]:
 
 def transcript_word_count(slug: str) -> int:
     transcript = CORPUS_DIR / slug / "transcript.txt"
+    assert transcript.is_file(), f"missing transcript for {slug}: {transcript}"
     return len(transcript.read_text(encoding="utf-8").split())
 
 
@@ -100,6 +102,16 @@ def test_manifest_matches_subdirectories() -> None:
         f"{sorted(manifest_slugs - directory_slugs)}, only on disk: "
         f"{sorted(directory_slugs - manifest_slugs)}"
     )
+
+
+def test_manifest_entries_have_required_fields() -> None:
+    recordings = load_manifest().get("recordings", {})
+    missing = {
+        slug: sorted(REQUIRED_MANIFEST_FIELDS - set(entry))
+        for slug, entry in recordings.items()
+        if not REQUIRED_MANIFEST_FIELDS <= set(entry)
+    }
+    assert not missing, f"manifest entries missing required fields: {missing}"
 
 
 def test_manifest_covers_speaker_and_domain_buckets() -> None:
