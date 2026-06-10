@@ -5,17 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 
 from notes_chat.retrieval import (
     _build_context,
     _create_chunk_header,
     _format_mm_ss,
     _generate_suggestion,
-    _get_query_embedding,
     _search_bm25,
     _search_chroma,
     _slug_from_chunk,
@@ -594,80 +592,7 @@ class TestGenerateSuggestion:
 
 
 # ---------------------------------------------------------------------------
-# _get_query_embedding
-# ---------------------------------------------------------------------------
-
-
-class TestGetQueryEmbedding:
-    def test_returns_embedding_on_success(self):
-        fake_config = SimpleNamespace(
-            models=SimpleNamespace(ollama_url="http://localhost:11434"),
-            notes_chat=SimpleNamespace(emb_model="nomic-embed-text"),
-        )
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"embedding": [0.1, 0.2, 0.3]}
-
-        with patch("notes_chat.retrieval.requests.post", return_value=mock_response):
-            result = _get_query_embedding(fake_config, "test query")
-
-        assert result == [0.1, 0.2, 0.3]
-
-    def test_returns_none_on_non_200_status(self):
-        fake_config = SimpleNamespace(
-            models=SimpleNamespace(ollama_url="http://localhost:11434"),
-            notes_chat=SimpleNamespace(emb_model="nomic-embed-text"),
-        )
-        mock_response = Mock()
-        mock_response.status_code = 500
-
-        with patch("notes_chat.retrieval.requests.post", return_value=mock_response):
-            result = _get_query_embedding(fake_config, "test query")
-
-        assert result is None
-
-    def test_returns_none_when_embedding_missing_from_response(self):
-        fake_config = SimpleNamespace(
-            models=SimpleNamespace(ollama_url="http://localhost:11434"),
-            notes_chat=SimpleNamespace(emb_model="nomic-embed-text"),
-        )
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "no embedding key"}
-
-        with patch("notes_chat.retrieval.requests.post", return_value=mock_response):
-            result = _get_query_embedding(fake_config, "test query")
-
-        assert result is None
-
-    def test_returns_none_on_request_exception(self):
-        fake_config = SimpleNamespace(
-            models=SimpleNamespace(ollama_url="http://localhost:11434"),
-            notes_chat=SimpleNamespace(emb_model="nomic-embed-text"),
-        )
-        with patch(
-            "notes_chat.retrieval.requests.post",
-            side_effect=requests.RequestException("timeout"),
-        ):
-            result = _get_query_embedding(fake_config, "test query")
-
-        assert result is None
-
-    def test_returns_none_when_embedding_contains_non_numeric(self):
-        fake_config = SimpleNamespace(
-            models=SimpleNamespace(ollama_url="http://localhost:11434"),
-            notes_chat=SimpleNamespace(emb_model="nomic-embed-text"),
-        )
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"embedding": [0.1, "nan", 0.3]}
-
-        with patch("notes_chat.retrieval.requests.post", return_value=mock_response):
-            result = _get_query_embedding(fake_config, "test query")
-
-        assert result is None
-
-
+# _get_query_embedding is covered in tests/test_embedding_adapter.py (story 6.3)
 # ---------------------------------------------------------------------------
 # format_sources — timestamp update and multiple-chunk collapsing
 # ---------------------------------------------------------------------------

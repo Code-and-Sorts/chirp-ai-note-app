@@ -4,9 +4,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import requests
-
 from config.settings import ChirpSettings
+from llm.client import LLMClient
+from llm.exceptions import LLMError
 from notes_chat.bm25 import BM25Index
 from notes_chat.index import IndexManager
 from notes_chat.time_ranges import parse_time_range
@@ -389,22 +389,21 @@ def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
         return "Try a broader search or different keywords"
 
 
-def _get_query_embedding(config: ChirpSettings, query: str) -> list[float] | None:
-    """Get embedding for query text using the same model as indexing."""
+def _get_query_embedding(
+    config: ChirpSettings,
+    query: str,
+    client: LLMClient | None = None,
+) -> list[float] | None:
+    """Embed the query via chirpd. Returns None on empty input or LLM failure.
+
+    None signals callers (``_search_chroma``) to skip vector search and fall
+    back to BM25-only retrieval — the same contract the Ollama path had.
+    """
+    if not query.strip():
+        return None
     try:
-        response = requests.post(
-            f"{config.models.ollama_url}/api/embeddings",
-            json={"model": config.notes_chat.emb_model, "prompt": query},
-            timeout=30,
-        )
-        if response.status_code != 200:
-            return None
-        result = response.json()
-        embedding = result.get("embedding")
-        if isinstance(embedding, list) and all(
-            isinstance(x, int | float) for x in embedding
-        ):
-            return embedding
+        vectors = (client or LLMClient()).embed_sync(inputs=[query], model="default")
+    except LLMError as exc:
+        logger.debug("Query embedding failed: %s", exc)
         return None
-    except requests.RequestException:
-        return None
+    return vectors[0] if vectors else None
