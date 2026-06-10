@@ -390,7 +390,7 @@ def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
 
 
 def _get_query_embedding(
-    config: ChirpSettings,
+    _config: ChirpSettings,
     query: str,
     client: LLMClient | None = None,
 ) -> list[float] | None:

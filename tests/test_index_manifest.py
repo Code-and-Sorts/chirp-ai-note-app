@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from config.settings import ChirpSettings
 from llm.exceptions import LLMTransportError
 from notes_chat.index import IndexManager
@@ -29,7 +31,7 @@ def _make_config(tmp_path):
     return config
 
 
-def _seed_note(tmp_path) -> "object":
+def _seed_note(tmp_path: Path) -> Path:
     note_dir = tmp_path / "test-2026-04-20"
     note_dir.mkdir()
     note_file = note_dir / "notes.md"
