@@ -364,7 +364,11 @@ Return ONLY the XML document, no additional text before or after."""
         # captured against (story 6.6 compares against it).
         messages = [{"role": "user", "content": prompt}]
         options = {"max_tokens": self.settings.models.num_predict}
-        client = self._llm_client or LLMClient()
+        # Reuse one client across records in a batch — LLMClient() resolves the
+        # socket path on construction, so per-record instantiation is wasteful.
+        if self._llm_client is None:
+            self._llm_client = LLMClient()
+        client = self._llm_client
 
         deltas: list[str] = []
         chunk_count = 0
