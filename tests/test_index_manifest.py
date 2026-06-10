@@ -51,6 +51,33 @@ class TestIndexManifest:
         assert "size" in files[str(note_file)]
         assert files[str(note_file)]["size"] > 0
 
+    def test_metadata_extraction(self, tmp_path):
+        """Test extraction of metadata from notes files."""
+        config = _make_config(tmp_path)
+
+        content = """# Weekly Standup Meeting
+
+**Duration:** 45m
+**Participants:** Alice, Bob, Charlie
+
+## Summary
+Test meeting content
+"""
+
+        note_dir = tmp_path / "weekly-standup-2025-01-15"
+        note_dir.mkdir()
+        note_file = note_dir / "notes.md"
+        note_file.write_text(content)
+
+        manager = IndexManager(config)
+        meta = manager._extract_metadata(note_file, content)
+
+        assert meta is not None
+        assert meta.title == "Weekly Standup Meeting"
+        assert meta.duration == 45
+        assert "Alice" in meta.participants
+        assert "Bob" in meta.participants
+
     def test_idempotent_skip(self, tmp_path):
         """Test that unchanged files are skipped."""
         config = _make_config(tmp_path)
@@ -125,3 +152,4 @@ class TestIndexManifest:
         result = manager.build_index()
 
         assert result["success"]
+        assert result["files_processed"] == 0  # embed failed -> nothing indexed
