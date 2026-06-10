@@ -13,12 +13,17 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from llm.exceptions import LLMModelError
+from llm.exceptions import LLMConnectionLost, LLMModelError
 from notes.note_generator import SYSTEM_PROMPT, NoteGenerator
 
 
 class FakeLLMClient:
-    """Stand-in for ``llm.client.LLMClient`` that records the chat call."""
+    """Stand-in for ``llm.client.LLMClient`` that records the chat call.
+
+    Like the real ``chat_stream_sync``, this returns an iterator immediately and
+    raises ``error`` *during* iteration (after yielding ``tokens``), so tests
+    exercise the same mid-stream failure path production hits.
+    """
 
     def __init__(
         self,
@@ -36,10 +41,21 @@ class FakeLLMClient:
         options: dict[str, Any] | None = None,
         keep_alive: int | None = None,
     ) -> Iterator[str]:
-        self.calls.append({"messages": messages, "model": model, "options": options})
-        if self.error is not None:
-            raise self.error
-        return iter(self.tokens)
+        self.calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "options": options,
+                "keep_alive": keep_alive,
+            }
+        )
+
+        def _stream() -> Iterator[str]:
+            yield from self.tokens
+            if self.error is not None:
+                raise self.error
+
+        return _stream()
 
 
 @pytest.fixture
@@ -90,8 +106,34 @@ def test_call_llm_passes_max_tokens_budget(mock_settings):
     assert "top_p" not in options
 
 
+def test_call_llm_reprints_progress_every_twenty_tokens(mock_settings):
+    client = FakeLLMClient(tokens=["x"] * 45)
+    generator = _make_generator(mock_settings, client)
+
+    result = generator._call_llm("prompt")
+
+    assert result == "x" * 45  # all 45 tokens aggregated, none dropped
+
+
 def test_generate_structured_notes_returns_none_on_llm_error(mock_settings):
     client = FakeLLMClient(error=LLMModelError("model fell over"))
+    generator = _make_generator(mock_settings, client)
+
+    result = generator._generate_structured_notes(
+        "a transcript that is comfortably longer than the fifty character floor",
+        "Some Title",
+    )
+
+    assert result is None
+
+
+def test_generate_structured_notes_returns_none_on_midstream_error(mock_settings):
+    # Daemon drops the connection after some tokens have already streamed; the
+    # partial result is discarded and the record yields no note.
+    client = FakeLLMClient(
+        tokens=["partial ", "content "],
+        error=LLMConnectionLost("daemon went away"),
+    )
     generator = _make_generator(mock_settings, client)
 
     result = generator._generate_structured_notes(

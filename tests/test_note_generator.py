@@ -13,7 +13,6 @@ from utils.file_utils import NoteRecord
 def mock_settings():
     settings = Mock()
     models = Mock()
-    models.ollama_url = "http://localhost:11434"
     models.llm = "llama3.1:8b"
     models.whisper = "large-v3-turbo"
     models.num_predict = 4096

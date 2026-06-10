@@ -359,10 +359,9 @@ Return ONLY the XML document, no additional text before or after."""
             return None
 
     def _call_llm(self, prompt: str) -> str:
-        # Route note generation through chirpd via llm.client instead of the
-        # Ollama HTTP API. The transcript is sent as a single user message so
-        # the model's chat template wraps the existing SYSTEM_PROMPT + prompt
-        # verbatim, preserving the regression-corpus "before" prompt shape.
+        # Single user message so the chat template wraps SYSTEM_PROMPT + prompt
+        # verbatim — preserving the prompt shape the 6.1 regression baseline was
+        # captured against (story 6.6 compares against it).
         messages = [{"role": "user", "content": prompt}]
         options = {"max_tokens": self.settings.models.num_predict}
         client = self._llm_client or LLMClient()
