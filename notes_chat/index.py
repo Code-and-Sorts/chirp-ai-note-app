@@ -8,11 +8,12 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
-import requests
 from chromadb.config import Settings as ChromaSettings
 from rich.console import Console
 
 from config.settings import ChirpSettings
+from llm.client import LLMClient
+from llm.exceptions import LLMError
 from notes_chat.types import Chunk, NoteMeta
 
 logger = logging.getLogger(__name__)
@@ -21,10 +22,11 @@ console = Console()
 
 
 class IndexManager:
-    def __init__(self, config: ChirpSettings):
+    def __init__(self, config: ChirpSettings, llm_client: LLMClient | None = None):
         self.config = config
         self.settings = config.notes_chat
         self.notes_root = config.directories.notes_root
+        self._llm_client = llm_client
 
         self.chroma_client = chromadb.PersistentClient(
             path=str(self.settings.index_dir / "chroma"),
@@ -325,26 +327,16 @@ class IndexManager:
         return chunks
 
     def _get_embeddings(self, texts: list[str]) -> list[list[float]] | None:
-        """Get embeddings from Ollama."""
+        """Embed chunk texts via chirpd, preserving input order. None on failure."""
+        if not texts:
+            return []
+        # Reuse one client across calls — LLMClient() resolves the socket path on
+        # construction. embed is batched-by-design, so one call covers all chunks.
+        if self._llm_client is None:
+            self._llm_client = LLMClient()
         try:
-            embeddings = []
-
-            for text in texts:
-                response = requests.post(
-                    f"{self.config.models.ollama_url}/api/embeddings",
-                    json={"model": self.settings.emb_model, "prompt": text},
-                    timeout=30,
-                )
-
-                if response.status_code != 200:
-                    return None
-
-                result = response.json()
-                embeddings.append(result["embedding"])
-
-            return embeddings
-
-        except requests.RequestException as e:
+            return self._llm_client.embed_sync(inputs=texts, model="default")
+        except LLMError as e:
             console.print(f"[red]Failed to get embeddings: {e}[/red]")
             return None
 
