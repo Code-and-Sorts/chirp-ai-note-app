@@ -12,6 +12,8 @@ from rich.markdown import Markdown
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from config.settings import ChirpSettings
+from llm.client import LLMClient
+from llm.exceptions import LLMError
 from notes_chat.prompting import enhanced_search_and_answer_stream
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,7 @@ class InteractiveChatSession:
         self.markdown = markdown
         self.last_interrupt_time = None
         self.interrupt_timeout = 2.0
+        self._inflight_req_id: str | None = None
 
         toolbar_style = Style.from_dict(
             {
@@ -195,14 +198,19 @@ class InteractiveChatSession:
             else:
                 target.update(Text(text))
 
+        stream_gen = None
+
         try:
             sources = None
             from_cache = False
 
-            for stream_event in enhanced_search_and_answer_stream(
-                self.config, question
-            ):
+            stream_gen = enhanced_search_and_answer_stream(self.config, question)
+            for stream_event in stream_gen:
                 event_type = stream_event.get("type", "")
+
+                if event_type == "request_started":
+                    self._inflight_req_id = stream_event.get("req_id")
+                    continue
 
                 if event_type == "thinking":
                     thinking_msg = stream_event.get("message", "Processing...")
@@ -269,6 +277,25 @@ class InteractiveChatSession:
             if from_cache:
                 console.print("[dim]cached[/dim]")
 
+        except KeyboardInterrupt:
+            # Mid-stream Ctrl-C cancels this answer (not the session). Tell the
+            # daemon to stop generating, unwind the generator so its cleanup
+            # runs, and return to the prompt. This does NOT touch
+            # last_interrupt_time, so it never counts toward the two-press exit.
+            if self._inflight_req_id is not None:
+                try:
+                    LLMClient().cancel_sync(self._inflight_req_id)
+                except LLMError as exc:
+                    logger.debug("Cancel request failed: %s", exc)
+            if stream_gen is not None:
+                stream_gen.close()
+            if progress:
+                progress.stop()
+                progress = None
+            if live is not None:
+                live.stop()
+                live = None
+            console.print("[dim]— cancelled[/dim]")
         except Exception as e:  # noqa: BLE001 - LLM streaming or UI; many failure modes
             logger.debug("Query failed: %s", e, exc_info=True)
             if progress:
@@ -277,6 +304,7 @@ class InteractiveChatSession:
                 live.stop()
             console.print(f"\n[red]Query failed: {e}[/red]")
         finally:
+            self._inflight_req_id = None
             if progress:
                 progress.stop()
             if live is not None:

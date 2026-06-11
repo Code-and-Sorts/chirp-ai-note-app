@@ -1,23 +1,52 @@
 import json
+import re
 from unittest.mock import Mock, patch
 
 import requests
 
 from config.settings import ChirpSettings
+from llm.exceptions import LLMGenerationFailed
 from notes_chat.prompting import (
     enhanced_search_and_answer,
+    enhanced_search_and_answer_stream,
     fast_search_and_answer,
-    fast_search_and_answer_stream,
     generate_answer,
     generate_conversational_response,
-    generate_conversational_response_stream,
     is_obvious_search,
     is_search_query,
     is_simple_conversational,
     orchestrate_search,
-    stream_llm_response,
     validate_ollama_connection,
 )
+
+
+class _FakeStreamClient:
+    """Scripts ``chat_stream_sync`` output for the streaming-router tests.
+
+    Records each call's ``request_id`` so tests can assert the run-level id is
+    threaded to the daemon. Raises ``error`` (if provided) on iteration to
+    mimic a daemon-side ``LLMError``; ``error_after`` controls how many tokens
+    stream first (0 = before any token, the default).
+    """
+
+    def __init__(self, tokens=None, error=None, error_after=0):
+        self._tokens = list(tokens or [])
+        self._error = error
+        self._error_after = error_after
+        self.calls: list[dict] = []
+
+    def chat_stream_sync(
+        self, messages, model="default", options=None, request_id=None
+    ):
+        self.calls.append(
+            {"messages": messages, "model": model, "request_id": request_id}
+        )
+        for i, tok in enumerate(self._tokens):
+            if self._error is not None and i >= self._error_after:
+                raise self._error
+            yield tok
+        if self._error is not None:
+            raise self._error
 
 
 class TestPrompting:
@@ -411,112 +440,6 @@ class TestPrompting:
 
         assert not result["success"]
         assert "unexpected" in result["error"]
-
-    @patch("requests.post")
-    def test_stream_llm_response_yields_tokens(self, mock_post):
-        lines = [
-            json.dumps({"response": "Hello", "done": False}).encode(),
-            json.dumps({"response": " world", "done": True}).encode(),
-        ]
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.iter_lines.return_value = iter(lines)
-        mock_post.return_value = mock_response
-
-        tokens = list(stream_llm_response(ChirpSettings(), "test prompt"))
-
-        assert tokens == ["Hello", " world"]
-
-    @patch("requests.post")
-    def test_stream_llm_response_api_error(self, mock_post):
-        mock_response = Mock()
-        mock_response.status_code = 503
-        mock_post.return_value = mock_response
-
-        tokens = list(stream_llm_response(ChirpSettings(), "test prompt"))
-
-        assert len(tokens) == 1
-        assert "503" in tokens[0]
-
-    @patch("requests.post")
-    def test_stream_llm_response_connection_error(self, mock_post):
-        mock_post.side_effect = requests.exceptions.ConnectionError()
-
-        tokens = list(stream_llm_response(ChirpSettings(), "test prompt"))
-
-        assert len(tokens) == 1
-        assert "Cannot connect to Ollama" in tokens[0]
-
-    @patch("requests.post")
-    def test_stream_llm_response_generic_exception(self, mock_post):
-        mock_post.side_effect = RuntimeError("stream broke")
-
-        tokens = list(stream_llm_response(ChirpSettings(), "test prompt"))
-
-        assert len(tokens) == 1
-        assert "stream broke" in tokens[0]
-
-    @patch("requests.post")
-    def test_stream_llm_response_skips_invalid_json_lines(self, mock_post):
-        lines = [
-            b"not-json",
-            json.dumps({"response": "ok", "done": True}).encode(),
-        ]
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.iter_lines.return_value = iter(lines)
-        mock_post.return_value = mock_response
-
-        tokens = list(stream_llm_response(ChirpSettings(), "test"))
-
-        assert tokens == ["ok"]
-
-    @patch("requests.post")
-    def test_stream_llm_response_nonzero_temperature_sets_top_p(self, mock_post):
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.iter_lines.return_value = iter([])
-        mock_post.return_value = mock_response
-
-        list(stream_llm_response(ChirpSettings(), "test", temperature=0.5))
-
-        payload = mock_post.call_args[1]["json"]
-        assert payload["top_p"] == 0.9
-        assert payload["temperature"] == 0.5
-
-    @patch("requests.post")
-    def test_generate_conversational_response_stream_delegates(self, mock_post):
-        lines = [json.dumps({"response": "Hi!", "done": True}).encode()]
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.iter_lines.return_value = iter(lines)
-        mock_post.return_value = mock_response
-
-        tokens = list(generate_conversational_response_stream(ChirpSettings(), "Hello"))
-
-        assert tokens == ["Hi!"]
-        payload = mock_post.call_args[1]["json"]
-        assert payload["temperature"] == 0.3
-
-    @patch("requests.post")
-    def test_fast_search_and_answer_stream_delegates(self, mock_post):
-        lines = [json.dumps({"response": "Found it.", "done": True}).encode()]
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.iter_lines.return_value = iter(lines)
-        mock_post.return_value = mock_response
-
-        tokens = list(
-            fast_search_and_answer_stream(
-                ChirpSettings(), "what happened?", "some context"
-            )
-        )
-
-        assert tokens == ["Found it."]
-        payload = mock_post.call_args[1]["json"]
-        assert payload["temperature"] == 0
-        assert "what happened?" in payload["prompt"]
-        assert "some context" in payload["prompt"]
 
     def test_is_simple_conversational_exact_matches(self):
         for phrase in [
@@ -1003,33 +926,54 @@ class TestPrompting:
         question = "a completely neutral sentence with six or more words"
         assert is_search_query(question)
 
-    @patch("notes_chat.prompting.generate_conversational_response_stream")
-    def test_enhanced_search_and_answer_stream_simple_conversational(self, mock_stream):
-        mock_stream.return_value = iter(["Hi", " there!"])
+    def test_enhanced_search_and_answer_stream_first_event_is_request_started(self):
+        client = _FakeStreamClient(tokens=["x"])
 
         events = list(
-            __import__(
-                "notes_chat.prompting", fromlist=["enhanced_search_and_answer_stream"]
-            ).enhanced_search_and_answer_stream(ChirpSettings(), "hi")
+            enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
+        )
+
+        assert events[0]["type"] == "request_started"
+        assert re.fullmatch(r"r-[0-9a-f]{12}", events[0]["req_id"])
+        # The surfaced id is the same one threaded to the daemon for cancellation.
+        assert client.calls[0]["request_id"] == events[0]["req_id"]
+
+    def test_enhanced_search_and_answer_stream_simple_conversational(self):
+        client = _FakeStreamClient(tokens=["Hi", " there!"])
+
+        events = list(
+            enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
         )
 
         types = [e["type"] for e in events]
+        assert types[0] == "request_started"
         assert "thinking" in types
-        assert "token" in types
+        tokens = [e["content"] for e in events if e["type"] == "token"]
+        assert tokens == ["Hi", " there!"]
         assert events[-1]["type"] == "complete"
         assert events[-1]["answer"] == "Hi there!"
 
-    @patch("notes_chat.prompting.generate_conversational_response_stream")
-    def test_enhanced_search_and_answer_stream_conversational_error_token(
-        self, mock_stream
-    ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
+    def test_enhanced_search_and_answer_stream_conversational_error_event(self):
+        client = _FakeStreamClient(error=LLMGenerationFailed("boom"))
 
-        mock_stream.return_value = iter(["Error: boom"])
-
-        events = list(enhanced_search_and_answer_stream(ChirpSettings(), "hello"))
+        events = list(
+            enhanced_search_and_answer_stream(ChirpSettings(), "hello", client=client)
+        )
 
         assert any(e["type"] == "error" for e in events)
+        assert not any(e["type"] == "complete" for e in events)
+
+    def test_enhanced_search_and_answer_stream_conversational_empty_response(self):
+        # Centralized empty-response handling: an empty conversational stream
+        # yields an error, not a silent empty `complete`.
+        client = _FakeStreamClient(tokens=[])
+
+        events = list(
+            enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
+        )
+
+        assert any(e["type"] == "error" and "Empty" in e["message"] for e in events)
+        assert not any(e["type"] == "complete" for e in events)
 
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
@@ -1037,8 +981,6 @@ class TestPrompting:
     def test_enhanced_search_and_answer_stream_obvious_search_cache_hit(
         self, mock_retrieve, mock_get_cached, mock_cache
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_retrieve.return_value = {
             "success": True,
             "context": "ctx",
@@ -1046,25 +988,27 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = "cached result"
+        client = _FakeStreamClient()
 
         events = list(
-            enhanced_search_and_answer_stream(ChirpSettings(), "what did we discuss?")
+            enhanced_search_and_answer_stream(
+                ChirpSettings(), "what did we discuss?", client=client
+            )
         )
 
         complete_events = [e for e in events if e["type"] == "complete"]
         assert len(complete_events) == 1
         assert complete_events[0]["answer"] == "cached result"
         assert complete_events[0].get("from_cache") is True
+        # Cache hits never reach the daemon.
+        assert client.calls == []
 
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
-    @patch("notes_chat.prompting.fast_search_and_answer_stream")
     @patch("notes_chat.retrieval.retrieve_context")
     def test_enhanced_search_and_answer_stream_obvious_search_streams_tokens(
-        self, mock_retrieve, mock_fsa_stream, mock_get_cached, mock_cache
+        self, mock_retrieve, mock_get_cached, mock_cache
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_retrieve.return_value = {
             "success": True,
             "context": "ctx",
@@ -1072,10 +1016,12 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        mock_fsa_stream.return_value = iter(["The answer", " is here."])
+        client = _FakeStreamClient(tokens=["The answer", " is here."])
 
         events = list(
-            enhanced_search_and_answer_stream(ChirpSettings(), "what did we discuss?")
+            enhanced_search_and_answer_stream(
+                ChirpSettings(), "what did we discuss?", client=client
+            )
         )
 
         tokens = [e["content"] for e in events if e["type"] == "token"]
@@ -1084,49 +1030,97 @@ class TestPrompting:
         assert complete[0]["answer"] == "The answer is here."
         assert complete[0]["search_strategy"] == "fast search"
         mock_cache.assert_called_once()
+        # The run-level id is threaded to the daemon on this branch too.
+        assert client.calls[0]["request_id"] == events[0]["req_id"]
+
+    def test_enhanced_search_and_answer_stream_error_after_partial_tokens(self):
+        client = _FakeStreamClient(
+            tokens=["partial ", "answer "],
+            error=LLMGenerationFailed("died mid-stream"),
+            error_after=2,
+        )
+
+        events = list(
+            enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
+        )
+
+        # Tokens stream up to the failure, then exactly one error, no complete.
+        tokens = [e["content"] for e in events if e["type"] == "token"]
+        assert tokens == ["partial ", "answer "]
+        assert [e["type"] for e in events].count("error") == 1
+        assert not any(e["type"] == "complete" for e in events)
+
+    @patch("notes_chat.cache.cache_answer")
+    @patch("notes_chat.cache.get_cached_answer")
+    @patch("notes_chat.retrieval.retrieve_context")
+    def test_enhanced_search_and_answer_stream_obvious_search_empty_response(
+        self, mock_retrieve, mock_get_cached, mock_cache
+    ):
+        mock_retrieve.return_value = {
+            "success": True,
+            "context": "ctx",
+            "retrieved_ids": ["id1"],
+            "sources": ["src"],
+        }
+        mock_get_cached.return_value = None
+        client = _FakeStreamClient(tokens=[])
+
+        events = list(
+            enhanced_search_and_answer_stream(
+                ChirpSettings(), "what did we discuss?", client=client
+            )
+        )
+
+        # An empty fast-path stream yields an error, never a silent complete-less
+        # exit, so the interactive UI always renders a final state.
+        assert any(e["type"] == "error" and "Empty" in e["message"] for e in events)
+        assert not any(e["type"] == "complete" for e in events)
+        mock_cache.assert_not_called()
 
     @patch("notes_chat.cache.get_cached_answer")
-    @patch("notes_chat.prompting.fast_search_and_answer_stream")
     @patch("notes_chat.retrieval.retrieve_context")
-    def test_enhanced_search_and_answer_stream_obvious_search_error_token(
-        self, mock_retrieve, mock_fsa_stream, mock_get_cached
+    def test_enhanced_search_and_answer_stream_obvious_search_error_event(
+        self, mock_retrieve, mock_get_cached
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_retrieve.return_value = {
             "success": True,
             "context": "ctx",
             "retrieved_ids": ["id1"],
         }
         mock_get_cached.return_value = None
-        mock_fsa_stream.return_value = iter(["Error: stream failed"])
+        client = _FakeStreamClient(error=LLMGenerationFailed("stream failed"))
 
         events = list(
-            enhanced_search_and_answer_stream(ChirpSettings(), "what did we discuss?")
+            enhanced_search_and_answer_stream(
+                ChirpSettings(), "what did we discuss?", client=client
+            )
         )
 
         assert any(e["type"] == "error" for e in events)
 
+    @patch("notes_chat.prompting.orchestrate_search")
     @patch("notes_chat.retrieval.retrieve_context")
     def test_enhanced_search_and_answer_stream_obvious_search_retrieve_fails_falls_through(
-        self, mock_retrieve
+        self, mock_retrieve, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_retrieve.side_effect = RuntimeError("db offline")
+        mock_orchestrate.return_value = {"success": False, "error": "down"}
 
         events = list(
-            enhanced_search_and_answer_stream(ChirpSettings(), "what did we discuss?")
+            enhanced_search_and_answer_stream(
+                ChirpSettings(), "what did we discuss?", client=_FakeStreamClient()
+            )
         )
 
-        assert any(e["type"] == "thinking" for e in events)
+        # The obvious-search branch fails on retrieval and falls through to the
+        # orchestration path, which emits its own "Analyzing question..." thinking.
+        thinking = [e["message"] for e in events if e["type"] == "thinking"]
+        assert any("Analyzing" in m for m in thinking)
 
     @patch("notes_chat.prompting.orchestrate_search")
     def test_enhanced_search_and_answer_stream_orchestration_failure_retrieve_fails(
         self, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {"success": False, "error": "LLM down"}
 
         with patch("notes_chat.retrieval.retrieve_context") as mock_retrieve:
@@ -1134,7 +1128,9 @@ class TestPrompting:
 
             events = list(
                 enhanced_search_and_answer_stream(
-                    ChirpSettings(), "totally ambiguous neutral question is here now"
+                    ChirpSettings(),
+                    "totally ambiguous neutral question is here now",
+                    client=_FakeStreamClient(),
                 )
             )
 
@@ -1146,8 +1142,6 @@ class TestPrompting:
     def test_enhanced_search_and_answer_stream_orchestration_failure_retrieve_exception(
         self, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {"success": False, "error": "LLM down"}
 
         with patch("notes_chat.retrieval.retrieve_context") as mock_retrieve:
@@ -1155,19 +1149,18 @@ class TestPrompting:
 
             events = list(
                 enhanced_search_and_answer_stream(
-                    ChirpSettings(), "totally ambiguous neutral question is here now"
+                    ChirpSettings(),
+                    "totally ambiguous neutral question is here now",
+                    client=_FakeStreamClient(),
                 )
             )
 
         assert any(e["type"] == "error" for e in events)
 
-    @patch("notes_chat.prompting.generate_conversational_response_stream")
     @patch("notes_chat.prompting.orchestrate_search")
     def test_enhanced_search_and_answer_stream_no_search_required(
-        self, mock_orchestrate, mock_conv_stream
+        self, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {
             "success": True,
             "search_plan": {
@@ -1177,24 +1170,23 @@ class TestPrompting:
                 "requires_search": False,
             },
         }
-        mock_conv_stream.return_value = iter(["Hey there!"])
+        client = _FakeStreamClient(tokens=["Hey there!"])
 
         events = list(
             enhanced_search_and_answer_stream(
-                ChirpSettings(), "totally ambiguous neutral question is here now"
+                ChirpSettings(),
+                "totally ambiguous neutral question is here now",
+                client=client,
             )
         )
 
         complete = [e for e in events if e["type"] == "complete"]
         assert complete[0]["answer"] == "Hey there!"
 
-    @patch("notes_chat.prompting.generate_conversational_response_stream")
     @patch("notes_chat.prompting.orchestrate_search")
-    def test_enhanced_search_and_answer_stream_no_search_required_error_token(
-        self, mock_orchestrate, mock_conv_stream
+    def test_enhanced_search_and_answer_stream_no_search_required_error_event(
+        self, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {
             "success": True,
             "search_plan": {
@@ -1204,11 +1196,13 @@ class TestPrompting:
                 "requires_search": False,
             },
         }
-        mock_conv_stream.return_value = iter(["Error: conv failed"])
+        client = _FakeStreamClient(error=LLMGenerationFailed("conv failed"))
 
         events = list(
             enhanced_search_and_answer_stream(
-                ChirpSettings(), "totally ambiguous neutral question is here now"
+                ChirpSettings(),
+                "totally ambiguous neutral question is here now",
+                client=client,
             )
         )
 
@@ -1220,8 +1214,6 @@ class TestPrompting:
     def test_enhanced_search_and_answer_stream_retrieve_fails_no_results(
         self, mock_orchestrate, mock_retrieve, mock_get_cached
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {
             "success": True,
             "search_plan": {
@@ -1232,16 +1224,15 @@ class TestPrompting:
             },
         }
         mock_retrieve.return_value = {"success": False}
+        client = _FakeStreamClient(tokens=["Sorry, nothing found."])
 
-        with patch(
-            "notes_chat.prompting.generate_conversational_response_stream"
-        ) as mock_conv:
-            mock_conv.return_value = iter(["Sorry, nothing found."])
-            events = list(
-                enhanced_search_and_answer_stream(
-                    ChirpSettings(), "totally ambiguous neutral question is here now"
-                )
+        events = list(
+            enhanced_search_and_answer_stream(
+                ChirpSettings(),
+                "totally ambiguous neutral question is here now",
+                client=client,
             )
+        )
 
         complete = [e for e in events if e["type"] == "complete"]
         assert complete[0]["answer"] == "Sorry, nothing found."
@@ -1253,8 +1244,6 @@ class TestPrompting:
     def test_enhanced_search_and_answer_stream_cache_hit(
         self, mock_orchestrate, mock_retrieve, mock_get_cached, mock_cache
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {
             "success": True,
             "search_plan": {
@@ -1271,10 +1260,13 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = "cached stream answer"
+        client = _FakeStreamClient()
 
         events = list(
             enhanced_search_and_answer_stream(
-                ChirpSettings(), "totally ambiguous neutral question is here now"
+                ChirpSettings(),
+                "totally ambiguous neutral question is here now",
+                client=client,
             )
         )
 
@@ -1282,17 +1274,15 @@ class TestPrompting:
         assert complete[0]["answer"] == "cached stream answer"
         assert complete[0].get("from_cache") is True
         mock_cache.assert_not_called()
+        assert client.calls == []
 
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
-    @patch("notes_chat.prompting.stream_llm_response")
     @patch("notes_chat.retrieval.retrieve_context")
     @patch("notes_chat.prompting.orchestrate_search")
     def test_enhanced_search_and_answer_stream_full_path(
-        self, mock_orchestrate, mock_retrieve, mock_stream, mock_get_cached, mock_cache
+        self, mock_orchestrate, mock_retrieve, mock_get_cached, mock_cache
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {
             "success": True,
             "search_plan": {
@@ -1309,11 +1299,13 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        mock_stream.return_value = iter(["Budget", " is $100k"])
+        client = _FakeStreamClient(tokens=["Budget", " is $100k"])
 
         events = list(
             enhanced_search_and_answer_stream(
-                ChirpSettings(), "totally ambiguous neutral question is here now"
+                ChirpSettings(),
+                "totally ambiguous neutral question is here now",
+                client=client,
             )
         )
 
@@ -1323,17 +1315,16 @@ class TestPrompting:
         assert complete[0]["answer"] == "Budget is $100k"
         assert complete[0]["search_strategy"] == "find budget"
         mock_cache.assert_called_once()
+        # The grounded answer streamed through the daemon with the run-level id.
+        assert client.calls[0]["request_id"] == events[0]["req_id"]
 
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
-    @patch("notes_chat.prompting.stream_llm_response")
     @patch("notes_chat.retrieval.retrieve_context")
     @patch("notes_chat.prompting.orchestrate_search")
-    def test_enhanced_search_and_answer_stream_full_path_error_token(
-        self, mock_orchestrate, mock_retrieve, mock_stream, mock_get_cached, mock_cache
+    def test_enhanced_search_and_answer_stream_full_path_error_event(
+        self, mock_orchestrate, mock_retrieve, mock_get_cached, mock_cache
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {
             "success": True,
             "search_plan": {
@@ -1350,11 +1341,13 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        mock_stream.return_value = iter(["Error: stream died"])
+        client = _FakeStreamClient(error=LLMGenerationFailed("stream died"))
 
         events = list(
             enhanced_search_and_answer_stream(
-                ChirpSettings(), "totally ambiguous neutral question is here now"
+                ChirpSettings(),
+                "totally ambiguous neutral question is here now",
+                client=client,
             )
         )
 
@@ -1362,14 +1355,11 @@ class TestPrompting:
 
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
-    @patch("notes_chat.prompting.stream_llm_response")
     @patch("notes_chat.retrieval.retrieve_context")
     @patch("notes_chat.prompting.orchestrate_search")
     def test_enhanced_search_and_answer_stream_empty_response(
-        self, mock_orchestrate, mock_retrieve, mock_stream, mock_get_cached, mock_cache
+        self, mock_orchestrate, mock_retrieve, mock_get_cached, mock_cache
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {
             "success": True,
             "search_plan": {
@@ -1386,11 +1376,13 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        mock_stream.return_value = iter([])
+        client = _FakeStreamClient(tokens=[])
 
         events = list(
             enhanced_search_and_answer_stream(
-                ChirpSettings(), "totally ambiguous neutral question is here now"
+                ChirpSettings(),
+                "totally ambiguous neutral question is here now",
+                client=client,
             )
         )
 
@@ -1400,13 +1392,13 @@ class TestPrompting:
     def test_enhanced_search_and_answer_stream_exception_yields_error(
         self, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.side_effect = RuntimeError("total failure")
 
         events = list(
             enhanced_search_and_answer_stream(
-                ChirpSettings(), "totally ambiguous neutral question is here now"
+                ChirpSettings(),
+                "totally ambiguous neutral question is here now",
+                client=_FakeStreamClient(),
             )
         )
 
@@ -1418,8 +1410,6 @@ class TestPrompting:
     def test_enhanced_search_and_answer_stream_orchestrate_failure_streams_context(
         self, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {"success": False, "error": "down"}
 
         with patch("notes_chat.retrieval.retrieve_context") as mock_retrieve:
@@ -1429,27 +1419,21 @@ class TestPrompting:
                 "retrieved_ids": ["id1"],
                 "sources": [],
             }
-            with patch(
-                "notes_chat.prompting.fast_search_and_answer_stream"
-            ) as mock_fsa:
-                mock_fsa.return_value = iter(["Fallback answer."])
-                events = list(
-                    enhanced_search_and_answer_stream(
-                        ChirpSettings(),
-                        "totally ambiguous neutral question is here now",
-                    )
+            events = list(
+                enhanced_search_and_answer_stream(
+                    ChirpSettings(),
+                    "totally ambiguous neutral question is here now",
+                    client=_FakeStreamClient(tokens=["Fallback answer."]),
                 )
+            )
 
         complete = [e for e in events if e["type"] == "complete"]
         assert complete[0]["answer"] == "Fallback answer."
 
-    @patch("notes_chat.prompting.generate_conversational_response_stream")
     @patch("notes_chat.prompting.orchestrate_search")
-    def test_enhanced_search_and_answer_stream_retrieve_no_results_error_token(
-        self, mock_orchestrate, mock_conv_stream
+    def test_enhanced_search_and_answer_stream_retrieve_no_results_error_event(
+        self, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {
             "success": True,
             "search_plan": {
@@ -1459,24 +1443,23 @@ class TestPrompting:
                 "requires_search": True,
             },
         }
-        mock_conv_stream.return_value = iter(["Error: conv died"])
 
         with patch("notes_chat.retrieval.retrieve_context") as mock_retrieve:
             mock_retrieve.return_value = {"success": False}
             events = list(
                 enhanced_search_and_answer_stream(
-                    ChirpSettings(), "totally ambiguous neutral question is here now"
+                    ChirpSettings(),
+                    "totally ambiguous neutral question is here now",
+                    client=_FakeStreamClient(error=LLMGenerationFailed("conv died")),
                 )
             )
 
         assert any(e["type"] == "error" for e in events)
 
     @patch("notes_chat.prompting.orchestrate_search")
-    def test_enhanced_search_and_answer_stream_orchestrate_failure_stream_error_token(
+    def test_enhanced_search_and_answer_stream_orchestrate_failure_stream_error_event(
         self, mock_orchestrate
     ):
-        from notes_chat.prompting import enhanced_search_and_answer_stream
-
         mock_orchestrate.return_value = {"success": False, "error": "down"}
 
         with patch("notes_chat.retrieval.retrieve_context") as mock_retrieve:
@@ -1486,15 +1469,12 @@ class TestPrompting:
                 "retrieved_ids": ["id1"],
                 "sources": [],
             }
-            with patch(
-                "notes_chat.prompting.fast_search_and_answer_stream"
-            ) as mock_fsa:
-                mock_fsa.return_value = iter(["Error: fsa died"])
-                events = list(
-                    enhanced_search_and_answer_stream(
-                        ChirpSettings(),
-                        "totally ambiguous neutral question is here now",
-                    )
+            events = list(
+                enhanced_search_and_answer_stream(
+                    ChirpSettings(),
+                    "totally ambiguous neutral question is here now",
+                    client=_FakeStreamClient(error=LLMGenerationFailed("fsa died")),
                 )
+            )
 
         assert any(e["type"] == "error" for e in events)
