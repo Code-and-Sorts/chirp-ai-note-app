@@ -963,6 +963,18 @@ class TestPrompting:
         assert any(e["type"] == "error" for e in events)
         assert not any(e["type"] == "complete" for e in events)
 
+    def test_enhanced_search_and_answer_stream_conversational_empty_response(self):
+        # Centralized empty-response handling: an empty conversational stream
+        # yields an error, not a silent empty `complete`.
+        client = _FakeStreamClient(tokens=[])
+
+        events = list(
+            enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
+        )
+
+        assert any(e["type"] == "error" and "Empty" in e["message"] for e in events)
+        assert not any(e["type"] == "complete" for e in events)
+
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")

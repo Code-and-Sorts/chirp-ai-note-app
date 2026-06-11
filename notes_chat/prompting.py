@@ -256,18 +256,25 @@ def _stream_answer(
 
     Yields a ``token`` event per delta. On ``LLMError`` it yields a single
     ``error`` event instead of raising, mirroring the event contract the
-    interactive renderer consumes. The caller finalizes with its own
-    ``complete`` event (and any branch-specific fields) once this returns
-    without having yielded an error.
+    interactive renderer consumes. If the daemon returns an empty (or
+    whitespace-only) stream it yields an ``error`` too, so callers never have to
+    repeat the empty-response check and never emit a silent empty ``complete``.
+    The caller finalizes with its own ``complete`` event (and any branch-specific
+    fields) once this returns without having yielded an error.
     """
     messages = [{"role": "user", "content": prompt}]
+    accumulated: list[str] = []
     try:
         for token in client.chat_stream_sync(
             messages, model="default", request_id=req_id
         ):
+            accumulated.append(token)
             yield {"type": "token", "content": token}
     except LLMError as exc:
         yield {"type": "error", "message": str(exc)}
+        return
+    if not "".join(accumulated).strip():
+        yield {"type": "error", "message": "Empty response received"}
 
 
 def is_simple_conversational(question: str) -> bool:
@@ -529,17 +536,16 @@ def enhanced_search_and_answer_stream(
                     parts.append(event["content"])
                     yield event
 
+                # _stream_answer already emitted an error for an empty stream
+                # (and we returned), so any text here is non-empty.
                 full_response = "".join(parts)
-                if full_response.strip():
-                    cache_answer(question, retrieved_ids, full_response)
-                    yield {
-                        "type": "complete",
-                        "answer": full_response,
-                        "sources": context_result.get("sources"),
-                        "search_strategy": "fast search",
-                    }
-                else:
-                    yield {"type": "error", "message": "Empty response received"}
+                cache_answer(question, retrieved_ids, full_response)
+                yield {
+                    "type": "complete",
+                    "answer": full_response,
+                    "sources": context_result.get("sources"),
+                    "search_strategy": "fast search",
+                }
                 return
         except Exception as exc:  # noqa: BLE001 - fast-path stream fallback; many failure modes
             logger.debug("Fast-path stream failed, falling through: %s", exc)
@@ -645,17 +651,16 @@ def enhanced_search_and_answer_stream(
             parts.append(event["content"])
             yield event
 
+        # Empty/whitespace-only streams already yielded an error from
+        # _stream_answer (and returned), so any text here is non-empty.
         full_response = "".join(parts)
-        if full_response.strip():
-            cache_answer(question, retrieved_ids, full_response)
-            yield {
-                "type": "complete",
-                "answer": full_response,
-                "sources": context_result.get("sources"),
-                "search_strategy": search_plan["search_strategy"],
-            }
-        else:
-            yield {"type": "error", "message": "Empty response received"}
+        cache_answer(question, retrieved_ids, full_response)
+        yield {
+            "type": "complete",
+            "answer": full_response,
+            "sources": context_result.get("sources"),
+            "search_strategy": search_plan["search_strategy"],
+        }
 
     except Exception as e:  # noqa: BLE001 - enhanced stream search; many failure modes
         logger.debug("Enhanced stream search failed: %s", e)
