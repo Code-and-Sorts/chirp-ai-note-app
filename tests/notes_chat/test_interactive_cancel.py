@@ -46,11 +46,13 @@ def test_handle_question_cancels_inflight_on_keyboard_interrupt():
         elapsed = time.perf_counter() - start
 
     assert cancel_calls == [req_id]
-    # NFR-P4: the handler returns control to the prompt within 200 ms. The fake
-    # cancel_sync returns instantly, so this guards the handler's own overhead;
-    # the real ≤200 ms guarantee also relies on cancel() never spawning a daemon
-    # (LLMClient.cancel uses spawn_if_absent=False) — see the daemon-down test.
-    assert elapsed < 0.2
+    # This is a hang guard, not a precise latency check: with a fake cancel_sync
+    # the handler returns in microseconds, so a strict wall-clock bound would
+    # only flake under CI load. The real NFR-P4 ≤200 ms is verified by the live
+    # smoke and owned daemon-side; here we only assert the handler returns
+    # promptly rather than blocking. (2 s also stays under the 3 s spawn timeout,
+    # so a regression to a spawning cancel would still trip the daemon-down test.)
+    assert elapsed < 2.0
     assert session._inflight_req_id is None
 
 
@@ -85,7 +87,10 @@ def test_handle_question_cancel_when_daemon_unreachable_returns_cleanly():
         elapsed = time.perf_counter() - start
 
     assert cancel_calls == [req_id]
-    assert elapsed < 0.2
+    # Hang guard (see note above). Crucially 2 s is below the 3 s daemon spawn
+    # timeout, so a regression where cancel() spawns instead of failing fast
+    # (NFR-P4) would push this over the bound and fail.
+    assert elapsed < 2.0
     assert session._inflight_req_id is None
 
 

@@ -254,7 +254,9 @@ def _stream_answer(
 ) -> Generator[dict[str, Any], None, None]:
     """Stream one grounded answer as ``token`` events via the chirpd daemon.
 
-    Yields a ``token`` event per delta. On ``LLMError`` it yields a single
+    Yields a ``token`` event per token string from ``chat_stream_sync`` (the
+    wire deltas are already unwrapped to ``str`` at the client layer). On
+    ``LLMError`` it yields a single
     ``error`` event instead of raising, mirroring the event contract the
     interactive renderer consumes. If the daemon returns an empty (or
     whitespace-only) stream it yields an ``error`` too, so callers never have to
