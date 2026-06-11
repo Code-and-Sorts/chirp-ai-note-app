@@ -337,7 +337,11 @@ class LLMClient:
             "target_id": target_id,
         }
         last_event: dict[str, Any] | None = None
-        async for event in self._request(envelope):
+        # Never spawn a daemon to cancel: if none is running there is nothing to
+        # cancel, and spawning would block the caller (e.g. an interactive
+        # Ctrl-C, NFR-P4 ≤200 ms) for up to the spawn timeout. A down daemon
+        # raises LLMDaemonUnreachable (an LLMError) immediately instead.
+        async for event in self._request(envelope, spawn_if_absent=False):
             last_event = event
         if last_event is None or last_event.get("event") != EVENT_DONE:
             raise LLMMalformedResponse(

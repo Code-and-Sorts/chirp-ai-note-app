@@ -25,12 +25,14 @@ class _FakeStreamClient:
 
     Records each call's ``request_id`` so tests can assert the run-level id is
     threaded to the daemon. Raises ``error`` (if provided) on iteration to
-    mimic a daemon-side ``LLMError``.
+    mimic a daemon-side ``LLMError``; ``error_after`` controls how many tokens
+    stream first (0 = before any token, the default).
     """
 
-    def __init__(self, tokens=None, error=None):
+    def __init__(self, tokens=None, error=None, error_after=0):
         self._tokens = list(tokens or [])
         self._error = error
+        self._error_after = error_after
         self.calls: list[dict] = []
 
     def chat_stream_sync(
@@ -39,9 +41,12 @@ class _FakeStreamClient:
         self.calls.append(
             {"messages": messages, "model": model, "request_id": request_id}
         )
+        for i, tok in enumerate(self._tokens):
+            if self._error is not None and i >= self._error_after:
+                raise self._error
+            yield tok
         if self._error is not None:
             raise self._error
-        yield from self._tokens
 
 
 class TestPrompting:
@@ -1013,6 +1018,25 @@ class TestPrompting:
         assert complete[0]["answer"] == "The answer is here."
         assert complete[0]["search_strategy"] == "fast search"
         mock_cache.assert_called_once()
+        # The run-level id is threaded to the daemon on this branch too.
+        assert client.calls[0]["request_id"] == events[0]["req_id"]
+
+    def test_enhanced_search_and_answer_stream_error_after_partial_tokens(self):
+        client = _FakeStreamClient(
+            tokens=["partial ", "answer "],
+            error=LLMGenerationFailed("died mid-stream"),
+            error_after=2,
+        )
+
+        events = list(
+            enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
+        )
+
+        # Tokens stream up to the failure, then exactly one error, no complete.
+        tokens = [e["content"] for e in events if e["type"] == "token"]
+        assert tokens == ["partial ", "answer "]
+        assert [e["type"] for e in events].count("error") == 1
+        assert not any(e["type"] == "complete" for e in events)
 
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")
