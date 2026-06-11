@@ -252,7 +252,10 @@ Provide a direct answer based on the context."""
 def _stream_answer(
     client: LLMClient, prompt: str, req_id: str
 ) -> Generator[dict[str, Any], None, None]:
-    """Stream one grounded answer as ``token`` events via the chirpd daemon.
+    """Stream one prompt's answer as ``token`` events via the chirpd daemon.
+
+    Shared by every streaming branch (conversational, fast-answer, and grounded);
+    the caller supplies the prompt and finalizes the result.
 
     Yields a ``token`` event per token string from ``chat_stream_sync`` (the
     wire deltas are already unwrapped to ``str`` at the client layer). On
