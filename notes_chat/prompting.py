@@ -265,17 +265,18 @@ def _stream_answer(
     fields) once this returns without having yielded an error.
     """
     messages = [{"role": "user", "content": prompt}]
-    accumulated: list[str] = []
+    saw_content = False
     try:
         for token in client.chat_stream_sync(
             messages, model="default", request_id=req_id
         ):
-            accumulated.append(token)
+            if token.strip():
+                saw_content = True
             yield {"type": "token", "content": token}
     except LLMError as exc:
         yield {"type": "error", "message": str(exc)}
         return
-    if not "".join(accumulated).strip():
+    if not saw_content:
         yield {"type": "error", "message": "Empty response received"}
 
 
