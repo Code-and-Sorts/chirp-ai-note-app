@@ -1,4 +1,3 @@
-import json
 import logging
 from collections.abc import Generator
 from typing import Any
@@ -7,6 +6,8 @@ import requests
 
 from config.settings import ChirpSettings
 from llm.client import LLMClient
+from llm.exceptions import LLMError
+from llm.protocol import new_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -228,67 +229,45 @@ def orchestrate_search(config: ChirpSettings, question: str) -> dict[str, Any]:
         return {"success": False, "error": f"Failed to orchestrate search: {e}"}
 
 
-def stream_llm_response(
-    config: ChirpSettings, prompt: str, temperature: float = 0, timeout: int = 60
-) -> Generator[str, None, None]:
-    """Stream LLM response token by token."""
-    try:
-        response = requests.post(
-            f"{config.models.ollama_url}/api/generate",
-            json={
-                "model": config.models.llm,
-                "prompt": prompt,
-                "temperature": temperature,
-                "top_p": 0.9 if temperature > 0 else 1,
-                "stream": True,
-            },
-            timeout=timeout,
-            stream=True,
-        )
-
-        if response.status_code != 200:
-            yield f"Error: Ollama API error {response.status_code}"
-            return
-
-        for line in response.iter_lines():
-            if line:
-                try:
-                    chunk = json.loads(line.decode("utf-8"))
-                    if "response" in chunk:
-                        token = chunk["response"]
-                        if token:
-                            yield token
-                    if chunk.get("done", False):
-                        break
-                except json.JSONDecodeError:
-                    continue
-
-    except requests.exceptions.ConnectionError:
-        yield "Error: Cannot connect to Ollama. Is it running?"
-    except Exception as e:  # noqa: BLE001 - fallback after specific request handlers
-        logger.debug("LLM stream failed: %s", e)
-        yield f"Error: {e}"
+def _conversational_prompt(question: str) -> str:
+    return CONVERSATIONAL_PROMPT.format(question=question)
 
 
-def generate_conversational_response_stream(
-    config: ChirpSettings, question: str
-) -> Generator[str, None, None]:
-    """Generate a streaming conversational response."""
-    prompt = CONVERSATIONAL_PROMPT.format(question=question)
-    yield from stream_llm_response(config, prompt, temperature=0.3, timeout=30)
-
-
-def fast_search_and_answer_stream(
-    config: ChirpSettings, question: str, context: str
-) -> Generator[str, None, None]:
-    """Fast streaming search and answer."""
-    fast_prompt = f"""Answer this question about meeting notes: "{question}"
+def _fast_answer_prompt(question: str, context: str) -> str:
+    return f"""Answer this question about meeting notes: "{question}"
 
 Context: {context}
 
 Answer:"""
 
-    yield from stream_llm_response(config, fast_prompt, temperature=0, timeout=30)
+
+def _grounded_answer_prompt(question: str, context: str) -> str:
+    return f"""Answer: "{question}"
+
+Context: {context}
+
+Provide a direct answer based on the context."""
+
+
+def _stream_answer(
+    client: LLMClient, prompt: str, req_id: str
+) -> Generator[dict[str, Any], None, None]:
+    """Stream one grounded answer as ``token`` events via the chirpd daemon.
+
+    Yields a ``token`` event per delta. On ``LLMError`` it yields a single
+    ``error`` event instead of raising, mirroring the event contract the
+    interactive renderer consumes. The caller finalizes with its own
+    ``complete`` event (and any branch-specific fields) once this returns
+    without having yielded an error.
+    """
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        for token in client.chat_stream_sync(
+            messages, model="default", request_id=req_id
+        ):
+            yield {"type": "token", "content": token}
+    except LLMError as exc:
+        yield {"type": "error", "message": str(exc)}
 
 
 def is_simple_conversational(question: str) -> bool:
@@ -492,22 +471,33 @@ Provide a direct answer based on the context."""
 
 
 def enhanced_search_and_answer_stream(
-    config: ChirpSettings, question: str
+    config: ChirpSettings,
+    question: str,
+    client: LLMClient | None = None,
 ) -> Generator[dict[str, Any], None, None]:
-    """Smart routing with streaming: fast path for simple cases, full orchestration for complex ones."""
+    """Smart routing with streaming: fast path for simple cases, full orchestration for complex ones.
+
+    Grounded answers stream token-by-token through the chirpd daemon
+    (``llm.client``). The run-level ``req_id`` is surfaced on the first event
+    so the interactive session can cancel an in-flight answer mid-stream.
+    """
     from notes_chat.cache import cache_answer, get_cached_answer
     from notes_chat.retrieval import retrieve_context
 
+    req_id = new_request_id()
+    yield {"type": "request_started", "req_id": req_id}
+    llm = client or LLMClient()
+
     if is_simple_conversational(question):
         yield {"type": "thinking", "message": "Having a chat..."}
-        full_response = ""
-        for token in generate_conversational_response_stream(config, question):
-            if token.startswith("Error:"):
-                yield {"type": "error", "message": token}
+        parts: list[str] = []
+        for event in _stream_answer(llm, _conversational_prompt(question), req_id):
+            if event["type"] == "error":
+                yield event
                 return
-            full_response += token
-            yield {"type": "token", "content": token}
-        yield {"type": "complete", "answer": full_response}
+            parts.append(event["content"])
+            yield event
+        yield {"type": "complete", "answer": "".join(parts)}
         return
 
     if is_obvious_search(question):
@@ -529,14 +519,17 @@ def enhanced_search_and_answer_stream(
                     return
 
                 yield {"type": "thinking", "message": "Generating answer..."}
-                full_response = ""
-                for token in fast_search_and_answer_stream(config, question, context):
-                    if token.startswith("Error:"):
-                        yield {"type": "error", "message": token}
+                parts = []
+                for event in _stream_answer(
+                    llm, _fast_answer_prompt(question, context), req_id
+                ):
+                    if event["type"] == "error":
+                        yield event
                         return
-                    full_response += token
-                    yield {"type": "token", "content": token}
+                    parts.append(event["content"])
+                    yield event
 
+                full_response = "".join(parts)
                 if full_response.strip():
                     cache_answer(question, retrieved_ids, full_response)
                     yield {
@@ -557,18 +550,20 @@ def enhanced_search_and_answer_stream(
             try:
                 context_result = retrieve_context(config, question)
                 if context_result.get("success"):
-                    full_response = ""
-                    for token in fast_search_and_answer_stream(
-                        config, question, context_result["context"]
+                    parts = []
+                    for event in _stream_answer(
+                        llm,
+                        _fast_answer_prompt(question, context_result["context"]),
+                        req_id,
                     ):
-                        if token.startswith("Error:"):
-                            yield {"type": "error", "message": token}
+                        if event["type"] == "error":
+                            yield event
                             return
-                        full_response += token
-                        yield {"type": "token", "content": token}
+                        parts.append(event["content"])
+                        yield event
                     yield {
                         "type": "complete",
-                        "answer": full_response,
+                        "answer": "".join(parts),
                         "sources": context_result.get("sources"),
                     }
                 else:
@@ -585,14 +580,14 @@ def enhanced_search_and_answer_stream(
 
         if not search_plan["requires_search"]:
             yield {"type": "thinking", "message": "Having a conversation..."}
-            full_response = ""
-            for token in generate_conversational_response_stream(config, question):
-                if token.startswith("Error:"):
-                    yield {"type": "error", "message": token}
+            parts = []
+            for event in _stream_answer(llm, _conversational_prompt(question), req_id):
+                if event["type"] == "error":
+                    yield event
                     return
-                full_response += token
-                yield {"type": "token", "content": token}
-            yield {"type": "complete", "answer": full_response}
+                parts.append(event["content"])
+                yield event
+            yield {"type": "complete", "answer": "".join(parts)}
             return
 
         search_terms = " ".join(search_plan["search_terms"])
@@ -612,16 +607,16 @@ def enhanced_search_and_answer_stream(
                 "message": "No results found, generating helpful response...",
             }
             fallback_query = f"The user asked: '{question}' but no relevant information was found. Search strategy was: {search_plan['search_strategy']}. Provide a helpful response explaining this and suggest how they might rephrase."
-            full_response = ""
-            for token in generate_conversational_response_stream(
-                config, fallback_query
+            parts = []
+            for event in _stream_answer(
+                llm, _conversational_prompt(fallback_query), req_id
             ):
-                if token.startswith("Error:"):
-                    yield {"type": "error", "message": token}
+                if event["type"] == "error":
+                    yield event
                     return
-                full_response += token
-                yield {"type": "token", "content": token}
-            yield {"type": "complete", "answer": full_response}
+                parts.append(event["content"])
+                yield event
+            yield {"type": "complete", "answer": "".join(parts)}
             return
 
         context = context_result["context"]
@@ -637,23 +632,18 @@ def enhanced_search_and_answer_stream(
             }
             return
 
-        enhanced_prompt = f"""Answer: "{question}"
-
-Context: {context}
-
-Provide a direct answer based on the context."""
-
         yield {"type": "thinking", "message": "Generating detailed answer..."}
-        full_response = ""
-        for token in stream_llm_response(
-            config, enhanced_prompt, temperature=0, timeout=45
+        parts = []
+        for event in _stream_answer(
+            llm, _grounded_answer_prompt(question, context), req_id
         ):
-            if token.startswith("Error:"):
-                yield {"type": "error", "message": token}
+            if event["type"] == "error":
+                yield event
                 return
-            full_response += token
-            yield {"type": "token", "content": token}
+            parts.append(event["content"])
+            yield event
 
+        full_response = "".join(parts)
         if full_response.strip():
             cache_answer(question, retrieved_ids, full_response)
             yield {

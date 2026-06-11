@@ -281,6 +281,7 @@ class LLMClient:
         model: str = "default",
         options: dict[str, Any] | None = None,
         keep_alive: int | None = None,
+        request_id: str | None = None,
     ) -> Iterator[str]:
         try:
             asyncio.get_running_loop()
@@ -290,7 +291,9 @@ class LLMClient:
             raise LLMError(
                 "sync wrapper cannot be called from a running event loop",
             )
-        return _sync_iter_async(self.chat_stream(messages, model, options, keep_alive))
+        return _sync_iter_async(
+            self.chat_stream(messages, model, options, keep_alive, request_id)
+        )
 
     async def embed(
         self,
