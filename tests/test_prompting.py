@@ -1038,6 +1038,33 @@ class TestPrompting:
         assert [e["type"] for e in events].count("error") == 1
         assert not any(e["type"] == "complete" for e in events)
 
+    @patch("notes_chat.cache.cache_answer")
+    @patch("notes_chat.cache.get_cached_answer")
+    @patch("notes_chat.retrieval.retrieve_context")
+    def test_enhanced_search_and_answer_stream_obvious_search_empty_response(
+        self, mock_retrieve, mock_get_cached, mock_cache
+    ):
+        mock_retrieve.return_value = {
+            "success": True,
+            "context": "ctx",
+            "retrieved_ids": ["id1"],
+            "sources": ["src"],
+        }
+        mock_get_cached.return_value = None
+        client = _FakeStreamClient(tokens=[])
+
+        events = list(
+            enhanced_search_and_answer_stream(
+                ChirpSettings(), "what did we discuss?", client=client
+            )
+        )
+
+        # An empty fast-path stream yields an error, never a silent complete-less
+        # exit, so the interactive UI always renders a final state.
+        assert any(e["type"] == "error" and "Empty" in e["message"] for e in events)
+        assert not any(e["type"] == "complete" for e in events)
+        mock_cache.assert_not_called()
+
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")
     def test_enhanced_search_and_answer_stream_obvious_search_error_event(

@@ -538,6 +538,8 @@ def enhanced_search_and_answer_stream(
                         "sources": context_result.get("sources"),
                         "search_strategy": "fast search",
                     }
+                else:
+                    yield {"type": "error", "message": "Empty response received"}
                 return
         except Exception as exc:  # noqa: BLE001 - fast-path stream fallback; many failure modes
             logger.debug("Fast-path stream failed, falling through: %s", exc)
