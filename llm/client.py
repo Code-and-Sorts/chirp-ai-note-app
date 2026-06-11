@@ -104,6 +104,11 @@ class ChatStream:
     def __aiter__(self) -> ChatStream:
         return self
 
+    async def aclose(self) -> None:
+        aclose = getattr(self._event_stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
     async def __anext__(self) -> str:
         while True:
             event = await self._event_stream.__anext__()
@@ -659,9 +664,28 @@ def _sync_iter_async(stream: ChatStream) -> Iterator[str]:
     loop = asyncio.new_event_loop()
     try:
         while True:
+            # Own the per-token read as a task so that if the caller abandons
+            # the stream mid-iteration (an interactive Ctrl-C raises
+            # KeyboardInterrupt here, or .close() raises GeneratorExit), we can
+            # cancel and drain it on the still-live loop. Otherwise the dangling
+            # coroutine closes its socket during GC on a closed loop, surfacing
+            # an ignored "Event loop is closed".
+            read = loop.create_task(stream.__anext__())
             try:
-                yield loop.run_until_complete(stream.__anext__())
+                yield loop.run_until_complete(read)
             except StopAsyncIteration:
                 return
+            except BaseException:
+                read.cancel()
+                try:
+                    loop.run_until_complete(read)
+                except BaseException:  # noqa: BLE001 - draining the cancelled read
+                    pass
+                raise
     finally:
+        # Finalize the async generator's socket teardown while the loop lives.
+        try:
+            loop.run_until_complete(stream.aclose())
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
         loop.close()
