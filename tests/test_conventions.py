@@ -3,9 +3,15 @@
 The LLM-touching tests migrated off Ollama-shaped fixtures in stories 6.2-6.5
 must stay migrated: no `requests` mocks simulating LLM/embedding calls, no
 Ollama API references, no `mlx_lm` mocks (use `FakeBackend` at the
-`LLMBackend` boundary instead). The only exception is `tests/test_prompting.py`
-lines covering helpers still on Ollama, each tagged
-`TODO(EPIC-INIT-AND-MIGRATION)` until that epic retires them.
+`LLMBackend` boundary instead). `tests/test_prompting.py` is the one carve-out
+while its deferred helpers remain on Ollama (story 6.5 AC-8), scoped per rule:
+
+- `requests` mocks: allowed only on lines tagged `TODO(EPIC-INIT-AND-MIGRATION)`
+  (inline or the line above the `@patch` decorator).
+- Ollama references: the whole file is exempt until EPIC-INIT-AND-MIGRATION —
+  the deferred helpers' imports, test names, and assertion strings necessarily
+  mention Ollama on lines that carry no tag.
+- `mlx_lm`: no exemption anywhere.
 """
 
 from __future__ import annotations
@@ -64,8 +70,9 @@ def test_no_requests_mocks_for_migrated_llm_paths():
 
 
 def test_no_ollama_shaped_fixtures():
-    # AC-2: deferred-helper tests in test_prompting.py keep their Ollama
-    # references (lowercase symbol/url forms) until EPIC-INIT-AND-MIGRATION.
+    # AC-2: test_prompting.py is wholly exempt (not just tagged lines) — its
+    # deferred helpers' imports, test names, and assertion strings mention
+    # Ollama on untagged lines until EPIC-INIT-AND-MIGRATION retires them.
     violations = [
         v
         for v in _violations(OLLAMA_SHAPE, allow_deferred_tag=True)

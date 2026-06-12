@@ -90,21 +90,10 @@ class _DaemonHarness:
 
 @pytest.fixture
 def socket_path() -> Iterator[Path]:
-    tmp = Path(tempfile.mkdtemp(prefix="inproc-", dir="/tmp"))
-    path = tmp / "s"
-    yield path
-    try:
-        if path.exists():
-            path.unlink()
-    except OSError:
-        # Teardown cleanup is best-effort; a leftover socket file under /tmp
-        # is harmless and must not fail the test.
-        pass
-    try:
-        tmp.rmdir()
-    except OSError:
-        # Same best-effort teardown as above.
-        pass
+    # dir="/tmp" keeps the socket path under macOS's 104-char sun_path limit
+    # (pytest's tmp_path can exceed it); TemporaryDirectory owns the cleanup.
+    with tempfile.TemporaryDirectory(prefix="inproc-", dir="/tmp") as tmp:
+        yield Path(tmp) / "s"
 
 
 @pytest.mark.integration
