@@ -42,7 +42,7 @@ MLX_IMPORT = re.compile(r"mlx_lm")
 def _violations(pattern: re.Pattern[str], allow_deferred_tag: bool) -> list[str]:
     found = []
     for path in MIGRATED_FILES:
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
         for lineno, line in enumerate(lines, start=1):
             if not pattern.search(line):
                 continue
