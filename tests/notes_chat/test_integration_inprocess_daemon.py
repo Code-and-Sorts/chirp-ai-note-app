@@ -59,6 +59,7 @@ class _DaemonHarness:
             try:
                 loop.run_until_complete(self._serve_task)
             except asyncio.CancelledError:
+                # Expected teardown path: stop() cancels the serve task.
                 pass
             finally:
                 loop.close()
@@ -96,10 +97,13 @@ def socket_path() -> Iterator[Path]:
         if path.exists():
             path.unlink()
     except OSError:
+        # Teardown cleanup is best-effort; a leftover socket file under /tmp
+        # is harmless and must not fail the test.
         pass
     try:
         tmp.rmdir()
     except OSError:
+        # Same best-effort teardown as above.
         pass
 
 
