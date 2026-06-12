@@ -772,3 +772,137 @@ def test_finalize_paths_preserves_existing_config(tmp_path, monkeypatch):
     assert config_path.stat().st_mtime == original_mtime
     assert (settings.notes_chat.index_dir / "chroma").exists()
     assert settings.directories.notes_root.exists()
+
+
+# --- --recheck Ollama migration plan (story 7.2) ---------------------------------
+
+
+def _stub_detection(monkeypatch, tmp_path, cli=False, data_dir=False, module=False):
+    """Control the three _detect_ollama_install heuristics."""
+    monkeypatch.setattr(
+        init_flow.shutil,
+        "which",
+        lambda cmd: "/opt/homebrew/bin/ollama" if (cmd == "ollama" and cli) else None,
+    )
+    fake_home = tmp_path / "home"
+    fake_home.mkdir(exist_ok=True)
+    if data_dir:
+        (fake_home / ".ollama").mkdir()
+    monkeypatch.setattr(init_flow.Path, "home", lambda: fake_home)
+    monkeypatch.setattr(init_flow, "_try_import_ollama_module", lambda: module)
+
+
+def test_recheck_with_no_ollama_detected_prints_no_plan(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_detection(monkeypatch, tmp_path)
+
+    console = _console()
+    code = init_flow.run_init(_fake_settings(tmp_path), console, recheck=True)
+
+    assert code == 0
+    output = console.file.getvalue()
+    assert "checking what you've already got" in output  # verify table printed
+    assert "Ollama migration" not in output
+
+
+def test_recheck_with_ollama_cli_on_path_prints_plan(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_detection(monkeypatch, tmp_path, cli=True)
+
+    console = _console()
+    code = init_flow.run_init(_fake_settings(tmp_path), console, recheck=True)
+
+    assert code == 0
+    output = console.file.getvalue()
+    assert "Ollama migration" in output
+    assert f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in output
+    assert "[ollama on PATH]            yes" in output
+    # The plan prints after the verify table.
+    assert output.index("checking what you've already got") < output.index(
+        "Ollama migration"
+    )
+
+
+def test_recheck_with_data_dir_only_prints_plan(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_detection(monkeypatch, tmp_path, data_dir=True)
+
+    console = _console()
+    code = init_flow.run_init(_fake_settings(tmp_path), console, recheck=True)
+
+    assert code == 0
+    output = console.file.getvalue()
+    assert "Ollama migration" in output
+    assert "[~/.ollama directory]       yes" in output
+    assert "[ollama on PATH]            no" in output
+    assert "[ollama python module]      no" in output
+
+
+def test_recheck_with_python_module_importable_prints_plan(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_detection(monkeypatch, tmp_path, module=True)
+
+    console = _console()
+    code = init_flow.run_init(_fake_settings(tmp_path), console, recheck=True)
+
+    assert code == 0
+    output = console.file.getvalue()
+    assert "Ollama migration" in output
+    assert "[ollama python module]      yes" in output
+
+
+def test_recheck_plan_does_not_mutate_ollama_install(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_detection(monkeypatch, tmp_path, cli=True, data_dir=True, module=True)
+    monkeypatch.setattr(
+        init_flow.subprocess,
+        "run",
+        Mock(side_effect=AssertionError("must not call subprocess during recheck")),
+    )
+
+    console = _console()
+    code = init_flow.run_init(_fake_settings(tmp_path), console, recheck=True)
+
+    assert code == 0
+    output = console.file.getvalue()
+    assert "Ollama migration" in output
+    assert "chirp will NOT do this for you" in output
+    # All three heuristics fired and were reported.
+    assert output.count("yes") >= 3
+
+
+def test_full_init_no_recheck_does_not_print_plan(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_detection(monkeypatch, tmp_path, cli=True, data_dir=True, module=True)
+    monkeypatch.setattr(
+        init_flow.ChirpSettings,
+        "get_config_path",
+        lambda: tmp_path / "config.toml",
+    )
+
+    console = _console()
+    code = init_flow.run_init(_fake_settings(tmp_path), console)
+
+    assert code == 0
+    assert "Ollama migration" not in console.file.getvalue()
+
+
+def test_plan_recommends_default_chat_repo(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_detection(monkeypatch, tmp_path, cli=True)
+
+    console = _console()
+    init_flow.run_init(_fake_settings(tmp_path), console, recheck=True)
+
+    output = console.file.getvalue()
+    assert "mlx-community/gemma-4-4b-it-4bit" in output
+    assert init_flow.SMALLER_CHAT_REPO in output
