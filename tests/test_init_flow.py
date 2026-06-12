@@ -772,3 +772,42 @@ def test_finalize_paths_preserves_existing_config(tmp_path, monkeypatch):
     assert config_path.stat().st_mtime == original_mtime
     assert (settings.notes_chat.index_dir / "chroma").exists()
     assert settings.directories.notes_root.exists()
+
+
+def test_verify_surfaces_malformed_registry(tmp_path, monkeypatch):
+    from llm.exceptions import LLMMalformedResponse
+
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+
+    def _corrupt(path=None):
+        raise LLMMalformedResponse("models.toml is not valid TOML")
+
+    monkeypatch.setattr("llm.registry.read_registry", _corrupt)
+
+    statuses = init_flow.verify(_fake_settings(tmp_path), _console())
+
+    chat = next(s for s in statuses if s.name == "default chat model")
+    assert chat.installed is False
+    assert "registry unreadable" in chat.detail
+    assert "not valid TOML" in chat.detail
+    assert "chirp models add" not in chat.detail  # not the fresh-install hint
+
+
+def test_switch_model_surfaces_malformed_registry(tmp_path, monkeypatch):
+    from llm.exceptions import LLMMalformedResponse
+
+    monkeypatch.setattr(init_flow.platform, "machine", lambda: "arm64")
+
+    def _corrupt(path=None):
+        raise LLMMalformedResponse("models.toml is not valid TOML")
+
+    monkeypatch.setattr("llm.registry.read_registry", _corrupt)
+
+    console = _console()
+    code = init_flow.run_init(_fake_settings(tmp_path), console, switch_model=True)
+
+    assert code == 1
+    output = console.file.getvalue()
+    assert "registry unreadable" in output
+    assert "chirp models add" not in output

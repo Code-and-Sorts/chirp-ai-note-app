@@ -1,6 +1,6 @@
-"""`chirp init` — smart 3-phase first-run setup.
+"""`chirp init` — smart first-run setup: an architecture gate plus three phases.
 
-Phase 0 (gate): require Apple Silicon. Everything downstream (the bundled
+Gate: require Apple Silicon. Everything downstream (the bundled
 chirpd daemon, MLX inference) is arm64-only, so a non-arm64 machine fails
 fast with exit code 7 before any other work.
 
@@ -67,8 +67,10 @@ def _run(args: list[str], timeout: float = 10.0) -> tuple[int, str]:
     try:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return 127, str(exc)
+    except FileNotFoundError as exc:
+        return 127, str(exc)  # shell convention: command not found
+    except subprocess.TimeoutExpired as exc:
+        return 124, str(exc)  # shell convention: timed out (cf. timeout(1))
 
 
 def _require_apple_silicon(console: Console) -> int | None:
@@ -147,9 +149,16 @@ def _default_chat_registered() -> DependencyStatus:
 
     try:
         registry = read_registry()
-    except (FileNotFoundError, LLMError):
+    except FileNotFoundError:
         return DependencyStatus(
             "default chat model", False, _MODELS_ADD_HINT, required=False
+        )
+    except LLMError as exc:
+        # Malformed/unsupported models.toml is a real problem, not a fresh
+        # install — surface the registry's own message instead of the
+        # models-add hint.
+        return DependencyStatus(
+            "default chat model", False, f"registry unreadable: {exc}", required=False
         )
     alias = registry.default_chat
     if alias and alias in registry.models:
@@ -360,8 +369,13 @@ def _run_switch_model(settings: ChirpSettings, console: Console) -> int:
         chat_aliases = sorted(
             alias for alias, entry in registry.models.items() if entry.role == "chat"
         )
-    except (FileNotFoundError, LLMError):
+    except FileNotFoundError:
         chat_aliases = []
+    except LLMError as exc:
+        # A malformed models.toml is not "no model registered" — switching
+        # would silently no-op with a misleading hint. Surface and fail.
+        console.print(f" [red]model registry unreadable: {exc}[/red]")
+        return 1
     if not chat_aliases:
         console.print(
             f" [yellow]no chat model registered yet.[/yellow] run: "
