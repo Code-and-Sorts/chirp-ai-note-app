@@ -2,6 +2,7 @@ import json
 import re
 from unittest.mock import Mock, patch
 
+import pytest
 import requests
 
 from config.settings import ChirpSettings
@@ -20,48 +21,28 @@ from notes_chat.prompting import (
 )
 
 
-class _FakeStreamClient:
-    """Scripts ``chat_stream_sync`` output for the streaming-router tests.
-
-    Records each call's ``request_id`` so tests can assert the run-level id is
-    threaded to the daemon. Raises ``error`` (if provided) on iteration to
-    mimic a daemon-side ``LLMError``; ``error_after`` controls how many tokens
-    stream first (0 = before any token, the default).
-    """
-
-    def __init__(self, tokens=None, error=None, error_after=0):
-        self._tokens = list(tokens or [])
-        self._error = error
-        self._error_after = error_after
-        self.calls: list[dict] = []
-
-    def chat_stream_sync(
-        self, messages, model="default", options=None, request_id=None
-    ):
-        self.calls.append(
-            {"messages": messages, "model": model, "request_id": request_id}
-        )
-        for i, tok in enumerate(self._tokens):
-            if self._error is not None and i >= self._error_after:
-                raise self._error
-            yield tok
-        if self._error is not None:
-            raise self._error
-
-
 class TestPrompting:
+    @pytest.fixture(autouse=True)
+    def _llm_fakes(
+        self, fake_llm_client, fake_chat_tokens, fake_chat_text, raise_llm_error
+    ):
+        """Bind the shared `llm.client` fakes (story 6.5) for every test."""
+        self.fake_llm_client = fake_llm_client
+        self.fake_chat_tokens = fake_chat_tokens
+        self.fake_chat_text = fake_chat_text
+        self.raise_llm_error = raise_llm_error
+
+    def _stream_client(self, tokens=None, error=None):
+        """A fake client whose ``chat_stream_sync`` yields ``tokens`` then
+        raises ``error`` (if given), mimicking a daemon that dies mid-stream.
+        Calls are recorded on ``client.chat_stream_sync.calls``."""
+        return self.fake_llm_client(
+            chat_stream_sync=self.fake_chat_tokens(list(tokens or []), error=error)
+        )
+
     def test_generate_answer_routes_through_llm_client(self):
         """generate_answer hands the templated prompt to LLMClient.chat_sync."""
-
-        class _StubClient:
-            def __init__(self) -> None:
-                self.calls: list[tuple[list[dict], str]] = []
-
-            def chat_sync(self, messages, model="default", **_):
-                self.calls.append((messages, model))
-                return "Test answer"
-
-        client = _StubClient()
+        client = self.fake_llm_client(chat_sync=self.fake_chat_text("Test answer"))
         config = ChirpSettings()
         question = "What was decided?"
         context = "2025-01-15 · meeting.md\nWe decided to implement the new feature."
@@ -69,9 +50,10 @@ class TestPrompting:
         result = generate_answer(config, question, context, client=client)
 
         assert result == {"success": True, "answer": "Test answer"}
-        assert len(client.calls) == 1
-        messages, model = client.calls[0]
-        assert model == "default"
+        assert len(client.chat_sync.calls) == 1
+        call = client.chat_sync.calls[0]
+        assert call["model"] == "default"
+        messages = call["messages"]
         assert messages[-1]["role"] == "user"
         prompt = messages[-1]["content"]
         assert "based ONLY on the provided meeting notes" in prompt
@@ -79,75 +61,57 @@ class TestPrompting:
         assert context in prompt
 
     def test_generate_answer_low_confidence_answer_is_returned(self):
-        class _StubClient:
-            def chat_sync(self, *a, **kw):
-                return "I don't have enough information to answer that question."
-
+        client = self.fake_llm_client(
+            chat_sync=self.fake_chat_text(
+                "I don't have enough information to answer that question."
+            )
+        )
         result = generate_answer(
-            ChirpSettings(), "hi", "Some meeting notes", client=_StubClient()
+            ChirpSettings(), "hi", "Some meeting notes", client=client
         )
         assert result["success"] is True
         assert "I don't have enough information" in result["answer"]
 
     def test_generate_answer_empty_context_handling(self):
-        """Empty context is rejected before reaching the LLM."""
+        """Empty context is rejected before reaching the LLM.
 
-        class _BoomClient:
-            def chat_sync(self, *a, **kw):
-                raise AssertionError("chat_sync must not be called for empty context")
-
-        result = generate_answer(ChirpSettings(), "What?", "", client=_BoomClient())
+        The fake exposes no ``chat_sync`` at all, so reaching the LLM would
+        fail loudly with ``AttributeError``."""
+        result = generate_answer(
+            ChirpSettings(), "What?", "", client=self.fake_llm_client()
+        )
         assert not result["success"]
         assert "Empty context" in result["error"]
 
     def test_generate_answer_empty_response_handling(self):
-        class _StubClient:
-            def chat_sync(self, *a, **kw):
-                return "   "
-
-        result = generate_answer(ChirpSettings(), "Q?", "ctx", client=_StubClient())
+        client = self.fake_llm_client(chat_sync=self.fake_chat_text("   "))
+        result = generate_answer(ChirpSettings(), "Q?", "ctx", client=client)
         assert not result["success"]
         assert "Empty response" in result["error"]
 
     def test_generate_answer_propagates_llm_error(self):
-        from llm.exceptions import LLMGenerationFailed
-
-        class _BoomClient:
-            def chat_sync(self, *a, **kw):
-                raise LLMGenerationFailed("inference failed", details={})
-
-        import pytest
-
+        client = self.fake_llm_client(
+            chat_sync=self.raise_llm_error(LLMGenerationFailed, "inference failed")
+        )
         with pytest.raises(LLMGenerationFailed):
-            generate_answer(ChirpSettings(), "Q?", "ctx", client=_BoomClient())
+            generate_answer(ChirpSettings(), "Q?", "ctx", client=client)
 
     def test_stream_answer_tokens_yields_through_client(self):
-        class _StubClient:
-            def chat_stream_sync(self, messages, model="default", **_):
-                assert messages[-1]["role"] == "user"
-                yield "Hello "
-                yield "world"
-
         from notes_chat.prompting import stream_answer_tokens
 
-        tokens = list(
-            stream_answer_tokens(ChirpSettings(), "q?", "ctx", client=_StubClient())
-        )
+        client = self._stream_client(tokens=["Hello ", "world"])
+        tokens = list(stream_answer_tokens(ChirpSettings(), "q?", "ctx", client=client))
         assert tokens == ["Hello ", "world"]
+        assert client.chat_stream_sync.calls[0]["messages"][-1]["role"] == "user"
 
     def test_stream_answer_tokens_skips_empty_context(self):
-        class _BoomClient:
-            def chat_stream_sync(self, *a, **kw):
-                raise AssertionError("must not be called for empty context")
-                yield  # pragma: no cover
-
         from notes_chat.prompting import stream_answer_tokens
 
-        tokens = list(
-            stream_answer_tokens(ChirpSettings(), "q?", "", client=_BoomClient())
-        )
+        client = self.fake_llm_client()  # no chat_stream_sync: must not be called
+        tokens = list(stream_answer_tokens(ChirpSettings(), "q?", "", client=client))
         assert tokens == []
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.get")
     def test_ollama_validation_success(self, mock_get):
         """Test successful Ollama validation."""
@@ -163,6 +127,7 @@ class TestPrompting:
 
         assert result["success"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.get")
     def test_ollama_validation_missing_model(self, mock_get):
         """Test Ollama validation with missing model."""
@@ -178,6 +143,7 @@ class TestPrompting:
         assert "llama3.1:8b" in result["error"]
         assert "not found" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_conversational_response_success(self, mock_post):
         """Test successful conversational response generation."""
@@ -204,6 +170,7 @@ class TestPrompting:
         assert call_args[1]["json"]["temperature"] == 0.3
         assert call_args[1]["json"]["top_p"] == 0.9
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_conversational_response_api_error(self, mock_post):
         """Test conversational response handling API errors."""
@@ -220,6 +187,7 @@ class TestPrompting:
         assert "Model" in result["error"]
         assert "not found" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_conversational_response_connection_error(self, mock_post):
         """Test conversational response handling connection errors."""
@@ -287,6 +255,7 @@ class TestPrompting:
             result = is_search_query(query)
             assert isinstance(result, bool), f"'{query}' should return a boolean"
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_conversational_response_500_error(self, mock_post):
         mock_response = Mock()
@@ -298,6 +267,7 @@ class TestPrompting:
         assert not result["success"]
         assert "ollama serve" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_conversational_response_empty_response(self, mock_post):
         mock_response = Mock()
@@ -310,6 +280,7 @@ class TestPrompting:
         assert not result["success"]
         assert "Empty response" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_conversational_response_requests_connection_error(self, mock_post):
         mock_post.side_effect = requests.exceptions.ConnectionError()
@@ -319,6 +290,7 @@ class TestPrompting:
         assert not result["success"]
         assert "Cannot connect to Ollama" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_conversational_response_timeout(self, mock_post):
         mock_post.side_effect = requests.exceptions.Timeout()
@@ -328,6 +300,7 @@ class TestPrompting:
         assert not result["success"]
         assert "timed out" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_conversational_response_generic_exception(self, mock_post):
         mock_post.side_effect = ValueError("nope")
@@ -337,6 +310,7 @@ class TestPrompting:
         assert not result["success"]
         assert "nope" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_orchestrate_search_success_with_json_embedded_in_text(self, mock_post):
         search_plan = {
@@ -357,6 +331,7 @@ class TestPrompting:
         assert result["success"]
         assert result["search_plan"]["search_terms"] == ["budget"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_orchestrate_search_success_raw_json(self, mock_post):
         search_plan = {
@@ -375,6 +350,7 @@ class TestPrompting:
         assert result["success"]
         assert result["search_plan"]["time_filter"] == "last week"
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_orchestrate_search_api_error(self, mock_post):
         mock_response = Mock()
@@ -386,6 +362,7 @@ class TestPrompting:
         assert not result["success"]
         assert "503" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_orchestrate_search_empty_response(self, mock_post):
         mock_response = Mock()
@@ -398,6 +375,7 @@ class TestPrompting:
         assert not result["success"]
         assert "Empty response" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_orchestrate_search_invalid_json(self, mock_post):
         mock_response = Mock()
@@ -410,6 +388,7 @@ class TestPrompting:
         assert not result["success"]
         assert "Failed to parse" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_orchestrate_search_missing_required_keys(self, mock_post):
         incomplete_plan = {"search_terms": ["budget"]}
@@ -423,6 +402,7 @@ class TestPrompting:
         assert not result["success"]
         assert "Invalid response format" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_orchestrate_search_connection_error(self, mock_post):
         mock_post.side_effect = requests.exceptions.ConnectionError()
@@ -432,6 +412,7 @@ class TestPrompting:
         assert not result["success"]
         assert "Cannot connect to Ollama" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_orchestrate_search_generic_exception(self, mock_post):
         mock_post.side_effect = RuntimeError("unexpected")
@@ -506,6 +487,7 @@ class TestPrompting:
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_fast_search_and_answer_success(
         self, mock_post, mock_retrieve, mock_get_cached, mock_cache_answer
@@ -558,6 +540,7 @@ class TestPrompting:
 
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_fast_search_and_answer_api_error(
         self, mock_post, mock_retrieve, mock_get_cached
@@ -579,6 +562,7 @@ class TestPrompting:
 
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_fast_search_and_answer_empty_llm_response(
         self, mock_post, mock_retrieve, mock_get_cached
@@ -670,6 +654,7 @@ class TestPrompting:
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")
     @patch("notes_chat.prompting.orchestrate_search")
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_enhanced_search_and_answer_full_path_success(
         self, mock_post, mock_orchestrate, mock_retrieve, mock_get_cached, mock_cache
@@ -766,6 +751,7 @@ class TestPrompting:
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")
     @patch("notes_chat.prompting.orchestrate_search")
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_enhanced_search_and_answer_empty_llm_falls_back(
         self,
@@ -822,6 +808,7 @@ class TestPrompting:
     @patch("notes_chat.prompting.fast_search_and_answer")
     @patch("notes_chat.retrieval.retrieve_context")
     @patch("notes_chat.prompting.orchestrate_search")
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.post")
     def test_enhanced_search_and_answer_api_error_falls_back(
         self, mock_post, mock_orchestrate, mock_retrieve, mock_fast
@@ -881,6 +868,7 @@ class TestPrompting:
         call_args = mock_retrieve.call_args[0]
         assert call_args[2] is None
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.get")
     def test_validate_ollama_connection_non_200(self, mock_get):
         mock_response = Mock()
@@ -892,6 +880,7 @@ class TestPrompting:
         assert not result["success"]
         assert "not responding" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.get")
     def test_validate_ollama_connection_missing_embedding_model(self, mock_get):
         mock_response = Mock()
@@ -904,6 +893,7 @@ class TestPrompting:
         assert not result["success"]
         assert "nomic-embed-text" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.get")
     def test_validate_ollama_connection_error(self, mock_get):
         mock_get.side_effect = requests.exceptions.ConnectionError()
@@ -913,6 +903,7 @@ class TestPrompting:
         assert not result["success"]
         assert "Cannot connect to Ollama" in result["error"]
 
+    # TODO(EPIC-INIT-AND-MIGRATION): retire when prompting.py is fully migrated
     @patch("requests.get")
     def test_validate_ollama_connection_generic_exception(self, mock_get):
         mock_get.side_effect = RuntimeError("unexpected")
@@ -927,7 +918,7 @@ class TestPrompting:
         assert is_search_query(question)
 
     def test_enhanced_search_and_answer_stream_first_event_is_request_started(self):
-        client = _FakeStreamClient(tokens=["x"])
+        client = self._stream_client(tokens=["x"])
 
         events = list(
             enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
@@ -936,10 +927,10 @@ class TestPrompting:
         assert events[0]["type"] == "request_started"
         assert re.fullmatch(r"r-[0-9a-f]{12}", events[0]["req_id"])
         # The surfaced id is the same one threaded to the daemon for cancellation.
-        assert client.calls[0]["request_id"] == events[0]["req_id"]
+        assert client.chat_stream_sync.calls[0]["request_id"] == events[0]["req_id"]
 
     def test_enhanced_search_and_answer_stream_simple_conversational(self):
-        client = _FakeStreamClient(tokens=["Hi", " there!"])
+        client = self._stream_client(tokens=["Hi", " there!"])
 
         events = list(
             enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
@@ -954,7 +945,7 @@ class TestPrompting:
         assert events[-1]["answer"] == "Hi there!"
 
     def test_enhanced_search_and_answer_stream_conversational_error_event(self):
-        client = _FakeStreamClient(error=LLMGenerationFailed("boom"))
+        client = self._stream_client(error=LLMGenerationFailed("boom"))
 
         events = list(
             enhanced_search_and_answer_stream(ChirpSettings(), "hello", client=client)
@@ -966,7 +957,7 @@ class TestPrompting:
     def test_enhanced_search_and_answer_stream_conversational_empty_response(self):
         # Centralized empty-response handling: an empty conversational stream
         # yields an error, not a silent empty `complete`.
-        client = _FakeStreamClient(tokens=[])
+        client = self._stream_client(tokens=[])
 
         events = list(
             enhanced_search_and_answer_stream(ChirpSettings(), "hi", client=client)
@@ -988,7 +979,7 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = "cached result"
-        client = _FakeStreamClient()
+        client = self._stream_client()
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1001,7 +992,7 @@ class TestPrompting:
         assert complete_events[0]["answer"] == "cached result"
         assert complete_events[0].get("from_cache") is True
         # Cache hits never reach the daemon.
-        assert client.calls == []
+        assert client.chat_stream_sync.calls == []
 
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
@@ -1016,7 +1007,7 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        client = _FakeStreamClient(tokens=["The answer", " is here."])
+        client = self._stream_client(tokens=["The answer", " is here."])
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1031,13 +1022,12 @@ class TestPrompting:
         assert complete[0]["search_strategy"] == "fast search"
         mock_cache.assert_called_once()
         # The run-level id is threaded to the daemon on this branch too.
-        assert client.calls[0]["request_id"] == events[0]["req_id"]
+        assert client.chat_stream_sync.calls[0]["request_id"] == events[0]["req_id"]
 
     def test_enhanced_search_and_answer_stream_error_after_partial_tokens(self):
-        client = _FakeStreamClient(
+        client = self._stream_client(
             tokens=["partial ", "answer "],
             error=LLMGenerationFailed("died mid-stream"),
-            error_after=2,
         )
 
         events = list(
@@ -1063,7 +1053,7 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        client = _FakeStreamClient(tokens=[])
+        client = self._stream_client(tokens=[])
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1088,7 +1078,7 @@ class TestPrompting:
             "retrieved_ids": ["id1"],
         }
         mock_get_cached.return_value = None
-        client = _FakeStreamClient(error=LLMGenerationFailed("stream failed"))
+        client = self._stream_client(error=LLMGenerationFailed("stream failed"))
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1108,7 +1098,7 @@ class TestPrompting:
 
         events = list(
             enhanced_search_and_answer_stream(
-                ChirpSettings(), "what did we discuss?", client=_FakeStreamClient()
+                ChirpSettings(), "what did we discuss?", client=self._stream_client()
             )
         )
 
@@ -1130,7 +1120,7 @@ class TestPrompting:
                 enhanced_search_and_answer_stream(
                     ChirpSettings(),
                     "totally ambiguous neutral question is here now",
-                    client=_FakeStreamClient(),
+                    client=self._stream_client(),
                 )
             )
 
@@ -1151,7 +1141,7 @@ class TestPrompting:
                 enhanced_search_and_answer_stream(
                     ChirpSettings(),
                     "totally ambiguous neutral question is here now",
-                    client=_FakeStreamClient(),
+                    client=self._stream_client(),
                 )
             )
 
@@ -1170,7 +1160,7 @@ class TestPrompting:
                 "requires_search": False,
             },
         }
-        client = _FakeStreamClient(tokens=["Hey there!"])
+        client = self._stream_client(tokens=["Hey there!"])
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1196,7 +1186,7 @@ class TestPrompting:
                 "requires_search": False,
             },
         }
-        client = _FakeStreamClient(error=LLMGenerationFailed("conv failed"))
+        client = self._stream_client(error=LLMGenerationFailed("conv failed"))
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1224,7 +1214,7 @@ class TestPrompting:
             },
         }
         mock_retrieve.return_value = {"success": False}
-        client = _FakeStreamClient(tokens=["Sorry, nothing found."])
+        client = self._stream_client(tokens=["Sorry, nothing found."])
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1260,7 +1250,7 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = "cached stream answer"
-        client = _FakeStreamClient()
+        client = self._stream_client()
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1274,7 +1264,7 @@ class TestPrompting:
         assert complete[0]["answer"] == "cached stream answer"
         assert complete[0].get("from_cache") is True
         mock_cache.assert_not_called()
-        assert client.calls == []
+        assert client.chat_stream_sync.calls == []
 
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
@@ -1299,7 +1289,7 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        client = _FakeStreamClient(tokens=["Budget", " is $100k"])
+        client = self._stream_client(tokens=["Budget", " is $100k"])
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1316,7 +1306,7 @@ class TestPrompting:
         assert complete[0]["search_strategy"] == "find budget"
         mock_cache.assert_called_once()
         # The grounded answer streamed through the daemon with the run-level id.
-        assert client.calls[0]["request_id"] == events[0]["req_id"]
+        assert client.chat_stream_sync.calls[0]["request_id"] == events[0]["req_id"]
 
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
@@ -1341,7 +1331,7 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        client = _FakeStreamClient(error=LLMGenerationFailed("stream died"))
+        client = self._stream_client(error=LLMGenerationFailed("stream died"))
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1376,7 +1366,7 @@ class TestPrompting:
             "sources": ["src"],
         }
         mock_get_cached.return_value = None
-        client = _FakeStreamClient(tokens=[])
+        client = self._stream_client(tokens=[])
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -1398,7 +1388,7 @@ class TestPrompting:
             enhanced_search_and_answer_stream(
                 ChirpSettings(),
                 "totally ambiguous neutral question is here now",
-                client=_FakeStreamClient(),
+                client=self._stream_client(),
             )
         )
 
@@ -1423,7 +1413,7 @@ class TestPrompting:
                 enhanced_search_and_answer_stream(
                     ChirpSettings(),
                     "totally ambiguous neutral question is here now",
-                    client=_FakeStreamClient(tokens=["Fallback answer."]),
+                    client=self._stream_client(tokens=["Fallback answer."]),
                 )
             )
 
@@ -1450,7 +1440,7 @@ class TestPrompting:
                 enhanced_search_and_answer_stream(
                     ChirpSettings(),
                     "totally ambiguous neutral question is here now",
-                    client=_FakeStreamClient(error=LLMGenerationFailed("conv died")),
+                    client=self._stream_client(error=LLMGenerationFailed("conv died")),
                 )
             )
 
@@ -1473,7 +1463,7 @@ class TestPrompting:
                 enhanced_search_and_answer_stream(
                     ChirpSettings(),
                     "totally ambiguous neutral question is here now",
-                    client=_FakeStreamClient(error=LLMGenerationFailed("fsa died")),
+                    client=self._stream_client(error=LLMGenerationFailed("fsa died")),
                 )
             )
 
