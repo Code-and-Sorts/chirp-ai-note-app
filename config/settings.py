@@ -1,5 +1,6 @@
 import os
 import tomllib
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -131,6 +132,10 @@ class NotesChatConfig(BaseModel):
         return Path(value) if isinstance(value, str) else value
 
 
+class InitConfig(BaseModel):
+    launch_agent_prompted_at: datetime | None = None
+
+
 class ChirpSettings(BaseModel):
     directories: DirectoriesConfig = Field(default_factory=DirectoriesConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
@@ -138,6 +143,7 @@ class ChirpSettings(BaseModel):
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     notes_chat: NotesChatConfig = Field(default_factory=NotesChatConfig)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    init: InitConfig = Field(default_factory=InitConfig)
 
     @classmethod
     def get_config_path(cls) -> Path:
