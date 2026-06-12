@@ -35,7 +35,7 @@ DEFERRED_TAG = "TODO(EPIC-INIT-AND-MIGRATION)"
 DEFERRED_FILE = TESTS_DIR / "test_prompting.py"
 
 REQUESTS_MOCK = re.compile(r"requests\.(post|get|put|delete)")
-OLLAMA_SHAPE = re.compile(r"ollama|/api/generate|/api/embeddings")
+OLLAMA_SHAPE = re.compile(r"ollama|/api/generate|/api/embeddings", re.IGNORECASE)
 MLX_IMPORT = re.compile(r"mlx_lm")
 
 
