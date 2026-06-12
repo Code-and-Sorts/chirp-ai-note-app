@@ -535,7 +535,11 @@ def _merge_config(
             existing = {}
 
     for section, values in (updates or {}).items():
-        existing.setdefault(section, {}).update(values)
+        if not isinstance(existing.get(section), dict):
+            # config.toml is user-editable; a hand-written non-table value
+            # for the section must not crash init — replace it.
+            existing[section] = {}
+        existing[section].update(values)
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with config_path.open("wb") as fh:

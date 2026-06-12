@@ -1125,3 +1125,17 @@ def test_switch_model_surfaces_malformed_registry(tmp_path, monkeypatch):
     output = console.file.getvalue()
     assert "registry unreadable" in output
     assert "chirp models add" not in output
+
+
+def test_merge_config_replaces_non_table_section_value(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('init = "oops"\n[user_custom]\ntheme = "midnight"\n')
+
+    init_flow._merge_config(config_path, updates={"init": {"flag": True}})
+
+    import tomllib
+
+    with config_path.open("rb") as fh:
+        merged = tomllib.load(fh)
+    assert merged["init"] == {"flag": True}
+    assert merged["user_custom"] == {"theme": "midnight"}
