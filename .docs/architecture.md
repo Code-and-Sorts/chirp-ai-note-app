@@ -29,7 +29,7 @@ flowchart LR
 ```
 
 - Chunking: section-aware with overlap. See: [Chunking Strategy](./chunking.md)
-- Embeddings: Ollama embeddings; same model for chunks and queries. See: [Embedding Backend](./embeddings.md)
+- Embeddings: chirpd/MLX embeddings; same model for chunks and queries. See: [Embedding Backend](./embeddings.md)
 - Dedupe key: `(path, content_hash)` so overlapping or repeated text doesn’t show twice
 - Why hybrid? See: [Hybrid Retrieval](./hybrid-retrieval.md)
 
@@ -56,4 +56,4 @@ flowchart LR
 - Notable knobs (see linked docs for behavior):
 
   - Chunking: `notes_chat.chunk_size`, `notes_chat.overlap` → [Chunking](./chunking.md)
-  - Embeddings: `notes_chat.emb_model`, `models.ollama_url` → [Embeddings](./embeddings.md)
+  - Embeddings: the registry's `default_embed` model alias (`chirp models add … --role embed`) → [Embeddings](./embeddings.md)

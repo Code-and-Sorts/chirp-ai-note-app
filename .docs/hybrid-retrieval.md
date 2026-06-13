@@ -20,7 +20,7 @@ See the retrieval diagram in the Architecture doc: [Architecture → Retrieval (
 
 - Short or specific queries: BM25 shines on IDs (e.g., `jira-123`), names, codes, dates, and quoted phrases.
 - Paraphrased or fuzzy queries: embeddings retrieve semantically related content even if words differ.
-- Local and fast: both run locally (Ollama + Chroma + BM25 corpus) with low overhead.
+- Local and fast: both run locally (chirpd/MLX + Chroma + BM25 corpus) with low overhead.
 
 ## When to change it
 
