@@ -40,9 +40,7 @@ def _make_config(tmp_path: Path):
             index_dir=index_dir,
             k=5,
             ctx_char_budget=10000,
-            emb_model="nomic-embed-text",
         ),
-        models=SimpleNamespace(ollama_url="http://localhost:11434"),
     )
 
 
