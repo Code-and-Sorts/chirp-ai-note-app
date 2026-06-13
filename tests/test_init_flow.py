@@ -970,7 +970,7 @@ def test_launch_agent_prompt_yes_installs(tmp_path, monkeypatch):
 
     init_flow._offer_launch_agent(settings, console)
 
-    assert len(install_calls) == 1
+    assert install_calls == [{"force": True}]  # converges a leftover plist
     assert "LaunchAgent installed" in console.file.getvalue()
     assert _persisted_timestamp(config_path) is not None
 

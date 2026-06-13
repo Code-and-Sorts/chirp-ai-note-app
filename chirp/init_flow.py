@@ -489,7 +489,11 @@ def _offer_launch_agent(
     )
     if _confirm(console, "Install LaunchAgent?", default=False):
         try:
-            install_launch_agent()
+            # force=True: the prompt only fires when the agent isn't loaded,
+            # but a leftover plist (written, never loaded) would otherwise
+            # raise LaunchAgentAlreadyInstalled — force converges that
+            # half-installed state onto written + loaded.
+            install_launch_agent(force=True)
             console.print(" [green]✓ LaunchAgent installed[/green]")
         except Exception as exc:  # noqa: BLE001 - any launchctl/plist failure maps to the same retry hint
             console.print(f" [red]✗ LaunchAgent install failed: {exc}[/red]")
