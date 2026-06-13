@@ -201,15 +201,18 @@ def enhanced_search_and_answer_stream(
         return
 
     if not context_result.get("success"):
-        # Surface retrieve_context's own deterministic error + suggestion
-        # (missing index, index-update failure, no documents found, ...)
-        # rather than asking the LLM for a vague fallback — the one-shot
-        # `chirp ask` path surfaces these the same way, and an actionable
-        # "run `chirp index`" is more useful than a generic "couldn't find it".
-        message = context_result.get("error") or "No relevant notes found."
+        # Surface retrieve_context's curated, actionable failures (missing
+        # index, no documents found, ...) — these carry a `suggestion` and are
+        # safe + useful to show (an actionable "run `chirp index`" beats a
+        # vague LLM fallback). retrieve_context's catch-all returns a raw
+        # `str(e)` with no suggestion, which can leak internal paths, so any
+        # no-suggestion failure is logged and shown as a stable message.
         suggestion = context_result.get("suggestion")
         if suggestion:
-            message = f"{message} {suggestion}"
+            message = f"{context_result.get('error', 'No relevant notes found.')} {suggestion}"
+        else:
+            logger.debug("retrieve_context failed: %s", context_result.get("error"))
+            message = "Search failed. Please try again."
         yield {"type": "error", "message": message}
         return
 

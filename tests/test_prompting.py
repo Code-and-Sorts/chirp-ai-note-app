@@ -273,6 +273,28 @@ class TestPrompting:
         mock_cache.assert_not_called()
 
     @patch("notes_chat.retrieval.retrieve_context")
+    def test_stream_search_uncurated_failure_uses_stable_message(self, mock_retrieve):
+        # retrieve_context's catch-all returns {"success": False, "error":
+        # str(e)} with no suggestion — that raw text (possibly internal paths)
+        # must NOT reach the user; a stable message is shown instead.
+        mock_retrieve.return_value = {
+            "success": False,
+            "error": "KeyError: '/Users/secret/path/chroma'",
+        }
+        client = self._stream_client(tokens=["should not run"])
+
+        events = list(
+            enhanced_search_and_answer_stream(
+                ChirpSettings(), "what about the budget?", client=client
+            )
+        )
+
+        errors = [e for e in events if e["type"] == "error"]
+        assert errors[0]["message"] == "Search failed. Please try again."
+        assert "/Users/secret/path" not in errors[0]["message"]
+        assert client.chat_stream_sync.calls == []
+
+    @patch("notes_chat.retrieval.retrieve_context")
     def test_stream_search_retrieval_raises_yields_error(self, mock_retrieve):
         mock_retrieve.side_effect = RuntimeError("db offline: /secret/path")
         client = self._stream_client(tokens=["unused"])
