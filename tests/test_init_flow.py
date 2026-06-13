@@ -481,6 +481,30 @@ def test_merge_config_backs_up_corrupt_file(tmp_path):
     assert "could not be parsed" in output
     assert config_path.exists()
 
+    # The "writing a fresh config from defaults" promise is honored: the
+    # replacement is a populated default config, not a near-empty stub.
+    import tomllib
+
+    with config_path.open("rb") as fh:
+        fresh = tomllib.load(fh)
+    assert "directories" in fresh
+    assert fresh["audio"]["sample_rate"] == 16000
+
+
+def test_merge_config_seeds_defaults_when_file_missing(tmp_path):
+    config_path = tmp_path / "config.toml"
+
+    init_flow._merge_config(config_path, updates={"init": {"flag": True}})
+
+    import tomllib
+
+    with config_path.open("rb") as fh:
+        written = tomllib.load(fh)
+    # Full default shape present, plus the requested update merged in.
+    assert "directories" in written
+    assert written["audio"]["sample_rate"] == 16000
+    assert written["init"]["flag"] is True
+
 
 # --- screen-recording permission rows (unchanged behavior from story 2.3) -----
 

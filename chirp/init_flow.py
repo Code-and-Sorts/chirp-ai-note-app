@@ -40,7 +40,7 @@ from rich.console import Console
 from rich.text import Text
 
 import audio_capture
-from config.settings import ChirpSettings
+from config.settings import ChirpSettings, _stringify_paths
 
 EXIT_NOT_APPLE_SILICON = 7
 
@@ -526,12 +526,15 @@ def _merge_config(
 
     ``updates`` maps section name → keys to set in that section; everything
     else round-trips untouched. Model selection lives in models.toml (the
-    registry); init only touches the user-editable settings file. On a corrupt
-    file we copy the original aside as ``config.toml.bak-<ts>`` and warn
-    loudly before writing a fresh config — never silently clobber hand-edited
-    keys.
+    registry); init only touches the user-editable settings file. When the
+    file is absent or corrupt we seed a full default config (matching
+    ``ChirpSettings.load_from_file``) so the user gets a populated, editable
+    file rather than a near-empty stub; a corrupt file is copied aside as
+    ``config.toml.bak-<ts>`` with a loud warning first — never silently
+    clobber hand-edited keys.
     """
     existing: dict[str, Any] = {}
+    seed_defaults = not config_path.exists()
     if config_path.exists():
         try:
             with config_path.open("rb") as fh:
@@ -545,7 +548,15 @@ def _merge_config(
                     "config from defaults. Re-add any custom keys from the "
                     "backup.[/yellow]"
                 )
-            existing = {}
+            seed_defaults = True
+
+    if seed_defaults:
+        # Populate the fresh file with the same default shape
+        # ChirpSettings.load_from_file writes, so the warning's "from
+        # defaults" promise holds and the user has real keys to edit.
+        defaults = ChirpSettings().model_dump()
+        _stringify_paths(defaults)
+        existing = defaults
 
     for section, values in (updates or {}).items():
         if not isinstance(existing.get(section), dict):
