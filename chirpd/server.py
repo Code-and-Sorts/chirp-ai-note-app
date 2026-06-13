@@ -131,7 +131,7 @@ async def _handle_connection(
         await dispatcher.dispatch(next_envelope, writer)
     except ConnectionResetError:  # pragma: no cover — peer-abort defensive branch
         _logger.info("connection reset by peer")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - last-resort connection handler safety net
         _logger.exception(
             "unhandled connection error",
             extra={"err_type": type(exc).__name__},
