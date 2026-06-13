@@ -147,7 +147,17 @@ class MLXBackend:
             handle.pop("model", None)
             handle.pop("tokenizer", None)
             handle.pop("processor", None)
-        await asyncio.to_thread(gc.collect)
+
+        def _collect_and_release() -> None:
+            gc.collect()
+            # gc only drops the Python references; MLX parks freed Metal
+            # buffers in its allocator cache, so without clearing it the
+            # daemon's resident memory never shrinks after an idle unload.
+            import mlx.core as mx
+
+            mx.clear_cache()
+
+        await asyncio.to_thread(_collect_and_release)
 
     async def stream_generate(  # pragma: no cover — exercised via opt-in @slow tests
         self,
