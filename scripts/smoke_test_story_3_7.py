@@ -14,9 +14,8 @@ Prerequisites:
 - Apple Silicon arm64 Mac.
 - Model weights present in the Hugging Face cache. The default model is
   ``mlx-community/gemma-4-4b-it-4bit``; acquire with ``hf download <repo>``.
-- An indexed note corpus already in chroma (the retrieval side stays on
-  Ollama for this story). Use ``--mock-retrieval`` to bypass and feed a
-  canned context if you just want the LLM-path evidence.
+- An indexed note corpus already in chroma. Use ``--mock-retrieval`` to bypass
+  retrieval and feed a canned context if you just want the LLM-path evidence.
 
 The script backs up and restores any existing ~/Library/Application
 Support/chirp/models.toml and kills any pre-existing chirpd before
@@ -305,7 +304,7 @@ def _socket_mode() -> str | None:
     return result.stdout.strip() or None
 
 
-def _ollama_listener_present() -> bool:
+def _legacy_11434_listener_present() -> bool:
     result = subprocess.run(
         ["lsof", "-nP", "-iTCP:11434", "-sTCP:LISTEN"],
         capture_output=True,
@@ -389,7 +388,7 @@ def main() -> int:
     parser.add_argument(
         "--mock-retrieval",
         action="store_true",
-        help="Bypass chroma + Ollama retrieval and inject a canned context.",
+        help="Bypass chroma retrieval and inject a canned context.",
     )
     parser.add_argument(
         "--keep-models-toml",
@@ -626,14 +625,14 @@ def main() -> int:
             else:
                 _ok("log lines contain no words from the user's question")
 
-        _step("AC-10 step 6: Ollama listener untouched")
-        if _ollama_listener_present():
+        _step("AC-10 step 6: no stray :11434 listener required")
+        if _legacy_11434_listener_present():
             _info(
-                "lsof shows Ollama listener on :11434 (this is fine — it's the embed "
-                "side and should be unchanged by this story)"
+                "lsof shows a listener on :11434 (a leftover from a pre-migration "
+                "setup — chirp no longer uses it; harmless)"
             )
         else:
-            _info("no Ollama listener detected (also fine for a chat-only ask)")
+            _info("no :11434 listener detected (expected post-migration)")
 
         if args.check_idle_unload:
             _step(

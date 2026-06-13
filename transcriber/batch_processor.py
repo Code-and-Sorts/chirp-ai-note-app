@@ -187,8 +187,8 @@ class BatchProcessor:
         console: Console | None = None,
     ) -> dict[str, int]:
         # TODO: pipeline across notes if profiling justifies it (note B in
-        #       Whisper while note A is in Ollama). Strict-sequential for
-        #       now — both Whisper and Ollama target Metal, so concurrency
+        #       Whisper while note A is in note generation). Strict-sequential
+        #       for now — both Whisper and chirpd target Metal, so concurrency
         #       buys little and complicates UI + failure recovery.
         console = console or Console()
         records = self._select_queue(n=n, force=force)

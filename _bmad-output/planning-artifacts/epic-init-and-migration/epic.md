@@ -2,7 +2,7 @@
 
 - **Epic ID:** EPIC-INIT-AND-MIGRATION
 - **Owner:** Colby
-- **Status:** Draft
+- **Status:** Done — all five stories complete (7.1 init rewrite, 7.2 migration plan, 7.3 LaunchAgent offer, 7.4 ollama dep removal, 7.5 docs sweep + the deferred prompting.py cutover). `chirp init` is Ollama-free with the Apple-Silicon gate, chirpd readiness, and registry-backed model checks; the `ollama` dependency is gone; docs and CLI surfaces no longer reference Ollama. The Ollama → MLX migration is complete.
 - **Created:** 2026-05-15
 - **Design source:** [`prd.md`](../prd.md) §First-Run/Init/Migration (FR49–FR54) + §Documentation and Dependency Surface (FR55–FR56); [`architecture.md`](../architecture.md) §Project Structure → `chirp/init_flow.py — MODIFIED`; readiness review (2026-05-12) §`pyproject.toml` split decision
 - **Related branch (current work):** TBD

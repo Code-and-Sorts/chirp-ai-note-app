@@ -152,7 +152,7 @@ class TestRunQueueIntegration:
 
         def fake_generate(self, ctx):
             if fail_slug and ctx.record.slug == fail_slug:
-                raise RuntimeError("ollama exploded")
+                raise RuntimeError("note generation exploded")
             (ctx.record.dir / "notes.md").write_text("# notes", encoding="utf-8")
             ctx.view.done(Stage.GENERATE_NOTES)
 

@@ -1045,9 +1045,6 @@ def config(
     llm_model: str | None = typer.Option(
         None, "--llm-model", help="Set LLM model (e.g. llama3.1:8b)"
     ),
-    ollama_url: str | None = typer.Option(
-        None, "--ollama-url", help="Set Ollama server URL"
-    ),
     embedding_model: str | None = typer.Option(
         None,
         "--embedding-model",
@@ -1065,7 +1062,6 @@ Notes Root: {settings.directories.notes_root}
 [cyan]Models:[/cyan]
 Whisper: {settings.models.whisper}
 LLM: {settings.models.llm}
-Ollama URL: {settings.models.ollama_url}
 Embedding: {settings.notes_chat.emb_model}
 
 [cyan]Audio:[/cyan]
@@ -1092,10 +1088,6 @@ Interval: {settings.monitoring.warning_interval} minutes""",
 
     if llm_model:
         settings.models.llm = llm_model
-        changes_made = True
-
-    if ollama_url:
-        settings.models.ollama_url = ollama_url
         changes_made = True
 
     if embedding_model:

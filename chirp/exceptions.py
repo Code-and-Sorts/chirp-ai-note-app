@@ -24,7 +24,3 @@ class ConfigurationError(ChirpException):
 
 class TemplateError(ChirpException):
     pass
-
-
-class OllamaConnectionError(ChirpException):
-    pass

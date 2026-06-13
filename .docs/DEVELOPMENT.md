@@ -8,7 +8,7 @@ This document is for contributors working on Chirp. End users should start with 
 - macOS for local audio-capture development
 - Homebrew
 - Git
-- Ollama for note-generation and retrieval flows
+- A registered MLX chat + embed model for note-generation and retrieval flows (`chirp models add …`); the bundled chirpd daemon serves them on-device
 
 ## Setup
 

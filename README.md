@@ -13,7 +13,7 @@ Chirp is a local-first CLI for recording meetings, transcribing audio, generatin
 - Record audio into a new note workspace
 - Stream live transcription in a Rich dashboard while recording
 - Transcribe recordings with faster-whisper
-- Generate structured notes with Ollama
+- Generate structured notes with a local MLX model (via the bundled chirpd daemon)
 - Browse, edit, and delete saved notes from the terminal
 - Ask questions or run keyword search across your note history
 
@@ -21,10 +21,13 @@ Chirp is a local-first CLI for recording meetings, transcribing audio, generatin
 
 Chirp currently targets **macOS 13.0 (Ventura) or later** for audio capture. The bundled `CaptureAudio.app` helper uses ScreenCaptureKit's audio-only mode, which requires macOS 13+.
 
-- macOS 13.0+
+- macOS 13.0+ on **Apple Silicon** (M1/M2/M3/M4 or newer — chirpd runs models on MLX)
 - Python 3.11+
-- [Ollama](https://ollama.com) for note generation and retrieval
 - Homebrew if you want `chirp init` to install missing macOS dependencies for you
+
+Note generation and retrieval run on-device through the bundled **chirpd** daemon
+(MLX) — no separate model server to install. You register a model once with
+`chirp models add` (see Setup below).
 
 ## Install
 
@@ -76,7 +79,7 @@ pip install chirp-notes-ai
 | `chirp notes` | List saved notes; `view`, `edit`, and `delete` are subcommands |
 | `chirp ask` | Ask questions about your meetings, or open interactive chat |
 | `chirp search` | Run keyword or regex search across transcripts and notes |
-| `chirp init` | Guided setup, dependency checks, and model selection |
+| `chirp init` | Guided setup, daemon readiness, and model recommendation |
 | `chirp about` | Show the animated bird and version info |
 
 ## Common workflows
@@ -129,22 +132,26 @@ chirp search "owner: .*" --regex --json
 
 ## Setup details
 
-`chirp init` is the recommended setup path. It verifies Homebrew, `ffmpeg`, Ollama, and your configured models, then helps install or pull anything missing. The bundled `CaptureAudio.app` records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
+`chirp init` is the recommended setup path. It checks for Apple Silicon, verifies Homebrew and `ffmpeg`, confirms the bundled chirpd daemon is reachable, reports whether a default chat model is registered, and checks the screen-recording permission — then helps install anything missing and offers to start chirpd at login. The bundled `CaptureAudio.app` records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
 
 If you prefer to set things up manually on macOS:
 
-1. Install dependencies:
+1. Install the only system dependency (chirp itself is pip-installed):
 
    ```bash
-   brew install ffmpeg ollama
+   brew install ffmpeg
    ```
 
-2. Start Ollama:
+2. Register a chat model and an embedding model (downloaded to the local HF cache, served on-device by chirpd):
 
    ```bash
-   ollama serve
-   ollama pull llama3.1:8b
-   ollama pull nomic-embed-text
+   # Chat — balanced quality and speed (~2 GB)
+   chirp models add mlx-community/gemma-4-4b-it-4bit
+   # ...or a smaller-footprint variant for tighter RAM:
+   chirp models add mlx-community/gemma-4-e2b-it-8bit
+
+   # Embeddings (for search / retrieval)
+   chirp models add mlx-community/bge-small-en-v1.5 --role embed
    ```
 
 3. Re-check your environment:
@@ -182,7 +189,7 @@ chirp index --force
 Grant Chirp access to **Screen Recording** and **Microphone** in `System Settings → Privacy & Security`, then retry. The first run will prompt for both; later denials require toggling the entries manually.
 
 **Transcription or notes generation fails**
-Make sure Ollama is running and the configured models are installed. `chirp init --recheck` will show what is missing.
+Check the daemon with `chirp daemon status` and your registered models with `chirp models list`. `chirp init --recheck` will show what is missing; `chirp models add <hf-repo>` registers a model if none is set.
 
 **No notes found**
 Run `chirp transcribe` first, or check `chirp config --list` to confirm the notes root you are using.

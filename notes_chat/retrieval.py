@@ -397,7 +397,7 @@ def _get_query_embedding(
     """Embed the query via chirpd. Returns None on empty input or LLM failure.
 
     None signals callers (``_search_chroma``) to skip vector search and fall
-    back to BM25-only retrieval — the same contract the Ollama path had.
+    back to BM25-only retrieval — the same contract the pre-chirpd path had.
     """
     if not query.strip():
         return None
