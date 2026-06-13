@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 
 import pytest
 
@@ -162,3 +164,44 @@ def test_apply_chat_template_no_thinking_falls_back_on_typeerror() -> None:
     # First call attempts with enable_thinking; fallback call omits it.
     assert "enable_thinking" in seen_kwargs[0]
     assert "enable_thinking" not in seen_kwargs[1]
+
+
+async def test_mlx_backend_unload_clears_handle_and_survives_missing_mlx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unload() drops the heavy handle refs and treats MLX as best-effort.
+
+    MLX is gated to darwin+arm64, so on other CI platforms `import mlx.core`
+    raises ImportError — unload must swallow it (there is no cache to clear)
+    rather than failing the model.unload op.
+    """
+    from chirpd.backend import MLXBackend
+
+    # A None entry in sys.modules makes `import mlx.core` raise ImportError,
+    # simulating a non-darwin/arm64 host where the dep isn't installed.
+    monkeypatch.setitem(sys.modules, "mlx", None)
+    monkeypatch.setitem(sys.modules, "mlx.core", None)
+
+    handle = {"repo": "r", "role": "chat", "model": object(), "tokenizer": object()}
+    await MLXBackend().unload(handle)  # must not raise
+
+    assert "model" not in handle
+    assert "tokenizer" not in handle
+
+
+async def test_mlx_backend_unload_clears_cache_when_mlx_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When MLX is importable, unload() clears its Metal allocator cache."""
+    from chirpd.backend import MLXBackend
+
+    cleared: list[bool] = []
+    fake_mlx_core = types.SimpleNamespace(clear_cache=lambda: cleared.append(True))
+    fake_mlx = types.ModuleType("mlx")
+    fake_mlx.core = fake_mlx_core  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mlx_core)
+
+    await MLXBackend().unload({"model": object()})
+
+    assert cleared == [True]

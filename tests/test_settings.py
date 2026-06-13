@@ -55,3 +55,16 @@ class TestChirpSettings:
 
         reloaded = ChirpSettings.load_from_file(config_path)
         assert reloaded.directories.notes_root == tmp_path / "custom-root"
+
+    def test_non_table_init_value_does_not_block_load(self, tmp_path):
+        """A hand-written non-table `init` value must not crash settings load.
+
+        config.toml is user-editable; a stray ``init = "..."`` previously made
+        every CLI command fail at ChirpSettings validation time.
+        """
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('init = "oops"\n', encoding="utf-8")
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert reloaded.init.launch_agent_prompted_at is None
