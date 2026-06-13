@@ -21,7 +21,7 @@ class DeviceManager:
     def _initialize_audio(self):
         try:
             self.audio = pyaudio.PyAudio()
-        except Exception as e:  # noqa: BLE001 - PyAudio can raise many types on init failure
+        except Exception as e:
             raise RuntimeError(f"Failed to initialize PyAudio: {e!s}") from e
 
     def close(self):

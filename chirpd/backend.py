@@ -87,7 +87,7 @@ class MLXBackend:
 
         try:
             loaded = await asyncio.to_thread(mlx_load, local_path)
-        except Exception as err:  # noqa: BLE001 - wrap any mlx_lm.load error into a typed model-load failure
+        except Exception as err:
             raise LLMModelLoadFailed(
                 f"mlx_lm.load failed for {repo!r}: {err}",
                 details={
@@ -123,7 +123,7 @@ class MLXBackend:
             # second element is a TokenizerWrapper. It is stored under "processor"
             # to match generate()'s parameter name and to read uniformly in embed().
             loaded = await asyncio.to_thread(mlx_embeddings_load, local_path)
-        except Exception as err:  # noqa: BLE001 - wrap any mlx_embeddings.load error into a typed model-load failure
+        except Exception as err:
             raise LLMModelLoadFailed(
                 f"mlx_embeddings.load failed for {repo!r}: {err}",
                 details={
@@ -254,7 +254,7 @@ class MLXBackend:
 
         try:
             return await asyncio.to_thread(_run)
-        except Exception as err:  # noqa: BLE001 - wrap any mlx_embeddings.generate error into a typed generation failure
+        except Exception as err:
             raise LLMGenerationFailed(
                 f"mlx_embeddings.generate failed for {handle.get('repo')!r}: {err}",
                 details={

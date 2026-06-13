@@ -244,7 +244,7 @@ class AudioRecorder:
             for _, mixed in mixer.flush():
                 if not self._paused_event.is_set():
                     self._append_mixed_frame(mixed, wave_file)
-        except Exception as exc:  # noqa: BLE001 - capture worker must surface any unexpected failure
+        except Exception as exc:
             logger.exception("audio-recorder-capture worker crashed")
             self._capture_error = exc
             self._is_recording_event.clear()

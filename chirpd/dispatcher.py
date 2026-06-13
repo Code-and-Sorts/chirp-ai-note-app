@@ -95,7 +95,7 @@ class Dispatcher:
             )
         except LLMModelError as exc:
             await _write_error_for_typed(writer, request_id, op, exc)
-        except Exception as exc:  # noqa: BLE001 - final safety net; convert unexpected errors into protocol error events
+        except Exception as exc:
             _logger.exception(
                 "dispatch failed",
                 extra={
