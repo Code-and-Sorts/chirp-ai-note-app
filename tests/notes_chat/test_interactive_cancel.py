@@ -10,19 +10,19 @@ def _make_session():
     return InteractiveChatSession(Mock(spec=ChirpSettings), markdown=False)
 
 
-class _FakeClient:
-    def __init__(self, recorder, raises=None):
-        self._recorder = recorder
-        self._raises = raises
+def _recording_cancel(recorder, raises=None):
+    """A ``cancel_sync`` stand-in recording each target_id, optionally raising."""
 
-    def cancel_sync(self, target_id):
-        self._recorder.append(target_id)
-        if self._raises is not None:
-            raise self._raises
+    def cancel_sync(target_id):
+        recorder.append(target_id)
+        if raises is not None:
+            raise raises
         return {"event": "done"}
 
+    return cancel_sync
 
-def test_handle_question_cancels_inflight_on_keyboard_interrupt():
+
+def test_handle_question_cancels_inflight_on_keyboard_interrupt(fake_llm_client):
     """A mid-stream Ctrl-C cancels the in-flight request and returns fast."""
     req_id = "r-0123456789ab"
 
@@ -32,14 +32,12 @@ def test_handle_question_cancels_inflight_on_keyboard_interrupt():
         raise KeyboardInterrupt
 
     cancel_calls: list[str] = []
+    fake = fake_llm_client(cancel_sync=_recording_cancel(cancel_calls))
     session = _make_session()
 
     with (
         patch("notes_chat.interactive.enhanced_search_and_answer_stream", fake_stream),
-        patch(
-            "notes_chat.interactive.LLMClient",
-            lambda *a, **k: _FakeClient(cancel_calls),
-        ),
+        patch("notes_chat.interactive.LLMClient", lambda *a, **k: fake),
     ):
         start = time.perf_counter()
         session.handle_question("tell me everything in detail")
@@ -56,7 +54,9 @@ def test_handle_question_cancels_inflight_on_keyboard_interrupt():
     assert session._inflight_req_id is None
 
 
-def test_handle_question_cancel_when_daemon_unreachable_returns_cleanly():
+def test_handle_question_cancel_when_daemon_unreachable_returns_cleanly(
+    fake_llm_client,
+):
     """A Ctrl-C when the daemon is unreachable still returns to the prompt.
 
     cancel_sync raising LLMDaemonUnreachable (what a down daemon yields, fast,
@@ -71,16 +71,16 @@ def test_handle_question_cancel_when_daemon_unreachable_returns_cleanly():
         raise KeyboardInterrupt
 
     cancel_calls: list[str] = []
+    fake = fake_llm_client(
+        cancel_sync=_recording_cancel(
+            cancel_calls, raises=LLMDaemonUnreachable("daemon down")
+        )
+    )
     session = _make_session()
 
     with (
         patch("notes_chat.interactive.enhanced_search_and_answer_stream", fake_stream),
-        patch(
-            "notes_chat.interactive.LLMClient",
-            lambda *a, **k: _FakeClient(
-                cancel_calls, raises=LLMDaemonUnreachable("daemon down")
-            ),
-        ),
+        patch("notes_chat.interactive.LLMClient", lambda *a, **k: fake),
     ):
         start = time.perf_counter()
         session.handle_question("tell me everything")  # must not raise
@@ -94,7 +94,7 @@ def test_handle_question_cancel_when_daemon_unreachable_returns_cleanly():
     assert session._inflight_req_id is None
 
 
-def test_handle_question_does_not_cancel_on_normal_completion():
+def test_handle_question_does_not_cancel_on_normal_completion(fake_llm_client):
     """A stream that completes normally never issues a cancel."""
 
     def fake_stream(config, question):
@@ -103,14 +103,12 @@ def test_handle_question_does_not_cancel_on_normal_completion():
         yield {"type": "complete", "answer": "hello"}
 
     cancel_calls: list[str] = []
+    fake = fake_llm_client(cancel_sync=_recording_cancel(cancel_calls))
     session = _make_session()
 
     with (
         patch("notes_chat.interactive.enhanced_search_and_answer_stream", fake_stream),
-        patch(
-            "notes_chat.interactive.LLMClient",
-            lambda *a, **k: _FakeClient(cancel_calls),
-        ),
+        patch("notes_chat.interactive.LLMClient", lambda *a, **k: fake),
     ):
         session.handle_question("hi")
 

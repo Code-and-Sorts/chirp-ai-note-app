@@ -74,7 +74,7 @@ def _run(args: list[str], timeout: float = 10.0) -> tuple[int, str]:
         return 124, str(exc)  # shell convention: timed out (cf. timeout(1))
 
 
-def _require_apple_silicon(console: Console) -> int | None:
+def require_apple_silicon(console: Console) -> int | None:
     """Phase 0 gate — returns EXIT_NOT_APPLE_SILICON on non-arm64, else None."""
     machine = platform.machine()
     if machine == "arm64":
@@ -107,11 +107,16 @@ def _ffmpeg_installed() -> DependencyStatus:
     if not path:
         return DependencyStatus("ffmpeg", False, "not found")
     code, out = _run([path, "-version"])
+    if code != 0:
+        return DependencyStatus(
+            "ffmpeg",
+            False,
+            f"found at {path} but `ffmpeg -version` failed — try `brew reinstall ffmpeg`",
+        )
     detail = path
-    if code == 0:
-        first_line = out.splitlines()[0] if out else ""
-        if first_line.startswith("ffmpeg version"):
-            detail = first_line.split()[2]
+    first_line = out.splitlines()[0] if out else ""
+    if first_line.startswith("ffmpeg version"):
+        detail = first_line.split()[2]
     return DependencyStatus("ffmpeg", True, detail)
 
 
@@ -289,8 +294,12 @@ def _confirm(console: Console, prompt: str, default: bool = True) -> bool:
 
 
 def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
-    """Phase 2 — brew install what's missing. Returns True if everything
-    that was required is now installed, False if the user aborted."""
+    """Phase 2 — install what's missing via Homebrew.
+
+    Returns True when every actionable task succeeded. Returns False on
+    non-macOS hosts, when Homebrew itself is missing, when a brew/build task
+    fails, or when manual user action remains (denied screen-recording
+    permission, a daemon that won't start)."""
     if platform.system() != "Darwin":
         console.print(
             " [yellow]automatic install is macOS-only.[/yellow] "
@@ -691,7 +700,7 @@ def run_init(
     switch_model: bool = False,
 ) -> int:
     """Top-level entry — orchestrates the phases. Returns exit code."""
-    code = _require_apple_silicon(console)
+    code = require_apple_silicon(console)
     if code is not None:
         return code
 
