@@ -40,7 +40,7 @@ from rich.console import Console
 from rich.text import Text
 
 import audio_capture
-from config.settings import ChirpSettings
+from config.settings import ChirpSettings, _stringify_paths
 
 EXIT_NOT_APPLE_SILICON = 7
 
@@ -448,6 +448,8 @@ def _finalize_paths(settings: ChirpSettings, console: Console) -> None:
         notes_was_new=not notes_existed,
     )
 
+    _offer_launch_agent(settings, console)
+
     console.print()
     console.print(" [bold]your nest is ready.[/bold] try:")
     console.print("   [dim]$[/dim] chirp record")
@@ -456,15 +458,87 @@ def _finalize_paths(settings: ChirpSettings, console: Console) -> None:
     )
 
 
-def _merge_config(config_path: Path, console: Console | None = None) -> None:
+def _offer_launch_agent(
+    settings: ChirpSettings, console: Console, force_prompt: bool = False
+) -> None:
+    """Offer the login-time LaunchAgent once, defaulting to no (FR52).
+
+    The answer is persisted as ``[init] launch_agent_prompted_at`` so plain
+    re-runs stay quiet; ``--recheck`` passes ``force_prompt=True`` to revisit
+    the decision while the agent remains uninstalled.
+    """
+    if platform.system() != "Darwin":
+        return
+    # Lazy import: chirpd.launchd is macOS-only and a partially-broken chirpd
+    # must not make `chirp init` un-importable.
+    from chirpd.launchd import install_launch_agent, is_launch_agent_installed
+
+    if is_launch_agent_installed():
+        # Nothing to ask (e.g. user ran `chirp daemon enable` themselves).
+        if settings.init.launch_agent_prompted_at is None:
+            _persist_prompt_timestamp(settings, console)
+        return
+    if not force_prompt and settings.init.launch_agent_prompted_at is not None:
+        return
+
+    console.print()
+    console.print(
+        " chirp can start the daemon automatically at login so your first\n"
+        " `chirp ask` of the day is warm. Otherwise, the daemon starts\n"
+        " on-demand the first time you use chirp each session."
+    )
+    if _confirm(console, "Install LaunchAgent?", default=False):
+        try:
+            # force=True: the prompt only fires when the agent isn't loaded,
+            # but a leftover plist (written, never loaded) would otherwise
+            # raise LaunchAgentAlreadyInstalled — force converges that
+            # half-installed state onto written + loaded.
+            install_launch_agent(force=True)
+            console.print(" [green]✓ LaunchAgent installed[/green]")
+        except Exception as exc:  # noqa: BLE001 - any launchctl/plist failure maps to the same retry hint
+            console.print(f" [red]✗ LaunchAgent install failed: {exc}[/red]")
+            console.print(" [dim]you can retry later with 'chirp daemon enable'[/dim]")
+    else:
+        console.print(
+            " [dim]· launch agent skipped (re-run with --recheck to revisit)[/dim]"
+        )
+    # Persisted on every answered path — including install failure: the user
+    # was asked; a flaky launchctl must not cause a re-prompt next init.
+    _persist_prompt_timestamp(settings, console)
+
+
+def _persist_prompt_timestamp(settings: ChirpSettings, console: Console) -> None:
+    settings.init.launch_agent_prompted_at = datetime.now(UTC)
+    # Thread the console through so a corrupt-config backup+rewrite during this
+    # interactive write surfaces its warning instead of looking like silent
+    # data loss.
+    _merge_config(
+        ChirpSettings.get_config_path(),
+        updates={
+            "init": {"launch_agent_prompted_at": settings.init.launch_agent_prompted_at}
+        },
+        console=console,
+    )
+
+
+def _merge_config(
+    config_path: Path,
+    updates: dict[str, dict[str, Any]] | None = None,
+    console: Console | None = None,
+) -> None:
     """Write config.toml preserving any user keys already present.
 
-    Model selection lives in models.toml (the registry); init only touches
-    the user-editable settings file. On a corrupt file we copy the original
-    aside as ``config.toml.bak-<ts>`` and warn loudly before writing a fresh
-    config — never silently clobber hand-edited keys.
+    ``updates`` maps section name → keys to set in that section; everything
+    else round-trips untouched. Model selection lives in models.toml (the
+    registry); init only touches the user-editable settings file. When the
+    file is absent or corrupt we seed a full default config (matching
+    ``ChirpSettings.load_from_file``) so the user gets a populated, editable
+    file rather than a near-empty stub; a corrupt file is copied aside as
+    ``config.toml.bak-<ts>`` with a loud warning first — never silently
+    clobber hand-edited keys.
     """
     existing: dict[str, Any] = {}
+    seed_defaults = not config_path.exists()
     if config_path.exists():
         try:
             with config_path.open("rb") as fh:
@@ -478,7 +552,22 @@ def _merge_config(config_path: Path, console: Console | None = None) -> None:
                     "config from defaults. Re-add any custom keys from the "
                     "backup.[/yellow]"
                 )
-            existing = {}
+            seed_defaults = True
+
+    if seed_defaults:
+        # Populate the fresh file with the same default shape
+        # ChirpSettings.load_from_file writes, so the warning's "from
+        # defaults" promise holds and the user has real keys to edit.
+        defaults = ChirpSettings().model_dump()
+        _stringify_paths(defaults)
+        existing = defaults
+
+    for section, values in (updates or {}).items():
+        if not isinstance(existing.get(section), dict):
+            # config.toml is user-editable; a hand-written non-table value
+            # for the section must not crash init — replace it.
+            existing[section] = {}
+        existing[section].update(values)
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with config_path.open("wb") as fh:
@@ -644,6 +733,7 @@ def run_init(
         detection = _detect_ollama_install()
         if any(detection.values()):
             _print_migration_plan(console, detection)
+        _offer_launch_agent(settings, console, force_prompt=True)
         return 0
 
     missing = [s for s in statuses if s.required and not s.installed]

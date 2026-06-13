@@ -481,6 +481,30 @@ def test_merge_config_backs_up_corrupt_file(tmp_path):
     assert "could not be parsed" in output
     assert config_path.exists()
 
+    # The "writing a fresh config from defaults" promise is honored: the
+    # replacement is a populated default config, not a near-empty stub.
+    import tomllib
+
+    with config_path.open("rb") as fh:
+        fresh = tomllib.load(fh)
+    assert "directories" in fresh
+    assert fresh["audio"]["sample_rate"] == 16000
+
+
+def test_merge_config_seeds_defaults_when_file_missing(tmp_path):
+    config_path = tmp_path / "config.toml"
+
+    init_flow._merge_config(config_path, updates={"init": {"flag": True}})
+
+    import tomllib
+
+    with config_path.open("rb") as fh:
+        written = tomllib.load(fh)
+    # Full default shape present, plus the requested update merged in.
+    assert "directories" in written
+    assert written["audio"]["sample_rate"] == 16000
+    assert written["init"]["flag"] is True
+
 
 # --- screen-recording permission rows (unchanged behavior from story 2.3) -----
 
@@ -766,6 +790,7 @@ def test_finalize_paths_preserves_existing_config(tmp_path, monkeypatch):
 
     settings = _fake_settings(tmp_path)
     monkeypatch.setattr(init_flow.ChirpSettings, "get_config_path", lambda: config_path)
+    monkeypatch.setattr(init_flow, "_offer_launch_agent", lambda *a, **k: None)
 
     init_flow._finalize_paths(settings, _console())
 
@@ -912,6 +937,198 @@ def test_plan_recommends_default_chat_repo(tmp_path, monkeypatch):
     assert init_flow.SMALLER_CHAT_REPO in output
 
 
+# --- LaunchAgent offer (story 7.3) -----------------------------------------------
+
+
+def _launch_agent_env(monkeypatch, tmp_path, installed=False, answer=None):
+    """Darwin + mocked launchd + tmp config path; returns the install recorder."""
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr("chirpd.launchd.is_launch_agent_installed", lambda: installed)
+    install_calls = []
+    monkeypatch.setattr(
+        "chirpd.launchd.install_launch_agent",
+        lambda **kwargs: install_calls.append(kwargs) or (tmp_path / "plist"),
+    )
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setattr(init_flow.ChirpSettings, "get_config_path", lambda: config_path)
+    console = _console()
+    prompt_calls = []
+
+    def _input(*args, **kwargs):
+        prompt_calls.append(True)
+        if answer is None:
+            raise AssertionError("prompt must not be shown")
+        return answer
+
+    monkeypatch.setattr(console, "input", _input)
+    return console, install_calls, prompt_calls, config_path
+
+
+def _persisted_timestamp(config_path):
+    import tomllib
+
+    with config_path.open("rb") as fh:
+        return tomllib.load(fh).get("init", {}).get("launch_agent_prompted_at")
+
+
+def test_launch_agent_prompt_default_no_skips_install(tmp_path, monkeypatch):
+    console, install_calls, prompt_calls, config_path = _launch_agent_env(
+        monkeypatch, tmp_path, answer=""
+    )
+    settings = _fake_settings(tmp_path)
+
+    init_flow._offer_launch_agent(settings, console)
+
+    assert prompt_calls == [True]
+    assert install_calls == []
+    assert "launch agent skipped" in console.file.getvalue()
+    assert _persisted_timestamp(config_path) is not None
+    assert settings.init.launch_agent_prompted_at is not None
+
+
+def test_launch_agent_prompt_yes_installs(tmp_path, monkeypatch):
+    console, install_calls, prompt_calls, config_path = _launch_agent_env(
+        monkeypatch, tmp_path, answer="y"
+    )
+    settings = _fake_settings(tmp_path)
+
+    init_flow._offer_launch_agent(settings, console)
+
+    assert install_calls == [{"force": True}]  # converges a leftover plist
+    assert "LaunchAgent installed" in console.file.getvalue()
+    assert _persisted_timestamp(config_path) is not None
+
+
+def test_launch_agent_persist_surfaces_corrupt_config_warning(tmp_path, monkeypatch):
+    """Persisting the prompt answer over a corrupt config warns, not silently
+    backs up — the console is threaded through _persist_prompt_timestamp."""
+    console, _install_calls, _prompt_calls, config_path = _launch_agent_env(
+        monkeypatch, tmp_path, answer=""
+    )
+    config_path.write_text("this is { not valid toml\n", encoding="utf-8")
+    settings = _fake_settings(tmp_path)
+
+    init_flow._offer_launch_agent(settings, console)
+
+    output = console.file.getvalue()
+    assert "could not be parsed" in output
+    assert list(tmp_path.glob("config.toml.bak-*"))  # backup taken
+    assert _persisted_timestamp(config_path) is not None
+
+
+def test_launch_agent_prompt_install_failure_persists_anyway(tmp_path, monkeypatch):
+    console, _install_calls, _prompt_calls, config_path = _launch_agent_env(
+        monkeypatch, tmp_path, answer="y"
+    )
+
+    def _boom(**kwargs):
+        raise RuntimeError("launchctl load failed")
+
+    monkeypatch.setattr("chirpd.launchd.install_launch_agent", _boom)
+    settings = _fake_settings(tmp_path)
+
+    init_flow._offer_launch_agent(settings, console)
+
+    output = console.file.getvalue()
+    assert "LaunchAgent install failed: launchctl load failed" in output
+    assert "chirp daemon enable" in output
+    assert _persisted_timestamp(config_path) is not None
+
+
+def test_launch_agent_prompt_suppressed_when_already_asked(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    console, install_calls, prompt_calls, _config_path = _launch_agent_env(
+        monkeypatch, tmp_path, answer=None
+    )
+    settings = _fake_settings(tmp_path)
+    settings.init.launch_agent_prompted_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    init_flow._offer_launch_agent(settings, console)
+
+    assert prompt_calls == []
+    assert install_calls == []
+
+
+def test_launch_agent_prompt_recheck_revisits_when_not_installed(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    console, _install_calls, prompt_calls, _config_path = _launch_agent_env(
+        monkeypatch, tmp_path, answer=""
+    )
+    settings = _fake_settings(tmp_path)
+    settings.init.launch_agent_prompted_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    init_flow._offer_launch_agent(settings, console, force_prompt=True)
+
+    assert prompt_calls == [True]
+
+
+def test_launch_agent_prompt_skipped_when_agent_already_installed(
+    tmp_path, monkeypatch
+):
+    console, install_calls, prompt_calls, config_path = _launch_agent_env(
+        monkeypatch, tmp_path, installed=True, answer=None
+    )
+    settings = _fake_settings(tmp_path)
+
+    init_flow._offer_launch_agent(settings, console)
+
+    assert prompt_calls == []
+    assert install_calls == []
+    assert "LaunchAgent" not in console.file.getvalue()  # silent skip
+    # User installed via `chirp daemon enable` elsewhere — mark as prompted.
+    assert _persisted_timestamp(config_path) is not None
+
+
+def test_launch_agent_prompt_not_run_on_switch_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(init_flow.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    offers = []
+    monkeypatch.setattr(
+        init_flow, "_offer_launch_agent", lambda *a, **k: offers.append(True)
+    )
+
+    code = init_flow.run_init(_fake_settings(tmp_path), _console(), switch_model=True)
+
+    assert code == 0
+    assert offers == []
+
+
+def test_launch_agent_offer_is_noop_off_darwin(tmp_path, monkeypatch):
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+
+    probe_calls = []
+    monkeypatch.setattr(
+        "chirpd.launchd.is_launch_agent_installed",
+        lambda: probe_calls.append(True) or False,
+    )
+
+    init_flow._offer_launch_agent(_fake_settings(tmp_path), _console())
+
+    assert probe_calls == []
+
+
+def test_recheck_offers_launch_agent_with_force_prompt(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_detection(monkeypatch, tmp_path)
+
+    offers = []
+    monkeypatch.setattr(
+        init_flow,
+        "_offer_launch_agent",
+        lambda settings, console, force_prompt=False: offers.append(force_prompt),
+    )
+
+    code = init_flow.run_init(_fake_settings(tmp_path), _console(), recheck=True)
+
+    assert code == 0
+    assert offers == [True]
+
+
 def test_verify_surfaces_malformed_registry(tmp_path, monkeypatch):
     from llm.exceptions import LLMMalformedResponse
 
@@ -949,6 +1166,20 @@ def test_switch_model_surfaces_malformed_registry(tmp_path, monkeypatch):
     output = console.file.getvalue()
     assert "registry unreadable" in output
     assert "chirp models add" not in output
+
+
+def test_merge_config_replaces_non_table_section_value(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('init = "oops"\n[user_custom]\ntheme = "midnight"\n')
+
+    init_flow._merge_config(config_path, updates={"init": {"flag": True}})
+
+    import tomllib
+
+    with config_path.open("rb") as fh:
+        merged = tomllib.load(fh)
+    assert merged["init"] == {"flag": True}
+    assert merged["user_custom"] == {"theme": "midnight"}
 
 
 def test_ffmpeg_on_path_but_broken_reports_not_installed(monkeypatch):
