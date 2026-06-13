@@ -97,10 +97,16 @@ model before merging.
 
 The "after" scoring procedure is owned by **story 6.6**
 (`_bmad-output/planning-artifacts/epic-integration-cutover/stories/6.6-regression-comparison-run.md`).
-In short: 6.6 generates `notes_after.md` for each slug with the MLX pipeline,
-shuffles the before/after pairs, and scores them blindly on structure,
-faithfulness, completeness, and brevity. This file does not duplicate that
-procedure.
+In short: 6.6 generates `notes_after.md` for each slug with the MLX pipeline
+(via the committed `../generate_notes_after.py`) and compares them against the
+locked `notes_before.md` baselines on structure, faithfulness, completeness,
+and brevity. This file does not duplicate that procedure.
+
+**Most recent regression run:** [`results-2026-06-12.md`](results-2026-06-12.md)
+— MLX `qwen2.5-7b-instruct-4bit` vs Ollama `llama3.1:8b`, **12/12 equal-or-better
+(PASS, ≥80% threshold)**. Note that run recorded a maintainer qualitative
+sign-off rather than the full blinded per-pair protocol (see the results file's
+methodology section).
 
 ## Why audio is gitignored
 
