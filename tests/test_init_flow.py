@@ -811,3 +811,34 @@ def test_switch_model_surfaces_malformed_registry(tmp_path, monkeypatch):
     output = console.file.getvalue()
     assert "registry unreadable" in output
     assert "chirp models add" not in output
+
+
+def test_ffmpeg_on_path_but_broken_reports_not_installed(monkeypatch):
+    monkeypatch.setattr(init_flow, "_which", lambda _cmd: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(
+        init_flow, "_run", lambda args, timeout=10.0: (1, "dyld: library missing")
+    )
+
+    status = init_flow._ffmpeg_installed()
+
+    assert status.installed is False
+    assert "brew reinstall ffmpeg" in status.detail
+
+
+def test_cli_init_gates_before_loading_settings(monkeypatch):
+    from typer.testing import CliRunner
+
+    from chirp.cli import app
+
+    monkeypatch.setattr(init_flow.platform, "machine", lambda: "x86_64")
+
+    settings_loads = []
+    monkeypatch.setattr(
+        "chirp.cli.get_settings",
+        lambda: settings_loads.append(True) or ChirpSettings(),
+    )
+
+    result = CliRunner().invoke(app, ["init"])
+
+    assert result.exit_code == 7
+    assert settings_loads == []  # config.toml must not be created pre-gate
