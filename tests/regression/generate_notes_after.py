@@ -8,8 +8,13 @@ For each slug under ``tests/regression/notes_quality/``, routes the committed
 uses — and writes the result to ``<slug>/notes_after.md``.
 
 Idempotent (overwrites ``notes_after.md`` on re-run, e.g. after a model
-escalation per AC-9). Operates entirely under the corpus directory; never
-touches ``~/Documents/chirp/`` or ``~/Library/Application Support/chirp/``.
+escalation per AC-9). The only files this script writes are the
+``<slug>/notes_after.md`` outputs under the corpus directory — it never writes
+to ``~/Documents/chirp/`` (the real notes root). Like any chirp command it
+loads the user's settings via ``get_settings()`` and constructs an
+``LLMClient``, which resolves the daemon socket via env/config and may read
+``~/.chirp/config.toml`` — so generation honours the same config the
+production ``chirp transcribe`` path uses.
 
 Usage:
     uv run python tests/regression/generate_notes_after.py [slug ...]
@@ -25,7 +30,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from config.settings import ChirpSettings
+from config.settings import get_settings
 from notes.constants import DEFAULT_MEETING_NAME
 from notes.note_generator import NoteGenerator
 
@@ -90,7 +95,7 @@ def main() -> int:
         parser.error(f"unknown slugs: {unknown}; corpus has: {known}")
     targets = args.slugs or known
 
-    generator = NoteGenerator(ChirpSettings())
+    generator = NoteGenerator(get_settings())
     failures = 0
     for slug in targets:
         try:
