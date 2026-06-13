@@ -24,6 +24,7 @@ registry's default chat alias.
 
 from __future__ import annotations
 
+import importlib.util
 import platform
 import shutil
 import subprocess
@@ -541,6 +542,87 @@ def _path_line(
     return line
 
 
+def _try_import_ollama_module() -> bool:
+    # find_spec resolves the module without executing it — importing third-
+    # party top-level code during an informational probe could be slow, have
+    # side effects, or raise something other than ImportError.
+    try:
+        return importlib.util.find_spec("ollama") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _detect_ollama_install() -> dict[str, bool]:
+    """Heuristics for a leftover Ollama install (OR'd; any one is enough)."""
+    return {
+        "cli_on_path": _which("ollama") is not None,
+        "data_dir_present": (Path.home() / ".ollama").is_dir(),
+        "python_module_importable": _try_import_ollama_module(),
+    }
+
+
+_DETECTION_LABELS = {
+    "cli_on_path": "[ollama on PATH]",
+    "data_dir_present": "[~/.ollama directory]",
+    "python_module_importable": "[ollama python module]",
+}
+
+
+def _print_migration_plan(console: Console, detection: dict[str, bool]) -> None:
+    """Print the loud, informational-only Ollama migration plan.
+
+    PRD §Project Scoping → Out of Scope forbids auto-uninstalling Ollama —
+    cleanup commands are shown for the user to run, never executed. OQ6 is
+    resolved to a loud multi-line plan (Devon's journey): offline-friendly
+    and explicit beats a one-line pointer at an external URL.
+    """
+    rule = " [dim]──────────────────────────────────────────────────────────[/dim]"
+    console.print()
+    console.print(rule)
+    console.print(" [bold]Ollama migration[/bold]")
+    console.print(rule)
+    console.print(
+        " chirp 2.x no longer uses Ollama. The bundled chirpd daemon\n"
+        " (visible in the verify table above) replaces it for chat\n"
+        " and embeddings."
+    )
+    console.print()
+    console.print(" Your existing chirp data is unchanged:")
+    console.print(
+        "   · ~/Documents/chirp/<slug>/        [dim](notes, transcripts, audio)[/dim]"
+    )
+    console.print("   · ~/.chirp/config.toml             [dim](settings)[/dim]")
+    console.print("   · ~/.chirp/chroma/                 [dim](search index)[/dim]")
+    console.print()
+    console.print(" To finish the migration:")
+    console.print("   1. Pick an MLX model [dim](GGUF models do not work)[/dim]:")
+    console.print(f"        [bold]chirp models add {RECOMMENDED_CHAT_REPO}[/bold]")
+    console.print("      [dim](~2 GB, balanced quality and speed)[/dim]")
+    console.print()
+    console.print("      Tight on RAM? Use the smaller-footprint variant:")
+    console.print(f"        [bold]chirp models add {SMALLER_CHAT_REPO}[/bold]")
+    console.print("   2. (Optional) Once you're satisfied with the new setup,")
+    console.print(
+        "      clean up Ollama manually. chirp will [bold]NOT[/bold] do this for you:"
+    )
+    console.print(
+        "        [dim]brew uninstall ollama        # if installed via Homebrew[/dim]"
+    )
+    console.print(
+        "        [dim]rm -rf ~/.ollama             # reclaims ~5 GB of GGUF files[/dim]"
+    )
+    console.print(
+        "        [dim]unset OLLAMA_HOST            # if set in your shell rc[/dim]"
+    )
+    console.print()
+    console.print(" Detected on this machine:")
+    for key, label in _DETECTION_LABELS.items():
+        answer = "yes" if detection.get(key) else "no"
+        # markup=False: the bracketed labels would otherwise parse as Rich tags.
+        console.print(f"   {label.ljust(28)}{answer}", markup=False)
+    console.print(rule)
+
+
 def run_init(
     settings: ChirpSettings,
     console: Console,
@@ -557,6 +639,11 @@ def run_init(
 
     statuses = verify(settings, console)
     if recheck:
+        # --recheck is the migration touchpoint (Devon's journey); full init
+        # is the fresh-setup flow and stays free of migration noise.
+        detection = _detect_ollama_install()
+        if any(detection.values()):
+            _print_migration_plan(console, detection)
         return 0
 
     missing = [s for s in statuses if s.required and not s.installed]
