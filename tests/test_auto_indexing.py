@@ -53,7 +53,7 @@ class TestAutoIndexing:
         notes_path = tmp_path / "sample" / "notes.md"
 
         with patch("notes_chat.index.IndexManager") as mock_manager_class:
-            mock_manager_class.side_effect = Exception("Ollama not available")
+            mock_manager_class.side_effect = Exception("index manager not available")
 
             generator._auto_index_note(notes_path)
 

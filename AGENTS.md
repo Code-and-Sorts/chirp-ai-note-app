@@ -18,7 +18,7 @@ Chirp is a Typer-based CLI in `chirp/cli.py`. Runtime domains live in sibling pa
 **Comments:** Keep them rare; prefer clearer names and smaller helpers over explanatory comments.
 
 ## Testing Guidelines
-Write `pytest` tests under `tests/` with `test_*.py` names and behavior-focused test functions. Reuse fixtures to isolate Ollama, audio devices, and filesystem state. Mark slow or integration coverage explicitly with `@pytest.mark.slow` and `@pytest.mark.integration`. When changing CLI output or flows, update the closest focused tests first, then run the smallest relevant test slice before broader checks.
+Write `pytest` tests under `tests/` with `test_*.py` names and behavior-focused test functions. Reuse fixtures to isolate chirpd / `llm.client`, audio devices, and filesystem state. Mark slow or integration coverage explicitly with `@pytest.mark.slow` and `@pytest.mark.integration`. When changing CLI output or flows, update the closest focused tests first, then run the smallest relevant test slice before broader checks.
 
 ## Documentation Guidelines
 `README.md` is the canonical user-facing readme for both GitHub and package metadata. Keep command examples aligned with live `chirp --help` output and with `config/settings.py`. If shared contributor guidance changes, update `AGENTS.md` first and keep `CLAUDE.md` as a thin compatibility file rather than duplicating long-form instructions.

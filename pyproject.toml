@@ -7,7 +7,7 @@ name = "chirp-notes-ai"
 version = "0.0.1a0"
 description = "Meeting recorder CLI that transcribes and generates AI notes"
 authors = [{name = "Colby Timm"}]
-readme = "scripts/README.md"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "typer>=0.9.0",
