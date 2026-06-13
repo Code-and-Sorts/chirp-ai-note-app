@@ -127,7 +127,14 @@ def _stream_answer(
 
 
 def is_simple_conversational(question: str) -> bool:
-    """Quick check for obvious conversational queries."""
+    """Quick check for an explicit conversational greeting.
+
+    Only the known greeting phrases route to the chat path; everything else
+    (including short but searchy inputs like "budget" or "roadmap") falls
+    through to the notes search. A bare word-count heuristic used to live here
+    but mis-routed short search queries once the router became
+    "greeting → chat, everything else → search".
+    """
     simple_patterns = [
         "hi",
         "hello",
@@ -146,8 +153,7 @@ def is_simple_conversational(question: str) -> bool:
         "who are you",
     ]
 
-    question_lower = question.lower().strip()
-    return question_lower in simple_patterns or len(question.split()) <= 2
+    return question.lower().strip() in simple_patterns
 
 
 def enhanced_search_and_answer_stream(
@@ -188,8 +194,10 @@ def enhanced_search_and_answer_stream(
     try:
         context_result = retrieve_context(config, question)
     except Exception as exc:  # noqa: BLE001 - retrieval has many failure modes
+        # Log the detail; surface a stable, user-friendly message (raw
+        # exception text can leak internal paths and breaks output stability).
         logger.debug("Retrieval failed: %s", exc)
-        yield {"type": "error", "message": f"Search failed: {exc}"}
+        yield {"type": "error", "message": "Search failed. Please try again."}
         return
 
     if not context_result.get("success"):

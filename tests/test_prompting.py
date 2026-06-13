@@ -117,9 +117,13 @@ class TestPrompting:
         ]:
             assert is_simple_conversational(phrase), f"'{phrase}' should be simple"
 
-    def test_is_simple_conversational_two_word_questions(self):
+    def test_is_simple_conversational_only_matches_greetings(self):
+        # Short but searchy inputs must NOT be treated as conversational —
+        # they route to the notes search, not the chat path.
         assert is_simple_conversational("thanks a lot") is False
-        assert is_simple_conversational("quick question") is True
+        assert is_simple_conversational("quick question") is False
+        assert is_simple_conversational("budget") is False
+        assert is_simple_conversational("roadmap") is False
 
     def test_is_simple_conversational_case_insensitive(self):
         assert is_simple_conversational("Hi")
@@ -263,7 +267,7 @@ class TestPrompting:
 
     @patch("notes_chat.retrieval.retrieve_context")
     def test_stream_search_retrieval_raises_yields_error(self, mock_retrieve):
-        mock_retrieve.side_effect = RuntimeError("db offline")
+        mock_retrieve.side_effect = RuntimeError("db offline: /secret/path")
         client = self._stream_client(tokens=["unused"])
 
         events = list(
@@ -272,9 +276,12 @@ class TestPrompting:
             )
         )
 
-        assert any(
-            e["type"] == "error" and "db offline" in e["message"] for e in events
-        )
+        errors = [e for e in events if e["type"] == "error"]
+        assert errors, "expected an error event"
+        # Stable, user-friendly message — raw exception detail is NOT leaked.
+        assert errors[0]["message"] == "Search failed. Please try again."
+        assert "db offline" not in errors[0]["message"]
+        assert "/secret/path" not in errors[0]["message"]
         assert not any(e["type"] == "complete" for e in events)
         assert client.chat_stream_sync.calls == []  # never reached the daemon
 
