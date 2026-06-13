@@ -33,7 +33,7 @@ class JSONCompressor:
             data = json.loads(json_str)
             return dict(data) if isinstance(data, dict) else {}
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
-            raise RuntimeError(f"Failed to decompress JSON file: {str(e)}")
+            raise RuntimeError(f"Failed to decompress JSON file: {e!s}")
 
     @staticmethod
     def get_compression_ratio(original_size: int, compressed_size: int) -> float:
@@ -47,7 +47,7 @@ class JSONCompressor:
             return {"original": 0, "compressed": 0}
 
         try:
-            with open(json_path, encoding="utf-8") as f:
+            with json_path.open(encoding="utf-8") as f:
                 original_size = len(f.read().encode("utf-8"))
         except OSError:
             original_size = 0

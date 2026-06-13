@@ -56,7 +56,7 @@ class IndexManager:
 
             added_files = []
             modified_files = []
-            removed_files = []
+            removed_files: list[str] = []
 
             for file_path, file_sig in current_files.items():
                 if file_path not in manifest:
@@ -64,9 +64,9 @@ class IndexManager:
                 elif manifest[file_path] != file_sig:
                     modified_files.append(file_path)
 
-            for file_path in manifest:
-                if file_path not in current_files:
-                    removed_files.append(file_path)
+            removed_files.extend(
+                file_path for file_path in manifest if file_path not in current_files
+            )
 
             total_changes = len(added_files) + len(modified_files) + len(removed_files)
             if total_changes == 0 and not force:
@@ -144,7 +144,7 @@ class IndexManager:
             return {}
 
         try:
-            with open(self.manifest_file) as f:
+            with self.manifest_file.open() as f:
                 data = json.load(f)
                 return data if isinstance(data, dict) else {}
         except (OSError, json.JSONDecodeError, ValueError):
@@ -152,7 +152,7 @@ class IndexManager:
 
     def _save_manifest(self, manifest: dict[str, Any]):
         """Save the index manifest."""
-        with open(self.manifest_file, "w") as f:
+        with self.manifest_file.open("w") as f:
             json.dump(manifest, f, indent=2)
 
     def _add_to_index(self, file_path: Path) -> bool:
@@ -182,7 +182,7 @@ class IndexManager:
             self.collection.add(
                 ids=[chunk.id for chunk in chunks],
                 documents=[chunk.content for chunk in chunks],
-                embeddings=embeddings,  # type: ignore
+                embeddings=embeddings,  # type: ignore[arg-type]
                 metadatas=[self._chunk_to_metadata(chunk) for chunk in chunks],
             )
 

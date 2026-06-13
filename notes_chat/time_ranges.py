@@ -86,19 +86,19 @@ def _parse_keyword_range(keyword: str, now: datetime) -> TimeRange | None:
         start = today - timedelta(days=1)
         return TimeRange(start=start, end_exclusive=today)
 
-    elif keyword == "last week":
+    if keyword == "last week":
         days_since_monday = now.weekday()
         last_monday = today - timedelta(days=days_since_monday + 7)
         this_monday = today - timedelta(days=days_since_monday)
         return TimeRange(start=last_monday, end_exclusive=this_monday)
 
-    elif keyword == "this week":
+    if keyword == "this week":
         days_since_monday = now.weekday()
         this_monday = today - timedelta(days=days_since_monday)
         next_monday = this_monday + timedelta(days=7)
         return TimeRange(start=this_monday, end_exclusive=next_monday)
 
-    elif keyword == "last month":
+    if keyword == "last month":
         if now.month == 1:
             last_month_start = now.replace(
                 year=now.year - 1,
@@ -121,7 +121,7 @@ def _parse_keyword_range(keyword: str, now: datetime) -> TimeRange | None:
             )
         return TimeRange(start=last_month_start, end_exclusive=this_month_start)
 
-    elif keyword.startswith("last ") and len(keyword.split()) == 2:
+    if keyword.startswith("last ") and len(keyword.split()) == 2:
         _, day_name = keyword.split()
         if day_name in WEEKDAY_NAMES:
             target_weekday = WEEKDAY_NAMES[day_name]

@@ -17,8 +17,7 @@ runner = CliRunner()
 
 
 def _fake_config():
-    cfg = MagicMock()
-    return cfg
+    return MagicMock()
 
 
 def _patch_config(monkeypatch):

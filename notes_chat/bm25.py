@@ -23,7 +23,7 @@ class BM25Index:
             return
 
         try:
-            with open(self.bm25_file) as f:
+            with self.bm25_file.open() as f:
                 data = json.load(f)
 
             self.doc_ids = data.get("doc_ids", [])
@@ -105,7 +105,7 @@ def rebuild_bm25_index(chroma_collection, bm25_file: Path):
         }
 
         bm25_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(bm25_file, "w") as f:
+        with bm25_file.open("w") as f:
             json.dump(bm25_data, f, indent=2)
 
     except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes

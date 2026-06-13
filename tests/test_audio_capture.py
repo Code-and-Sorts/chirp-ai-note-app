@@ -148,10 +148,9 @@ def test_permission_denied_raises_permission_error(tmp_path: Path) -> None:
 
 def test_missing_binary_raises_file_not_found(tmp_path: Path) -> None:
     missing = tmp_path / "does_not_exist"
-    with _patch_resolve_to(missing):
-        with pytest.raises(FileNotFoundError) as excinfo:
-            with AudioCapture():
-                pass
+    with _patch_resolve_to(missing), pytest.raises(FileNotFoundError) as excinfo:
+        with AudioCapture():
+            pass
     assert "python -m audio_capture.build" in str(excinfo.value)
 
 
@@ -367,9 +366,9 @@ def test_mic_device_name_is_none_when_diagnostic_line_absent(
         _patch_resolve_to(fake_binary),
         mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
         mock.patch("audio_capture._POST_START_DRAIN_SECONDS", 0.1),
+        AudioCapture() as cap,
     ):
-        with AudioCapture() as cap:
-            assert cap.mic_device_name is None
+        assert cap.mic_device_name is None
 
 
 def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
@@ -412,9 +411,9 @@ def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
         mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
         mock.patch("audio_capture._STARTUP_TIMEOUT_SECONDS", 1.0),
         mock.patch("audio_capture._POST_START_DRAIN_SECONDS", 0.1),
+        AudioCapture() as cap,
     ):
-        with AudioCapture() as cap:
-            assert cap._proc is not None
+        assert cap._proc is not None
 
 
 def test_exit_during_frames_iteration_stops_cleanly(tmp_path: Path) -> None:

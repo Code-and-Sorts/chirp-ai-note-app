@@ -127,11 +127,10 @@ def ask(
                 if context_result.get("suggestion"):
                     console.print(f"[dim]try: {context_result['suggestion']}[/dim]")
                 raise typer.Exit(2)
-            else:
-                console.print(f"[red]Context retrieval failed: {error}[/red]")
-                if context_result.get("suggestion"):
-                    console.print(f"[dim]{context_result['suggestion']}[/dim]")
-                raise typer.Exit(1)
+            console.print(f"[red]Context retrieval failed: {error}[/red]")
+            if context_result.get("suggestion"):
+                console.print(f"[dim]{context_result['suggestion']}[/dim]")
+            raise typer.Exit(1)
 
         context = context_result["context"]
         retrieved_ids = context_result["retrieved_ids"]

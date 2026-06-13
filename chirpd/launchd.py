@@ -147,7 +147,7 @@ def _write_plist_atomic(payload: dict[str, Any], path: Path) -> None:
     try:
         with tmp_path.open("wb") as handle:
             plistlib.dump(payload, handle, fmt=plistlib.FMT_XML)
-        os.replace(tmp_path, path)
+        tmp_path.replace(path)
     except OSError:
         tmp_path.unlink(missing_ok=True)
         raise

@@ -39,7 +39,7 @@ class TestBM25:
             ],
         }
 
-        with open(bm25_file, "w") as f:
+        with bm25_file.open("w") as f:
             json.dump(bm25_data, f)
 
         index = BM25Index(bm25_file)
@@ -64,7 +64,7 @@ class TestBM25:
             ],
         }
 
-        with open(bm25_file, "w") as f:
+        with bm25_file.open("w") as f:
             json.dump(bm25_data, f)
 
         index = BM25Index(bm25_file)
@@ -87,7 +87,7 @@ class TestBM25:
             ],
         }
 
-        with open(bm25_file, "w") as f:
+        with bm25_file.open("w") as f:
             json.dump(bm25_data, f)
 
         index = BM25Index(bm25_file)
@@ -107,7 +107,7 @@ class TestBM25:
 
         bm25_data = {"doc_ids": ["doc1"], "corpus": ["some content here"]}
 
-        with open(bm25_file, "w") as f:
+        with bm25_file.open("w") as f:
             json.dump(bm25_data, f)
 
         index = BM25Index(bm25_file)
@@ -142,7 +142,7 @@ class TestBM25:
 
         assert bm25_file.exists()
 
-        with open(bm25_file) as f:
+        with bm25_file.open() as f:
             data = json.load(f)
 
         assert data["doc_ids"] == ["chunk1", "chunk2"]

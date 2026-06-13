@@ -94,12 +94,14 @@ def test_validate_repo_returns_metadata(tmp_path: Path) -> None:
 
 
 def test_validate_repo_not_found() -> None:
-    with patch(
-        "llm.hf.HfApi.repo_info",
-        side_effect=_repo_not_found("missing"),
+    with (
+        patch(
+            "llm.hf.HfApi.repo_info",
+            side_effect=_repo_not_found("missing"),
+        ),
+        pytest.raises(HfRepoNotFound) as exc,
     ):
-        with pytest.raises(HfRepoNotFound) as exc:
-            validate_repo("org/missing")
+        validate_repo("org/missing")
     assert exc.value.repo_id == "org/missing"
 
 
@@ -169,9 +171,9 @@ def test_validate_repo_propagates_repo_not_found_from_config_download() -> None:
             "llm.hf.hf_hub_download",
             side_effect=_repo_not_found("vanished"),
         ),
+        pytest.raises(HfRepoNotFound),
     ):
-        with pytest.raises(HfRepoNotFound):
-            validate_repo("org/vanished")
+        validate_repo("org/vanished")
 
 
 def test_validate_repo_propagates_network_error_from_config_download() -> None:
@@ -328,12 +330,14 @@ def test_download_model_returns_result(tmp_path: Path) -> None:
 
 
 def test_download_model_repo_not_found() -> None:
-    with patch(
-        "llm.hf.snapshot_download",
-        side_effect=_repo_not_found("gone"),
+    with (
+        patch(
+            "llm.hf.snapshot_download",
+            side_effect=_repo_not_found("gone"),
+        ),
+        pytest.raises(HfRepoNotFound),
     ):
-        with pytest.raises(HfRepoNotFound):
-            download_model("org/missing")
+        download_model("org/missing")
 
 
 def test_download_model_os_error_disk_full() -> None:

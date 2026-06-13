@@ -21,7 +21,7 @@ _DECLARED_CODES = {
 }
 
 
-@pytest.mark.parametrize("name,value", sorted(_DECLARED_CODES.items()))
+@pytest.mark.parametrize(("name", "value"), sorted(_DECLARED_CODES.items()))
 def test_declared_codes_are_screaming_snake_case(name: str, value: str) -> None:
     assert isinstance(value, str)
     assert value, "code constant must be a non-empty string"
@@ -30,7 +30,7 @@ def test_declared_codes_are_screaming_snake_case(name: str, value: str) -> None:
 
 
 def test_all_codes_frozenset_matches_constants() -> None:
-    assert error_codes.ALL_CODES == set(_DECLARED_CODES.values())
+    assert set(_DECLARED_CODES.values()) == error_codes.ALL_CODES
 
 
 def test_code_to_exception_has_no_missing_entries() -> None:

@@ -343,7 +343,7 @@ class TestBuildContextEmptyContent:
                 },
             ),
         ]
-        context, sources, ids = _build_context(chunks, 10000)
+        context, _sources, ids = _build_context(chunks, 10000)
         assert "id1" not in ids
         assert "id2" in ids
         assert "real content here" in context
@@ -363,7 +363,7 @@ class TestBuildContextEmptyContent:
                 },
             ),
         ]
-        context, sources, ids = _build_context(chunks, tiny_budget)
+        _context, _sources, ids = _build_context(chunks, tiny_budget)
         assert len(ids) <= 1
 
 

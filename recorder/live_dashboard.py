@@ -346,14 +346,12 @@ class LiveDashboard:
         if not text:
             return ""
         sanitized = text.replace("\x1b", "")
-        sanitized_result = "".join(
+        return "".join(
             char for char in sanitized if char.isprintable() or char in "\n\t"
         )
-        return sanitized_result
 
     @staticmethod
     def _render_level_bar(level: float) -> str:
         buckets = 10
         filled = min(buckets, int(level * buckets))
-        bar = "█" * filled + "░" * (buckets - filled)
-        return bar
+        return "█" * filled + "░" * (buckets - filled)

@@ -227,9 +227,11 @@ def main() -> int:
         else:
             rss_mb = status["rss_bytes"] / (1024 * 1024)
             _ok(f"rss_bytes={status['rss_bytes']} ({rss_mb:.1f} MiB)")
-        for key in ("pid", "uptime_seconds", "daemon_version"):
-            if key not in status:
-                failures.append(_fail(f"status missing required key {key!r}"))
+        failures.extend(
+            _fail(f"status missing required key {key!r}")
+            for key in ("pid", "uptime_seconds", "daemon_version")
+            if key not in status
+        )
         if all(k in status for k in ("pid", "uptime_seconds", "daemon_version")):
             _ok(
                 f"status keys present: pid={status['pid']} "

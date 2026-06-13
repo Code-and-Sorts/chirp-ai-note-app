@@ -376,17 +376,17 @@ def record(
     except KeyboardInterrupt:
         console.print("[yellow]Recording stopped by user[/yellow]")
     except AudioDeviceError as e:
-        console.print(f"[red]Audio device error: {str(e)}[/red]")
+        console.print(f"[red]Audio device error: {e!s}[/red]")
         raise typer.Exit(1)
     except RecordingError as e:
-        console.print(f"[red]Recording error: {str(e)}[/red]")
+        console.print(f"[red]Recording error: {e!s}[/red]")
         raise typer.Exit(1)
     except ConfigurationError as e:
-        console.print(f"[red]Configuration error: {str(e)}[/red]")
+        console.print(f"[red]Configuration error: {e!s}[/red]")
         raise typer.Exit(1)
     except Exception as e:  # noqa: BLE001 - top-level CLI handler; all specific errors caught above
         logger.debug("Unexpected error in record command: %s", e, exc_info=True)
-        console.print(f"[red]Unexpected error: {str(e)}[/red]")
+        console.print(f"[red]Unexpected error: {e!s}[/red]")
         raise typer.Exit(1)
 
 
@@ -421,7 +421,7 @@ def _run_live_transcription(
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1)
     except RecordingError as e:
-        console.print(f"[red]Live recording error: {str(e)}[/red]")
+        console.print(f"[red]Live recording error: {e!s}[/red]")
         raise typer.Exit(1)
 
     from utils.time_utils import format_duration

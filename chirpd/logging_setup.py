@@ -123,13 +123,14 @@ class LogfmtFormatter(logging.Formatter):
             "msg": logfmt_escape(record.getMessage()),
         }
         parts: list[str] = [f"{key}={required[key]}" for key in LOGFMT_REQUIRED_FIELDS]
-        for key in LOGFMT_OPTIONAL_FIELDS:
-            if hasattr(record, key):
-                parts.append(f"{key}={logfmt_escape(getattr(record, key))}")
+        parts.extend(
+            f"{key}={logfmt_escape(getattr(record, key))}"
+            for key in LOGFMT_OPTIONAL_FIELDS
+            if hasattr(record, key)
+        )
         if record.exc_info and record.exc_info[0] is not None:
             parts.append(f"err_type={logfmt_escape(record.exc_info[0].__name__)}")
-        for key in _forbidden_keys(record):
-            parts.append(f"{key}=<redacted>")
+        parts.extend(f"{key}=<redacted>" for key in _forbidden_keys(record))
         return " ".join(parts)
 
 
@@ -155,7 +156,8 @@ class _RedactionViolationFilter(logging.Filter):
             _redaction_guard.active = True
             try:
                 logging.getLogger(record.name).warning(
-                    f"redaction violation: keys={','.join(keys)}",
+                    "redaction violation: keys=%s",
+                    ",".join(keys),
                     extra={"err_type": "RedactionViolation"},
                 )
             finally:

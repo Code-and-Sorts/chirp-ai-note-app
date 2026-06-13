@@ -265,7 +265,8 @@ class AudioCapture:
 
     def _start_stderr_drain(self) -> None:
         proc = self._proc
-        assert proc is not None and proc.stderr is not None
+        assert proc is not None
+        assert proc.stderr is not None
 
         def drain(stderr: IO[bytes], q: queue.Queue[str]) -> None:
             try:
@@ -524,12 +525,12 @@ def check_permissions() -> dict[str, str]:
 
 
 __all__ = [
+    "SOURCE_MICROPHONE",
+    "SOURCE_SYSTEM",
     "AudioCapture",
     "AudioCaptureCorrupt",
     "AudioCaptureCrashed",
     "AudioCaptureStartTimeout",
-    "SOURCE_MICROPHONE",
-    "SOURCE_SYSTEM",
     "check_macos_version",
     "check_permissions",
 ]

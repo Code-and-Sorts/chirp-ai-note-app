@@ -338,9 +338,9 @@ def test_upsert_model_replaces(tmp_path: Path) -> None:
 def test_upsert_rejects_empty_or_slashed_alias() -> None:
     registry = Registry(schema_version=1)
     entry = _chat_entry()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="alias must be non-empty"):
         upsert_model(registry, "", entry)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must match"):
         upsert_model(registry, "mlx-community/gemma", entry)
 
 
@@ -348,7 +348,7 @@ def test_upsert_rejects_invalid_alias_characters() -> None:
     registry = Registry(schema_version=1)
     entry = _chat_entry()
     for bad in ("Gemma-4-4b", "has spaces", "exclaim!", "über"):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="must match"):
             upsert_model(registry, bad, entry)
 
 
@@ -414,17 +414,17 @@ def test_alias_for_repo_strips_org_and_lowercases() -> None:
 
 
 def test_alias_for_repo_rejects_empty_after_strip() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not yield a valid alias"):
         alias_for_repo("mlx-community/")
 
 
 def test_alias_for_repo_rejects_nested_slash() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="nested slashes"):
         alias_for_repo("org/sub/repo")
 
 
 def test_alias_for_repo_rejects_invalid_chars() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not yield a valid alias"):
         alias_for_repo("mlx-community/has spaces")
 
 

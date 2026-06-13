@@ -302,10 +302,7 @@ class NoteGenerator:
         header = "\n".join(header_lines)
         stripped_body = body.lstrip("\n")
 
-        if stripped_body:
-            content = f"{header}\n\n{stripped_body}"
-        else:
-            content = f"{header}\n"
+        content = f"{header}\n\n{stripped_body}" if stripped_body else f"{header}\n"
 
         if not content.endswith("\n"):
             content += "\n"

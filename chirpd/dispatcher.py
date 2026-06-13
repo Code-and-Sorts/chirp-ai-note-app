@@ -95,7 +95,7 @@ class Dispatcher:
             )
         except LLMModelError as exc:
             await _write_error_for_typed(writer, request_id, op, exc)
-        except Exception as exc:  # noqa: BLE001 — architecture § Exception Construction
+        except Exception as exc:
             _logger.exception(
                 "dispatch failed",
                 extra={
@@ -347,7 +347,7 @@ class Dispatcher:
                 except LLMModelError as exc:
                     await _write_error_for_typed(writer, request_id, OP_CHAT, exc)
                     return
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     _logger.exception(
                         "chat generation failed",
                         extra={
@@ -475,7 +475,7 @@ class Dispatcher:
             except LLMModelError as exc:
                 await _write_error_for_typed(writer, request_id, OP_EMBED, exc)
                 return
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _logger.exception(
                     "embed failed",
                     extra={

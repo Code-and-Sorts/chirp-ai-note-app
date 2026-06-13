@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 import logging
 import logging.handlers
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -145,19 +144,19 @@ def test_non_darwin_falls_back_to_xdg_path(
 
 
 def test_configure_logging_rejects_unknown_level(tmp_path: Path) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown log level"):
         configure_logging(log_dir=tmp_path, level="WANR")
 
 
 def test_oserror_on_unwritable_directory(tmp_path: Path) -> None:
     locked = tmp_path / "locked"
     locked.mkdir()
-    os.chmod(locked, 0o000)
+    locked.chmod(0o000)
     try:
-        with pytest.raises(OSError):
+        with pytest.raises(OSError, match="cannot open chirpd log file"):
             configure_logging(log_dir=locked)
     finally:
-        os.chmod(locked, 0o700)
+        locked.chmod(0o700)
 
 
 # --- AC-16 (redaction discipline) -----------------------------------------
@@ -167,7 +166,7 @@ def test_oserror_on_unwritable_directory(tmp_path: Path) -> None:
     "bad_key", ["prompt", "messages", "content", "text", "note", "transcript"]
 )
 def test_log_op_event_rejects_unknown_keys(bad_key: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="disallowed field"):
         log_op_event(
             logging.getLogger(CHIRP_LOGGER),
             logging.INFO,

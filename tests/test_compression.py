@@ -178,7 +178,7 @@ class TestGetFileSizes:
         json_file = tmp_path / "data.json"
         json_file.write_text("{}", encoding="utf-8")
 
-        with patch("builtins.open", side_effect=OSError("read error")):
+        with patch("pathlib.Path.open", side_effect=OSError("read error")):
             result = JSONCompressor.get_file_sizes(json_file)
 
         assert result["original"] == 0

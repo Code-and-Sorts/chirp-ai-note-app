@@ -113,7 +113,7 @@ def test_manifest_entries_have_required_fields() -> None:
     missing = {
         slug: sorted(REQUIRED_MANIFEST_FIELDS - set(entry))
         for slug, entry in recordings.items()
-        if not REQUIRED_MANIFEST_FIELDS <= set(entry)
+        if not set(entry) >= REQUIRED_MANIFEST_FIELDS
     }
     assert not missing, f"manifest entries missing required fields: {missing}"
 
@@ -122,10 +122,10 @@ def test_manifest_covers_speaker_and_domain_buckets() -> None:
     recordings = load_manifest().get("recordings", {})
     speakers = {entry["speakers"] for entry in recordings.values()}
     domains = {entry["domain"] for entry in recordings.values()}
-    assert REQUIRED_SPEAKER_BUCKETS <= speakers, (
+    assert speakers >= REQUIRED_SPEAKER_BUCKETS, (
         f"missing speaker buckets: {sorted(REQUIRED_SPEAKER_BUCKETS - speakers)}"
     )
-    assert REQUIRED_DOMAIN_BUCKETS <= domains, (
+    assert domains >= REQUIRED_DOMAIN_BUCKETS, (
         f"missing domain buckets: {sorted(REQUIRED_DOMAIN_BUCKETS - domains)}"
     )
 

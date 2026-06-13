@@ -62,7 +62,7 @@ def read_registry(path: Path | None = None) -> Registry:
     """
     target = path if path is not None else MODELS_TOML_PATH
     try:
-        with open(target, "rb") as handle:
+        with target.open("rb") as handle:
             raw = tomllib.load(handle)
     except FileNotFoundError:
         return Registry(schema_version=SUPPORTED_SCHEMA_VERSION, models={})
@@ -174,11 +174,11 @@ def write_registry(registry: Registry, *, path: Path | None = None) -> None:
     tmp_path = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        with open(tmp_path, "wb") as handle:
+        with tmp_path.open("wb") as handle:
             handle.write(rendered.encode("utf-8"))
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_path, target)
+        tmp_path.replace(target)
     except OSError as err:
         _safe_unlink(tmp_path)
         raise RegistryWriteError(

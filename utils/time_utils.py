@@ -21,14 +21,13 @@ def get_filename_timestamp() -> str:
 def format_duration(seconds: float) -> str:
     if seconds < 60:
         return f"{int(seconds)}s"
-    elif seconds < 3600:
+    if seconds < 3600:
         minutes = int(seconds // 60)
         remaining_seconds = int(seconds % 60)
         return f"{minutes}m {remaining_seconds}s"
-    else:
-        hours = int(seconds // 3600)
-        remaining_minutes = int((seconds % 3600) // 60)
-        return f"{hours}h {remaining_minutes}m"
+    hours = int(seconds // 3600)
+    remaining_minutes = int((seconds % 3600) // 60)
+    return f"{hours}h {remaining_minutes}m"
 
 
 def parse_timestamp_from_filename(filename: str) -> datetime | None:

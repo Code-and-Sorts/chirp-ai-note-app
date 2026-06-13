@@ -9,14 +9,12 @@ from notes_chat.interactive import InteractiveChatSession
 
 @pytest.fixture
 def mock_config():
-    config = Mock(spec=ChirpSettings)
-    return config
+    return Mock(spec=ChirpSettings)
 
 
 @pytest.fixture
 def chat_session(mock_config):
-    session = InteractiveChatSession(mock_config)
-    return session
+    return InteractiveChatSession(mock_config)
 
 
 def test_interactive_chat_initialization(mock_config):

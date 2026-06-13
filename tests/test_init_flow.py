@@ -344,7 +344,11 @@ def test_install_missing_dispatches_build_for_missing_binary(tmp_path, monkeypat
 
     assert len(run_calls) == 1, f"expected exactly one dispatch, got: {run_calls}"
     args = run_calls[0]
-    assert _sys.executable in args and "-m" in args and "audio_capture.build" in args, (
+    assert _sys.executable in args, (
+        f"expected python executable in dispatch, got: {args}"
+    )
+    assert "-m" in args, f"expected -m in dispatch, got: {args}"
+    assert "audio_capture.build" in args, (
         f"expected audio_capture.build dispatch, got: {args}"
     )
 
@@ -987,7 +991,7 @@ def test_launch_agent_prompt_default_no_skips_install(tmp_path, monkeypatch):
 
 
 def test_launch_agent_prompt_yes_installs(tmp_path, monkeypatch):
-    console, install_calls, prompt_calls, config_path = _launch_agent_env(
+    console, install_calls, _prompt_calls, config_path = _launch_agent_env(
         monkeypatch, tmp_path, answer="y"
     )
     settings = _fake_settings(tmp_path)

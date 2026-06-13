@@ -120,7 +120,7 @@ class LiveAudioStream:
             tmp_fd, tmp_name = tempfile.mkstemp(suffix=".wav")
             os.close(tmp_fd)
             self._temp_wav_path = Path(tmp_name)
-            wav = wave.open(tmp_name, "wb")
+            wav = wave.open(tmp_name, "wb")  # noqa: SIM115 - handle is long-lived; stored on self._wave and closed on stop
             wav.setnchannels(_LIVE_CHANNELS)
             wav.setsampwidth(2)
             wav.setframerate(self._sample_rate)
@@ -205,10 +205,7 @@ class LiveAudioStream:
             self.stop_event.set()
 
     def _publish_mixed_frame(self, mixed: np.ndarray) -> None:
-        if mixed.size:
-            peak = min(1.0, float(np.max(np.abs(mixed))))
-        else:
-            peak = 0.0
+        peak = min(1.0, float(np.max(np.abs(mixed)))) if mixed.size else 0.0
         int16_bytes = float32_to_int16_bytes(mixed)
         if self._wave is not None:
             self._wave.writeframes(int16_bytes)

@@ -138,24 +138,23 @@ class StereoToMonoMixer:
                 offset_us = abs(sys_head - mic_head)
                 half_frame_us = self._frame_us // 2
 
-                if offset_us >= half_frame_us:
-                    # The two sides' heads refer to different wall-clock
-                    # instants. Drop samples from the leading side so both
-                    # sources start at the same instant before mixing.
-                    # Only do this when the offset is within one gap window;
-                    # larger drifts fall through to normal stall handling.
-                    if offset_us <= self._gap_us:
-                        offset_samples = min(
-                            (offset_us * self._sample_rate) // 1_000_000,
-                            self._frame_samples - 1,
-                        )
-                        leading = (
-                            SOURCE_SYSTEM if sys_head > mic_head else SOURCE_MICROPHONE
-                        )
-                        self._drop_leading_samples(leading, offset_samples)
-                        # After the drop, re-check readiness for the leading side.
-                        if self._buffers[leading].size < self._frame_samples:
-                            return
+                # The two sides' heads refer to different wall-clock instants.
+                # Drop samples from the leading side so both sources start at
+                # the same instant before mixing. Only do this when the offset
+                # is within one gap window; larger drifts fall through to
+                # normal stall handling.
+                if half_frame_us <= offset_us <= self._gap_us:
+                    offset_samples = min(
+                        (offset_us * self._sample_rate) // 1_000_000,
+                        self._frame_samples - 1,
+                    )
+                    leading = (
+                        SOURCE_SYSTEM if sys_head > mic_head else SOURCE_MICROPHONE
+                    )
+                    self._drop_leading_samples(leading, offset_samples)
+                    # After the drop, re-check readiness for the leading side.
+                    if self._buffers[leading].size < self._frame_samples:
+                        return
 
                 sys_head_final = self._head_ts[SOURCE_SYSTEM] or 0
                 mic_head_final = self._head_ts[SOURCE_MICROPHONE] or 0

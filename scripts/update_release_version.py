@@ -17,7 +17,9 @@ def main():
     )
     pyproject_path = root_dir / "pyproject.toml"
 
-    print(f"Attempting to update version in {pyproject_path} (from {os.getcwd()})")
+    print(
+        f"Attempting to update version in {pyproject_path} (from {pathlib.Path.cwd()})"
+    )
     print(f"Original full version in {pyproject_path}: {current_version}")
     print(f"Updating to release version: {normalized_version} (tag: {release_tag})")
     print(f"Successfully updated {pyproject_path} to version {normalized_version}")

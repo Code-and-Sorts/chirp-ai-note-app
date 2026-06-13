@@ -257,7 +257,7 @@ class LiveTranscriptionSession:
 
         def forward_frames():
             frame_duration = self.audio_stream.frame_duration
-            frames_per_chunk = max(1, int(round(1.0 / frame_duration)))
+            frames_per_chunk = max(1, round(1.0 / frame_duration))
             audio_buffer: list[bytes] = []
             chunk_start: float | None = None
 

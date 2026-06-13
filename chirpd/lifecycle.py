@@ -32,7 +32,7 @@ def single_instance_lock(
     """
     target = lock_path if lock_path is not None else paths.LOCK_PATH
     target.parent.mkdir(parents=True, exist_ok=True, mode=paths.RUNTIME_DIR_MODE)
-    with open(target, "ab+") as handle:
+    with target.open("ab+") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

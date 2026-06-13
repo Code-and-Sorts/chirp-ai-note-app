@@ -87,7 +87,7 @@ class MLXBackend:
 
         try:
             loaded = await asyncio.to_thread(mlx_load, local_path)
-        except Exception as err:  # noqa: BLE001 — wrap any mlx error
+        except Exception as err:
             raise LLMModelLoadFailed(
                 f"mlx_lm.load failed for {repo!r}: {err}",
                 details={
@@ -123,7 +123,7 @@ class MLXBackend:
             # second element is a TokenizerWrapper. It is stored under "processor"
             # to match generate()'s parameter name and to read uniformly in embed().
             loaded = await asyncio.to_thread(mlx_embeddings_load, local_path)
-        except Exception as err:  # noqa: BLE001 — wrap any mlx error
+        except Exception as err:
             raise LLMModelLoadFailed(
                 f"mlx_embeddings.load failed for {repo!r}: {err}",
                 details={
@@ -254,7 +254,7 @@ class MLXBackend:
 
         try:
             return await asyncio.to_thread(_run)
-        except Exception as err:  # noqa: BLE001 — surface to dispatcher
+        except Exception as err:
             raise LLMGenerationFailed(
                 f"mlx_embeddings.generate failed for {handle.get('repo')!r}: {err}",
                 details={
@@ -297,10 +297,7 @@ def _apply_chat_template_no_thinking(  # pragma: no cover — opt-in @slow path
 
 def _vector_to_floats(vector: Any) -> list[float]:
     tolist = getattr(vector, "tolist", None)
-    if callable(tolist):
-        as_list = tolist()
-    else:
-        as_list = list(vector)
+    as_list = tolist() if callable(tolist) else list(vector)
     return [float(x) for x in as_list]
 
 
@@ -358,8 +355,7 @@ class FakeBackend:
         self.last_options = dict(options)
         self.last_prompt = _render_fake_chat_template(messages)
         usage_out["prompt_tokens"] = len(self.last_prompt.split())
-        emitted = 0
-        for token in self.chat_tokens:
+        for emitted, token in enumerate(self.chat_tokens):
             if should_stop.is_set():
                 return
             if self.generation_delay_s > 0:
@@ -370,7 +366,6 @@ class FakeBackend:
             if scheduled_raise is not None and emitted >= self.stream_raises_after:
                 raise scheduled_raise
             yield token
-            emitted += 1
 
     async def embed(
         self,

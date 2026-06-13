@@ -200,7 +200,8 @@ async def test_lazy_spawn_when_socket_missing(
     payload = await llm_client.health()
     await delayed_task
     assert payload["status"] == "ok"
-    assert spawn_calls and spawn_calls[0][0] == "chirpd"
+    assert spawn_calls
+    assert spawn_calls[0][0] == "chirpd"
     # The child chirpd must bind the socket the client is polling — otherwise
     # a custom socket_path would deadlock against the default-bound daemon.
     assert spawn_envs[0].get("CHIRP_DAEMON_SOCKET") == str(temp_socket_path)
@@ -897,9 +898,8 @@ async def test_mid_stream_version_mismatch_triggers_retry(
     if respawn_task is not None:
         await respawn_task
     assert payload["status"] == "ok"
-    assert first_request_id and second_request_id, (
-        "both daemons should have observed the health request"
-    )
+    assert first_request_id, "first daemon should have observed the health request"
+    assert second_request_id, "second daemon should have observed the health request"
     assert first_request_id[0] == second_request_id[0], (
         "client must replay the original request envelope id verbatim"
     )
