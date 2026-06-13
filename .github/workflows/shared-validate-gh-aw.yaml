@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 🛠️ Install gh-aw CLI
-        uses: github/gh-aw/actions/setup-cli@v0.74.3
+        uses: github/gh-aw/actions/setup-cli@v0.79.6
         with:
           version: ${{ inputs.gh-aw-version }}
 
