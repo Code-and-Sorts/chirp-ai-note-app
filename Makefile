@@ -150,7 +150,7 @@ setup-blackhole: ## Show BlackHole installation instructions
 	@echo "   - Include both your speakers and BlackHole"
 	@echo "   - Set this as your default output device"
 	@echo ""
-	@echo "4. Verify with: make verify-deps"
+	@echo "3. Verify with: make verify-deps"
 
 # Build commands
 build: ## Build package
