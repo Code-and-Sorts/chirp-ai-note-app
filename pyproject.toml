@@ -16,7 +16,6 @@ dependencies = [
     "tomli-w>=1.0.0",
     "pyaudio>=0.2.11",
     "faster-whisper>=1.0.0",
-    "ollama>=0.1.0",
     "requests>=2.31.0",
     "chromadb>=0.4.0",
     "rank-bm25>=0.2.0",
