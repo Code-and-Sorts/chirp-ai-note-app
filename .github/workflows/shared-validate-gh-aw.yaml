@@ -4,10 +4,10 @@ on:
   workflow_call:
     inputs:
       gh-aw-version:
-        description: 'Version tag of github/gh-aw to install (e.g. v0.74.3)'
+        description: 'Version tag of github/gh-aw to install (e.g. v0.79.6)'
         required: false
         type: string
-        default: 'v0.74.3'
+        default: 'v0.79.6'
 
 jobs:
   validate:
