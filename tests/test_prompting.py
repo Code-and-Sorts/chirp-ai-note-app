@@ -246,11 +246,17 @@ class TestPrompting:
     @patch("notes_chat.cache.cache_answer")
     @patch("notes_chat.cache.get_cached_answer")
     @patch("notes_chat.retrieval.retrieve_context")
-    def test_stream_search_no_results_streams_helpful_reply(
+    def test_stream_search_failure_surfaces_error_and_suggestion(
         self, mock_retrieve, mock_get_cached, mock_cache
     ):
-        mock_retrieve.return_value = {"success": False}
-        client = self._stream_client(tokens=["Sorry, ", "nothing found."])
+        # retrieve_context's deterministic error + suggestion (e.g. missing
+        # index) must be surfaced, not replaced by a vague LLM fallback.
+        mock_retrieve.return_value = {
+            "success": False,
+            "error": "No search index found.",
+            "suggestion": "Run `chirp index` to build it.",
+        }
+        client = self._stream_client(tokens=["should not run"])
 
         events = list(
             enhanced_search_and_answer_stream(
@@ -258,11 +264,12 @@ class TestPrompting:
             )
         )
 
-        # Falls back to a conversational "nothing found" stream, not an error.
-        tokens = [e["content"] for e in events if e["type"] == "token"]
-        assert tokens == ["Sorry, ", "nothing found."]
-        complete = [e for e in events if e["type"] == "complete"]
-        assert complete[0]["answer"] == "Sorry, nothing found."
+        errors = [e for e in events if e["type"] == "error"]
+        assert errors, "expected an error event"
+        assert "No search index found." in errors[0]["message"]
+        assert "chirp index" in errors[0]["message"]
+        assert not any(e["type"] == "complete" for e in events)
+        assert client.chat_stream_sync.calls == []  # no vague LLM fallback
         mock_cache.assert_not_called()
 
     @patch("notes_chat.retrieval.retrieve_context")

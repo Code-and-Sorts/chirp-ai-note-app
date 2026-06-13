@@ -201,26 +201,16 @@ def enhanced_search_and_answer_stream(
         return
 
     if not context_result.get("success"):
-        # No relevant notes — stream a brief, friendly "nothing found" reply.
-        yield {
-            "type": "thinking",
-            "message": "No results found, generating a helpful response...",
-        }
-        fallback_query = (
-            f"The user asked: '{question}' but no relevant notes were found. "
-            "Provide a brief, friendly response explaining this and suggest how "
-            "they might rephrase."
-        )
-        parts = []
-        for event in _stream_answer(
-            llm, _conversational_prompt(fallback_query), req_id
-        ):
-            if event["type"] == "error":
-                yield event
-                return
-            parts.append(event["content"])
-            yield event
-        yield {"type": "complete", "answer": "".join(parts)}
+        # Surface retrieve_context's own deterministic error + suggestion
+        # (missing index, index-update failure, no documents found, ...)
+        # rather than asking the LLM for a vague fallback — the one-shot
+        # `chirp ask` path surfaces these the same way, and an actionable
+        # "run `chirp index`" is more useful than a generic "couldn't find it".
+        message = context_result.get("error") or "No relevant notes found."
+        suggestion = context_result.get("suggestion")
+        if suggestion:
+            message = f"{message} {suggestion}"
+        yield {"type": "error", "message": message}
         return
 
     context = context_result["context"]
