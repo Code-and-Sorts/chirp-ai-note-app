@@ -987,7 +987,15 @@ def init(
     ),
 ):
     """First-run setup & model picker"""
-    from chirp.init_flow import run_init
+    from chirp.init_flow import require_apple_silicon, run_init
+
+    # Gate before get_settings(): loading settings creates a default
+    # config.toml when missing, and a non-arm64 machine must exit without
+    # touching the filesystem (story 7.1 AC-1). run_init re-checks the gate
+    # for callers that bypass the CLI.
+    code = require_apple_silicon(console)
+    if code is not None:
+        raise typer.Exit(code)
 
     settings = get_settings()
     code = run_init(settings, console, recheck=recheck, switch_model=switch_model)

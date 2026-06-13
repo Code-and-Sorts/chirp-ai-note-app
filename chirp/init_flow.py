@@ -1,20 +1,25 @@
-"""`chirp init` — smart 4-phase first-run setup.
+"""`chirp init` — smart first-run setup: an architecture gate plus three phases.
 
-Phase 1: verify homebrew, ffmpeg, Ollama, and the configured models. Print a
+Gate: require Apple Silicon. Everything downstream (the bundled
+chirpd daemon, MLX inference) is arm64-only, so a non-arm64 machine fails
+fast with exit code 7 before any other work.
+
+Phase 1: verify homebrew, ffmpeg, daemon readiness (via `llm.client`'s
+health handshake, which lazy-spawns chirpd), the registered default chat
+model (via `llm.registry`), and the screen-recording permission. Print a
 check table and ask whether to install what's missing.
 
-Phase 2: install missing dependencies via Homebrew (macOS only) and start
-Ollama.
+Phase 2: install missing dependencies via Homebrew (macOS only) and rebuild
+the capture_audio helper when needed. The daemon is part of the pip package
+and is never "installed" here; model registration is the user's own
+`chirp models add` step.
 
-Phase 3: let the user pick chat + embedding models from a short list, with
-sensible defaults (``llama3.1:8b``, ``nomic-embed-text``).
-
-Phase 4: ``ollama pull`` the models with progress bars, persist the config,
-and initialize ChromaDB.
+Phase 3: finalize — create the config/chroma/notes directories and print
+the "your nest is ready" panel.
 
 Re-running is idempotent: each phase is skipped cleanly when nothing is
-missing. ``--recheck`` stops after phase 1; ``--switch-model`` jumps to
-phase 3.
+missing. ``--recheck`` stops after phase 1; ``--switch-model`` flips the
+registry's default chat alias.
 """
 
 from __future__ import annotations
@@ -31,18 +36,19 @@ from typing import Any
 
 import tomli_w
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
 from rich.text import Text
 
 import audio_capture
 from config.settings import ChirpSettings
+
+EXIT_NOT_APPLE_SILICON = 7
+
+# Single source of truth for the recommended first model — story 7.2's
+# migration plan and the README sweep (7.5) reference these constants.
+RECOMMENDED_CHAT_REPO = "mlx-community/gemma-4-4b-it-4bit"
+SMALLER_CHAT_REPO = "mlx-community/gemma-4-e2b-it-8bit"
+
+_MODELS_ADD_HINT = f"not configured — run 'chirp models add {RECOMMENDED_CHAT_REPO}'"
 
 
 @dataclass
@@ -53,26 +59,6 @@ class DependencyStatus:
     required: bool = True
 
 
-@dataclass
-class ModelOption:
-    tag: str
-    size: str
-    note: str
-
-
-CHAT_MODELS = [
-    ModelOption("llama3.1:8b", "4.7 GB", "recommended"),
-    ModelOption("qwen2.5:7b", "4.4 GB", "faster"),
-    ModelOption("phi3:mini", "2.3 GB", "low RAM"),
-]
-
-EMBEDDING_MODELS = [
-    ModelOption("nomic-embed-text", "274 MB", "recommended"),
-    ModelOption("mxbai-embed-large", "669 MB", "higher recall"),
-    ModelOption("all-minilm", "46 MB", "lightweight"),
-]
-
-
 def _which(cmd: str) -> str | None:
     return shutil.which(cmd)
 
@@ -81,8 +67,26 @@ def _run(args: list[str], timeout: float = 10.0) -> tuple[int, str]:
     try:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return 127, str(exc)
+    except FileNotFoundError as exc:
+        return 127, str(exc)  # shell convention: command not found
+    except subprocess.TimeoutExpired as exc:
+        return 124, str(exc)  # shell convention: timed out (cf. timeout(1))
+
+
+def require_apple_silicon(console: Console) -> int | None:
+    """Phase 0 gate — returns EXIT_NOT_APPLE_SILICON on non-arm64, else None."""
+    machine = platform.machine()
+    if machine == "arm64":
+        return None
+    console.print(
+        f" [red]chirp requires Apple Silicon (M1/M2/M3/M4 or newer). "
+        f"Detected: {machine}.[/red]"
+    )
+    console.print(
+        " [dim]if this Mac is Apple Silicon, you're likely running an x86_64 "
+        "Python under Rosetta — install an arm64 Python and reinstall chirp.[/dim]"
+    )
+    return EXIT_NOT_APPLE_SILICON
 
 
 def _brew_installed() -> DependencyStatus:
@@ -102,60 +106,71 @@ def _ffmpeg_installed() -> DependencyStatus:
     if not path:
         return DependencyStatus("ffmpeg", False, "not found")
     code, out = _run([path, "-version"])
+    if code != 0:
+        return DependencyStatus(
+            "ffmpeg",
+            False,
+            f"found at {path} but `ffmpeg -version` failed — try `brew reinstall ffmpeg`",
+        )
     detail = path
-    if code == 0:
-        first_line = out.splitlines()[0] if out else ""
-        if first_line.startswith("ffmpeg version"):
-            detail = first_line.split()[2]
+    first_line = out.splitlines()[0] if out else ""
+    if first_line.startswith("ffmpeg version"):
+        detail = first_line.split()[2]
     return DependencyStatus("ffmpeg", True, detail)
 
 
-def _ollama_installed() -> DependencyStatus:
-    path = _which("ollama")
-    if not path:
-        return DependencyStatus("Ollama", False, "not found — runs your local models")
-    import requests
+def _daemon_ready() -> DependencyStatus:
+    """Probe daemon readiness through `llm.client`'s health handshake.
+
+    The client owns lazy-spawn and the version handshake — no daemon-process
+    logic lives here (architecture §Cross-Component Dependencies). Imports are
+    lazy so a broken `llm` module can't make init un-importable.
+    """
+    from llm.client import LLMClient
+    from llm.exceptions import LLMDaemonSpawnFailed, LLMTransportError
 
     try:
-        resp = requests.get("http://localhost:11434/api/version", timeout=3)
-        if resp.status_code == 200:
-            return DependencyStatus(
-                "Ollama",
-                True,
-                f"running · {resp.json().get('version', 'unknown')}",
-            )
+        payload = LLMClient().health_sync()
+    except LLMDaemonSpawnFailed:
         return DependencyStatus(
-            "Ollama",
-            True,
-            "installed but not responding on :11434",
+            "chirpd",
+            False,
+            "daemon could not be started — run 'chirp daemon logs' for details",
         )
-    except requests.exceptions.RequestException:
-        return DependencyStatus(
-            "Ollama",
-            True,
-            "installed · not running (brew services start ollama)",
-        )
+    except LLMTransportError as exc:
+        return DependencyStatus("chirpd", False, f"daemon unreachable: {exc}")
+    version = payload.get("version", "unknown")
+    return DependencyStatus("chirpd", True, f"healthy · v{version}")
 
 
-def _ollama_models() -> list[str]:
-    import requests
+def _default_chat_registered() -> DependencyStatus:
+    """Report whether models.toml has a default chat alias registered.
+
+    A missing or unconfigured registry is the normal first-run state, not a
+    failure — the row is non-blocking and points at `chirp models add`.
+    """
+    from llm.exceptions import LLMError
+    from llm.registry import read_registry
 
     try:
-        resp = requests.get("http://localhost:11434/api/tags", timeout=3)
-        if resp.status_code != 200:
-            return []
-        return [m["name"] for m in resp.json().get("models", [])]
-    except requests.exceptions.RequestException:
-        return []
-
-
-def _model_installed(tag: str, available: list[str]) -> bool:
-    if tag in available:
-        return True
-    if f"{tag}:latest" in available:
-        return True
-    base = tag.split(":", 1)[0]
-    return any(name.startswith(f"{base}:") for name in available)
+        registry = read_registry()
+    except FileNotFoundError:
+        return DependencyStatus(
+            "default chat model", False, _MODELS_ADD_HINT, required=False
+        )
+    except LLMError as exc:
+        # Malformed/unsupported models.toml is a real problem, not a fresh
+        # install — surface the registry's own message instead of the
+        # models-add hint.
+        return DependencyStatus(
+            "default chat model", False, f"registry unreadable: {exc}", required=False
+        )
+    alias = registry.default_chat
+    if alias and alias in registry.models:
+        return DependencyStatus("default chat model", True, f"default chat: {alias}")
+    return DependencyStatus(
+        "default chat model", False, _MODELS_ADD_HINT, required=False
+    )
 
 
 def _screen_recording_permission() -> DependencyStatus:
@@ -218,70 +233,33 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
     statuses = [
         _brew_installed(),
         _ffmpeg_installed(),
-        _ollama_installed(),
+        _daemon_ready(),
+        _default_chat_registered(),
+        _screen_recording_permission(),
     ]
-
-    ollama_up = statuses[-1].installed and "running" in statuses[-1].detail
-    available = _ollama_models() if ollama_up else []
-
-    chat_tag = settings.models.llm
-    emb_tag = settings.notes_chat.emb_model
-
-    if ollama_up:
-        statuses.append(
-            DependencyStatus(
-                f"model: {chat_tag}",
-                _model_installed(chat_tag, available),
-                "installed" if _model_installed(chat_tag, available) else "missing",
-            )
-        )
-        statuses.append(
-            DependencyStatus(
-                f"model: {emb_tag}",
-                _model_installed(emb_tag, available),
-                "installed" if _model_installed(emb_tag, available) else "missing",
-            )
-        )
-    else:
-        statuses.append(
-            DependencyStatus(
-                "models",
-                False,
-                "will check after ollama is installed",
-                required=False,
-            )
-        )
-
-    statuses.append(_screen_recording_permission())
 
     for status in statuses:
         _print_status(console, status)
 
     console.print()
-    missing_deps = [
-        s
-        for s in statuses
-        if s.required and not s.installed and not s.name.startswith("model:")
-    ]
-    missing_models = [
-        s
-        for s in statuses
-        if s.required and not s.installed and s.name.startswith("model:")
-    ]
-    if missing_deps or missing_models:
+    missing_deps = [s for s in statuses if s.required and not s.installed]
+    chat_row = next(s for s in statuses if s.name == "default chat model")
+    if missing_deps or not chat_row.installed:
         console.print(" [dim]──────────────────────────────────────────────[/dim]")
-        if missing_deps:
-            plural = "s" if len(missing_deps) > 1 else ""
-            console.print(
-                f"  need to install: [bold]{len(missing_deps)} piece{plural}[/bold]"
-            )
-        if missing_models:
-            plural = "s" if len(missing_models) > 1 else ""
-            console.print(
-                f"  missing model{plural}: "
-                f"[bold]{len(missing_models)}[/bold] [dim](pulled in phase 4)[/dim]"
-            )
-    else:
+    if missing_deps:
+        plural = "s" if len(missing_deps) > 1 else ""
+        console.print(
+            f"  need to install: [bold]{len(missing_deps)} piece{plural}[/bold]"
+        )
+    if not chat_row.installed:
+        console.print(
+            f"  next step: [bold]chirp models add {RECOMMENDED_CHAT_REPO}[/bold]"
+            " [dim](~2 GB, balanced quality and speed)[/dim]"
+        )
+        console.print(
+            f"  [dim]smaller alternative: chirp models add {SMALLER_CHAT_REPO}[/dim]"
+        )
+    if not missing_deps and chat_row.installed:
         console.print(" [green]everything's already in place.[/green]")
 
     return statuses
@@ -315,8 +293,12 @@ def _confirm(console: Console, prompt: str, default: bool = True) -> bool:
 
 
 def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
-    """Phase 2 — brew install what's missing. Returns True if everything
-    that was required is now installed, False if the user aborted."""
+    """Phase 2 — install what's missing via Homebrew.
+
+    Returns True when every actionable task succeeded. Returns False on
+    non-macOS hosts, when Homebrew itself is missing, when a brew/build task
+    fails, or when manual user action remains (denied screen-recording
+    permission, a daemon that won't start)."""
     if platform.system() != "Darwin":
         console.print(
             " [yellow]automatic install is macOS-only.[/yellow] "
@@ -335,14 +317,17 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
     console.print(" [dim]installing dependencies via homebrew...[/dim]")
     console.print()
 
-    denied_user_action_required = False
+    user_action_required = False
     tasks: list[tuple[str, list[str]]] = []
     for status in statuses:
         if status.installed or not status.required:
             continue
-        if status.name == "Ollama":
-            tasks.append(("ollama", [brew, "install", "ollama"]))
-            tasks.append(("ollama service", [brew, "services", "start", "ollama"]))
+        if status.name == "chirpd":
+            # The daemon ships inside the pip package and is lazy-spawned by
+            # llm.client — there is nothing to install when it fails to start.
+            console.print(f" [red]✗[/red] the daemon failed to start — {status.detail}")
+            console.print("   run [bold]chirp daemon logs[/bold] for details.")
+            user_action_required = True
         elif status.name == "ffmpeg":
             tasks.append(("ffmpeg", [brew, "install", "ffmpeg"]))
         elif status.name == "screen recording permission" and status.detail.startswith(
@@ -352,7 +337,7 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
                 "[yellow]![/yellow] screen recording permission must be granted manually — "
                 "open System Settings → Privacy & Security → Screen Recording, then re-run."
             )
-            denied_user_action_required = True
+            user_action_required = True
         elif status.name == "screen recording permission":
             tasks.append(
                 ("capture_audio", [sys.executable, "-m", "audio_capture.build"])
@@ -370,116 +355,74 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
             )
             return False
 
-    if denied_user_action_required:
+    if user_action_required:
         console.print(
-            "[red]init incomplete[/red] — grant screen recording permission and re-run."
+            "[red]init incomplete[/red] — resolve the items above and re-run."
         )
         return False
 
     return True
 
 
-def pick_models(console: Console) -> tuple[str, str]:
-    """Phase 3 — show the two picker boxes, return (chat_tag, embed_tag)."""
-    console.print()
-    console.print(" [dim]ollama is running. let's pick your models.[/dim]")
-    console.print()
-    chat = _pick(console, "Chat / notes generator", CHAT_MODELS)
-    console.print()
-    embed = _pick(
-        console, "Embedding model (for ChromaDB · RAG search)", EMBEDDING_MODELS
-    )
-    return chat, embed
+def _run_switch_model(settings: ChirpSettings, console: Console) -> int:
+    """``--switch-model`` — flip the registry's default chat alias.
 
+    Calls the same `llm.registry` functions `chirp models default` wraps —
+    no subprocess hop.
+    """
+    from llm.exceptions import LLMError
+    from llm.registry import read_registry, set_default_for_role, write_registry
 
-def _pick(console: Console, title: str, options: list[ModelOption]) -> str:
-    console.print(f" [bold]{title}[/bold]")
-    for idx, option in enumerate(options, start=1):
-        marker = "[#d97a3a]●[/#d97a3a]" if idx == 1 else "[dim]○[/dim]"
-        tag = f"[bold]{option.tag}[/bold]" if idx == 1 else f"[dim]{option.tag}[/dim]"
-        console.print(
-            f"   {marker} {idx}. {tag}  [dim]{option.size} · {option.note}[/dim]"
-        )
-    console.print(f"   [dim]{len(options) + 1}. custom… (type an ollama tag)[/dim]")
     try:
-        choice: str = console.input(
-            " [green]›[/green] [dim]pick one (default 1):[/dim] "
+        registry = read_registry()
+        chat_aliases = sorted(
+            alias for alias, entry in registry.models.items() if entry.role == "chat"
+        )
+    except FileNotFoundError:
+        chat_aliases = []
+    except LLMError as exc:
+        # A malformed models.toml is not "no model registered" — switching
+        # would silently no-op with a misleading hint. Surface and fail.
+        console.print(f" [red]model registry unreadable: {exc}[/red]")
+        return 1
+    if not chat_aliases:
+        console.print(
+            f" [yellow]no chat model registered yet.[/yellow] run: "
+            f"[bold]chirp models add {RECOMMENDED_CHAT_REPO}[/bold]"
+        )
+        console.print(
+            f" [dim]smaller alternative: chirp models add {SMALLER_CHAT_REPO}[/dim]"
+        )
+        return 0
+
+    console.print(" [bold]registered chat models:[/bold]")
+    for idx, alias in enumerate(chat_aliases, start=1):
+        marker = (
+            " [#d97a3a]★ current default[/#d97a3a]"
+            if alias == registry.default_chat
+            else ""
+        )
+        console.print(f"   {idx}. {alias}{marker}")
+    try:
+        choice = console.input(
+            " [green]›[/green] [dim]pick a new default (blank keeps current):[/dim] "
         ).strip()
     except (EOFError, KeyboardInterrupt):
         console.print()
-        return options[0].tag
+        return 1
     if not choice:
-        return options[0].tag
-    if choice.isdigit():
-        idx = int(choice)
-        if 1 <= idx <= len(options):
-            return options[idx - 1].tag
-        if idx == len(options) + 1:
-            custom: str = console.input(
-                " [green]›[/green] [dim]ollama tag:[/dim] "
-            ).strip()
-            return custom or options[0].tag
-    return choice
+        return 0
+    if not (choice.isdigit() and 1 <= int(choice) <= len(chat_aliases)):
+        console.print(" [red]invalid selection.[/red]")
+        return 1
+    chosen = chat_aliases[int(choice) - 1]
+    write_registry(set_default_for_role(registry, chosen))
+    console.print(f" [green]✓[/green] default chat set to [bold]{chosen}[/bold]")
+    return 0
 
 
-def keep_or_pick(console: Console, settings: ChirpSettings) -> tuple[str, str, bool]:
-    """Phase 3 — show "keep these or pick new?" when current models are valid.
-
-    Returns ``(chat_tag, embed_tag, models_changed)``. ``models_changed`` is
-    False when the user kept the existing models and Phase 4 should leave
-    ``models.*`` in ``config.toml`` untouched.
-    """
-    current_chat = settings.models.llm
-    current_embed = settings.notes_chat.emb_model
-    available = _ollama_models()
-    current_present = (
-        bool(current_chat)
-        and bool(current_embed)
-        and _model_installed(current_chat, available)
-        and _model_installed(current_embed, available)
-    )
-
-    if current_present:
-        console.print()
-        console.print(f" [bold]current models:[/bold] {current_chat}, {current_embed}")
-        try:
-            answer = (
-                console.input(
-                    "   [bold]keep these, or pick new?[/bold] [dim][K/p][/dim] "
-                )
-                .strip()
-                .lower()
-            )
-        except (EOFError, KeyboardInterrupt):
-            console.print()
-            return current_chat, current_embed, False
-        if answer in ("", "k", "keep"):
-            return current_chat, current_embed, False
-
-    chat, embed = pick_models(console)
-    return chat, embed, True
-
-
-def pull_and_finalize(
-    console: Console,
-    settings: ChirpSettings,
-    chat_tag: str,
-    embed_tag: str,
-    models_changed: bool = True,
-) -> None:
-    """Phase 4 — pull the picked models, merge config.toml, ensure dirs."""
-    installed = _ollama_models()
-    to_pull = [
-        tag for tag in (chat_tag, embed_tag) if not _model_installed(tag, installed)
-    ]
-    if to_pull:
-        console.print()
-        console.print(" [dim]pulling models...[/dim]")
-        for tag in to_pull:
-            _pull_model(console, tag)
-    else:
-        console.print(" [green]models already present.[/green]")
-
+def _finalize_paths(settings: ChirpSettings, console: Console) -> None:
+    """Phase 3 — ensure config/chroma/notes paths exist, print the summary."""
     config_path = ChirpSettings.get_config_path()
     chroma_dir = settings.notes_chat.index_dir / "chroma"
     notes_root = settings.directories.notes_root
@@ -488,13 +431,8 @@ def pull_and_finalize(
     chroma_existed = chroma_dir.exists()
     notes_existed = notes_root.exists()
 
-    settings.models.llm = chat_tag
-    settings.notes_chat.emb_model = embed_tag
-
-    config_written = False
-    if models_changed or not config_existed:
-        _merge_config(config_path, chat_tag, embed_tag, console=console)
-        config_written = True
+    if not config_existed:
+        _merge_config(config_path, console=console)
 
     chroma_dir.mkdir(parents=True, exist_ok=True)
     notes_root.mkdir(parents=True, exist_ok=True)
@@ -502,7 +440,7 @@ def pull_and_finalize(
     _print_path_summary(
         console,
         config_path=config_path,
-        config_changed=config_written,
+        config_changed=not config_existed,
         chroma_dir=chroma_dir,
         chroma_was_new=not chroma_existed,
         notes_root=notes_root,
@@ -517,17 +455,13 @@ def pull_and_finalize(
     )
 
 
-def _merge_config(
-    config_path: Path,
-    chat_tag: str,
-    embed_tag: str,
-    console: Console | None = None,
-) -> None:
-    """Merge models.* fields into config.toml without dropping user keys.
+def _merge_config(config_path: Path, console: Console | None = None) -> None:
+    """Write config.toml preserving any user keys already present.
 
-    On a corrupt file we copy the original aside as ``config.toml.bak-<ts>``
-    and warn loudly before writing a fresh config — never silently clobber
-    hand-edited keys.
+    Model selection lives in models.toml (the registry); init only touches
+    the user-editable settings file. On a corrupt file we copy the original
+    aside as ``config.toml.bak-<ts>`` and warn loudly before writing a fresh
+    config — never silently clobber hand-edited keys.
     """
     existing: dict[str, Any] = {}
     if config_path.exists():
@@ -544,9 +478,6 @@ def _merge_config(
                     "backup.[/yellow]"
                 )
             existing = {}
-
-    existing.setdefault("models", {})["llm"] = chat_tag
-    existing.setdefault("notes_chat", {})["emb_model"] = embed_tag
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with config_path.open("wb") as fh:
@@ -610,80 +541,25 @@ def _path_line(
     return line
 
 
-def _pull_model(console: Console, tag: str) -> None:
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[bold]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeRemainingColumn(),
-        console=console,
-    )
-    task = None
-    with progress:
-        task = progress.add_task(f"ollama pull {tag}", total=100)
-        try:
-            proc = subprocess.Popen(
-                ["ollama", "pull", tag],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-        except FileNotFoundError:
-            progress.update(task, description="[red]✗[/red] ollama not on PATH")
-            return
-        if proc.stdout is None:
-            proc.wait()
-            return
-        for line in proc.stdout:
-            pct = _parse_percent(line)
-            if pct is not None:
-                progress.update(task, completed=pct)
-        proc.wait()
-        if proc.returncode == 0:
-            progress.update(task, completed=100)
-        else:
-            progress.update(
-                task,
-                description=f"[red]✗[/red] ollama pull {tag} failed",
-            )
-
-
-def _parse_percent(line: str) -> float | None:
-    line = line.strip()
-    if "%" not in line:
-        return None
-    for token in line.split():
-        if token.endswith("%"):
-            try:
-                return float(token.rstrip("%"))
-            except ValueError:
-                return None
-    return None
-
-
 def run_init(
     settings: ChirpSettings,
     console: Console,
     recheck: bool = False,
     switch_model: bool = False,
 ) -> int:
-    """Top-level entry — orchestrates the four phases. Returns exit code."""
+    """Top-level entry — orchestrates the phases. Returns exit code."""
+    code = require_apple_silicon(console)
+    if code is not None:
+        return code
+
     if switch_model:
-        chat, embed = pick_models(console)
-        pull_and_finalize(console, settings, chat, embed, models_changed=True)
-        return 0
+        return _run_switch_model(settings, console)
 
     statuses = verify(settings, console)
     if recheck:
         return 0
 
-    missing = [
-        s
-        for s in statuses
-        if s.required and not s.installed and not s.name.startswith("model:")
-    ]
+    missing = [s for s in statuses if s.required and not s.installed]
     if missing:
         if not _confirm(console, "Install the missing pieces?", default=True):
             console.print(" [yellow]skipped install.[/yellow]")
@@ -695,13 +571,5 @@ def run_init(
             " [dim]phase 2 · everything's already installed — skipping.[/dim]"
         )
 
-    ollama = _ollama_installed()
-    if not ollama.installed or "running" not in ollama.detail:
-        console.print(
-            " [red]ollama isn't running.[/red] start it with `brew services start ollama`, then re-run."
-        )
-        return 1
-
-    chat, embed, models_changed = keep_or_pick(console, settings)
-    pull_and_finalize(console, settings, chat, embed, models_changed=models_changed)
+    _finalize_paths(settings, console)
     return 0
