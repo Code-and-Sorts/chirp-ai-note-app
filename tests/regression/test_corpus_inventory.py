@@ -64,8 +64,12 @@ def test_corpus_has_minimum_recordings() -> None:
 
 
 @pytest.mark.parametrize("slug", corpus_slugs())
-@pytest.mark.parametrize("filename", ["transcript.txt", "notes_before.md"])
+@pytest.mark.parametrize(
+    "filename", ["transcript.txt", "notes_before.md", "notes_after.md"]
+)
 def test_recording_file_present_and_utf8(slug: str, filename: str) -> None:
+    # notes_after.md is required since story 6.6's regression comparison run;
+    # a careless rebase that drops one fails here loudly.
     path = CORPUS_DIR / slug / filename
     assert path.is_file(), f"missing {path}"
     content = path.read_text(encoding="utf-8")

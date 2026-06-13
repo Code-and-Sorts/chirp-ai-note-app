@@ -2,7 +2,7 @@
 
 - **Epic ID:** EPIC-INTEGRATION-CUTOVER
 - **Owner:** Colby
-- **Status:** Draft
+- **Status:** Done — all six stories complete; the MLX migration quality gate passed (story 6.6, results-2026-06-12.md).
 - **Created:** 2026-05-15
 - **Design source:** [`prd.md`](../prd.md) — FR46–FR48, §Domain-Specific Requirements → Validation Methodology, §Success Criteria → User Success → "No regression in note quality"; [`architecture.md`](../architecture.md) — §Project Structure (call-site changes in `notes/note_generator.py`, `notes_chat/retrieval.py`, `notes_chat/cli.py`; regression corpus at `tests/regression/notes_quality/`), §Module boundary "llm.client ↔ existing chirp modules", §Implementation Patterns → Testing Patterns (FakeBackend); [`implementation-readiness-report-2026-05-12.md`](../implementation-readiness-report-2026-05-12.md) — §Epic Quality Review (corpus is precondition gate)
 - **Related branch (current work):** TBD (off `main`; predecessor branch `story/2.3-blackhole-removal`)
