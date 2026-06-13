@@ -17,7 +17,7 @@ def get_cached_answer(question: str, retrieved_ids: list[str]) -> str | None:
         if not cache_file.exists():
             return None
 
-        with open(cache_file) as f:
+        with cache_file.open() as f:
             data = json.load(f)
 
         answer = data.get("answer")
@@ -44,7 +44,7 @@ def cache_answer(question: str, retrieved_ids: list[str], answer: str) -> bool:
             "cache_key": cache_key,
         }
 
-        with open(cache_file, "w") as f:
+        with cache_file.open("w") as f:
             json.dump(cache_data, f, indent=2)
 
         return True

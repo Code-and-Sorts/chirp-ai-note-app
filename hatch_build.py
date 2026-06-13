@@ -9,19 +9,15 @@ and installs cleanly otherwise.
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
 class CustomBuildHook(BuildHookInterface):
     def initialize(self, version: str, build_data: dict) -> None:
-        app_src = os.path.join(
-            os.path.dirname(__file__),
-            "audio_capture",
-            "CaptureAudio.app",
-        )
-        if os.path.isdir(app_src):
+        app_src = Path(__file__).parent / "audio_capture" / "CaptureAudio.app"
+        if app_src.is_dir():
             build_data["force_include"]["audio_capture/CaptureAudio.app"] = (
                 "audio_capture/CaptureAudio.app"
             )

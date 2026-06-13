@@ -21,8 +21,8 @@ class DeviceManager:
     def _initialize_audio(self):
         try:
             self.audio = pyaudio.PyAudio()
-        except Exception as e:  # noqa: BLE001 - PyAudio can raise many types on init failure
-            raise RuntimeError(f"Failed to initialize PyAudio: {str(e)}") from e
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize PyAudio: {e!s}") from e
 
     def close(self):
         if self.audio:
@@ -155,9 +155,11 @@ class DeviceManager:
         if not device_info:
             return supported_rates
 
-        for rate in standard_rates:
-            if self._test_sample_rate(device_index, rate):
-                supported_rates.append(rate)
+        supported_rates.extend(
+            rate
+            for rate in standard_rates
+            if self._test_sample_rate(device_index, rate)
+        )
 
         return supported_rates
 

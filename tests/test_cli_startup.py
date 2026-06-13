@@ -22,7 +22,7 @@ def test_cli_import_does_not_load_heavy_dependencies():
 
         loaded_heavy = {
             name
-            for name in sys.modules.keys()
+            for name in sys.modules
             for heavy in heavy_modules
             if name == heavy or name.startswith(f"{heavy}.")
         }

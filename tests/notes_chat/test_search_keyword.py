@@ -127,7 +127,8 @@ def test_excerpt_window_truncates_long_lines(tmp_path):
     out = _window_excerpt(long_line, match_start, match_start + len("pricing"))
     assert "pricing" in out
     assert len(out) <= 122
-    assert out.startswith("…") and out.endswith("…")
+    assert out.startswith("…")
+    assert out.endswith("…")
 
 
 def test_excerpt_short_line_unchanged(tmp_path):

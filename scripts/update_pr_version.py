@@ -15,7 +15,9 @@ def main():
     root_dir = pathlib.Path(__file__).parent.parent
     pyproject_path = root_dir / "pyproject.toml"
 
-    print(f"Attempting to update version in {pyproject_path} (from {os.getcwd()})")
+    print(
+        f"Attempting to update version in {pyproject_path} (from {pathlib.Path.cwd()})"
+    )
 
     current_full_version = read_project_version(pyproject_path)
     new_version = build_pr_version(current_full_version, run_number)

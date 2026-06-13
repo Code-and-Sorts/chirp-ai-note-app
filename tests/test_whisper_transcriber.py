@@ -55,19 +55,19 @@ class TestWhisperTranscriber:
             mock_model = Mock()
             mock_whisper_model_class.return_value = mock_model
 
-            with patch.object(
-                WhisperTranscriber, "_get_optimal_device", return_value="cpu"
-            ):
-                with patch.object(
+            with (
+                patch.object(
+                    WhisperTranscriber, "_get_optimal_device", return_value="cpu"
+                ),
+                patch.object(
                     WhisperTranscriber, "_get_compute_type", return_value="int8"
-                ):
-                    with patch.object(
-                        WhisperTranscriber, "_get_cpu_threads", return_value=4
-                    ):
-                        transcriber = WhisperTranscriber(mock_settings)
+                ),
+                patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
+            ):
+                transcriber = WhisperTranscriber(mock_settings)
 
-                        assert transcriber.model == mock_model
-                        assert transcriber.settings == mock_settings
+                assert transcriber.model == mock_model
+                assert transcriber.settings == mock_settings
 
     @patch("platform.system")
     @patch("platform.processor")
@@ -246,16 +246,16 @@ class TestWhisperTranscriber:
 
         with patch("transcriber.whisper_transcriber.WhisperModel") as mock_model_cls:
             mock_model_cls.return_value = mock_whisper_model
-            with patch.object(
-                WhisperTranscriber, "_get_optimal_device", return_value="cpu"
-            ):
-                with patch.object(
+            with (
+                patch.object(
+                    WhisperTranscriber, "_get_optimal_device", return_value="cpu"
+                ),
+                patch.object(
                     WhisperTranscriber, "_get_compute_type", return_value="int8"
-                ):
-                    with patch.object(
-                        WhisperTranscriber, "_get_cpu_threads", return_value=4
-                    ):
-                        transcriber = WhisperTranscriber(mock_settings)
+                ),
+                patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
+            ):
+                transcriber = WhisperTranscriber(mock_settings)
 
         result = transcriber.transcribe_file(audio_path)
 
@@ -265,7 +265,9 @@ class TestWhisperTranscriber:
         assert metadata["title"] == "Strategy Sync"
         assert metadata["duration"] == pytest.approx(5.0)
         assert metadata["segment_count"] == 1
-        assert metadata["word_count"] == len("This is a test transcription.".split())
+        assert metadata["word_count"] == len(
+            ["This", "is", "a", "test", "transcription."]
+        )
         assert metadata["recording_datetime"].startswith("2025-01-01T12:00:00")
         assert result["full_text"] == "This is a test transcription."
 
@@ -432,20 +434,16 @@ class TestWhisperTranscriber:
         audio_path = tmp_path / "20250101_120000_test.wav"
         audio_path.write_bytes(b"fake audio data")
 
-        with patch(
-            "transcriber.whisper_transcriber.WhisperModel",
-            return_value=mock_whisper_model,
+        with (
+            patch(
+                "transcriber.whisper_transcriber.WhisperModel",
+                return_value=mock_whisper_model,
+            ),
+            patch.object(WhisperTranscriber, "_get_optimal_device", return_value="cpu"),
+            patch.object(WhisperTranscriber, "_get_compute_type", return_value="int8"),
+            patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
         ):
-            with patch.object(
-                WhisperTranscriber, "_get_optimal_device", return_value="cpu"
-            ):
-                with patch.object(
-                    WhisperTranscriber, "_get_compute_type", return_value="int8"
-                ):
-                    with patch.object(
-                        WhisperTranscriber, "_get_cpu_threads", return_value=4
-                    ):
-                        transcriber = WhisperTranscriber(mock_settings)
+            transcriber = WhisperTranscriber(mock_settings)
 
         transcriber.transcribe_file(audio_path)
 

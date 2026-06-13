@@ -28,7 +28,7 @@ def test_handles_uppercase_and_whitespace():
 
 
 def test_rejects_garbage():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unrecognized timeframe"):
         parse_timeframe("soon")
 
 
@@ -40,7 +40,7 @@ def test_fractional_rounds_up():
 
 def test_rejects_zero_and_negative():
     for bad in ["0m", "0", "0h", "-1m", "-30s"]:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="timeframe must be positive"):
             parse_timeframe(bad)
 
 
@@ -73,10 +73,10 @@ class TestParseSince:
                 parse_since(bad)
 
     def test_rejects_garbage(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="unrecognized timeframe"):
             parse_since("soon")
 
     def test_rejects_zero_and_negative(self):
         for bad in ["0d", "0h", "-1d"]:
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match="timeframe must be positive"):
                 parse_since(bad)

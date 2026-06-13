@@ -108,7 +108,7 @@ class ChecklistView:
 
 
 def _format_duration(seconds: float) -> str:
-    total = int(round(max(seconds, 0.0)))
+    total = round(max(seconds, 0.0))
     minutes, secs = divmod(total, 60)
     return f"{minutes:02d}:{secs:02d}"
 

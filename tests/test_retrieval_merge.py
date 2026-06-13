@@ -129,7 +129,7 @@ class TestRetrievalMerge:
             ),
         ]
 
-        context, sources, retrieved_ids = _build_context(chunks, 200)
+        context, _sources, retrieved_ids = _build_context(chunks, 200)
 
         assert len(context) <= 200
         assert "..." in context
@@ -201,7 +201,7 @@ class TestRetrievalMerge:
             ),
         ]
 
-        context, sources, retrieved_ids = _build_context(chunks, 1000)
+        context, sources, _retrieved_ids = _build_context(chunks, 1000)
 
         assert "2025-01-15 · notes.md" in context
         # No `config` was provided so the slug is the fallback label.

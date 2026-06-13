@@ -20,7 +20,8 @@ from chirp.branding import (
 
 def test_constants_are_nonempty_strings():
     for value in (LOGO_YELLOW, LOGO_ACCENT, LOGO_NOTE, TAGLINE, COMPACT_LOGO):
-        assert isinstance(value, str) and value
+        assert isinstance(value, str)
+        assert value
 
 
 def test_beak_glyphs_are_distinct():

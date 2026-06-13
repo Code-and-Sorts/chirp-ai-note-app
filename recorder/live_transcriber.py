@@ -109,12 +109,15 @@ class LiveTranscriber(threading.Thread):
         if not self._pcm_buffer:
             return
 
-        if not force and self.transcription_interval > 0:
-            if (
+        if (
+            not force
+            and self.transcription_interval > 0
+            and (
                 self._last_chunk_end - self._last_transcribe_at
                 < self.transcription_interval
-            ):
-                return
+            )
+        ):
+            return
 
         pcm_bytes = bytes(self._pcm_buffer)
 

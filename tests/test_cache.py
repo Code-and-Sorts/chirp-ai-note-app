@@ -96,7 +96,7 @@ class TestCache:
             cache_files = list((tmp_path / "cache").glob("*.json"))
             assert len(cache_files) == 1
 
-            with open(cache_files[0]) as f:
+            with cache_files[0].open() as f:
                 data = json.load(f)
 
             assert data["question"] == question

@@ -176,7 +176,7 @@ def _fetch_architectures(repo_id: str) -> list[str]:
         raise HfUnexpectedError(repo_id, original=err) from err
 
     try:
-        with open(config_path, encoding="utf-8") as handle:
+        with Path(config_path).open(encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return []

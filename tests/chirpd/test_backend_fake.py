@@ -98,11 +98,15 @@ async def test_fake_backend_stream_generate_raises_after_n_tokens() -> None:
     )
     handle = await backend.load("mlx-community/foo", "chat")
     tokens: list[str] = []
-    with pytest.raises(RuntimeError):
+
+    async def drain() -> None:
         async for token in backend.stream_generate(
             handle, [{"role": "user", "content": "x"}], {}, asyncio.Event(), {}
         ):
             tokens.append(token)
+
+    with pytest.raises(RuntimeError):
+        await drain()
     assert tokens == ["a", "b"]
 
 

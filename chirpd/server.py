@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Any, Final
 
@@ -44,7 +43,7 @@ async def serve(socket_path: Path, dispatcher: Dispatcher) -> None:
     server = await asyncio.start_unix_server(
         handle, path=str(socket_path), limit=_LINE_READ_LIMIT
     )
-    os.chmod(socket_path, 0o600)
+    socket_path.chmod(0o600)
     _logger.info("chirpd listening", extra={"op": "serve"})
 
     serve_forever_task = asyncio.create_task(server.serve_forever())
@@ -83,7 +82,7 @@ def _unlink_stale_socket(socket_path: Path) -> None:
     # anything that isn't actually a unix socket.
     try:
         if socket_path.is_socket():
-            os.unlink(socket_path)
+            socket_path.unlink()
     except FileNotFoundError:
         pass
 
@@ -132,7 +131,7 @@ async def _handle_connection(
         await dispatcher.dispatch(next_envelope, writer)
     except ConnectionResetError:  # pragma: no cover — peer-abort defensive branch
         _logger.info("connection reset by peer")
-    except Exception as exc:  # noqa: BLE001 — final safety net for unexpected handler failures
+    except Exception as exc:
         _logger.exception(
             "unhandled connection error",
             extra={"err_type": type(exc).__name__},

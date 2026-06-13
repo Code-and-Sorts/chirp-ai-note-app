@@ -36,21 +36,19 @@ class WhisperTranscriber:
 
         if system == "Darwin":
             return "cpu"
-        else:
-            try:
-                import torch
+        try:
+            import torch
 
-                return "cuda" if torch.cuda.is_available() else "cpu"
-            except ImportError:
-                return "cpu"
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            return "cpu"
 
     def _get_compute_type(self) -> str:
         device = self._get_optimal_device()
 
         if device == "cpu":
             return "int8"
-        else:
-            return "float16"
+        return "float16"
 
     def _get_cpu_threads(self) -> int:
         import os

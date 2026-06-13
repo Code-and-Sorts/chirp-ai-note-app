@@ -102,9 +102,9 @@ def _search_chroma(
             return []
 
         results = index_manager.collection.query(
-            query_embeddings=[query_embedding],  # type: ignore
+            query_embeddings=[query_embedding],  # type: ignore[arg-type]
             n_results=k,
-            where=where_clause,  # type: ignore
+            where=where_clause,  # type: ignore[arg-type]
         )
 
         ids_list = results.get("ids") or [[]]
@@ -352,8 +352,7 @@ def _create_chunk_header(data: dict[str, Any]) -> str:
         filename = Path(path).name if path != "Unknown" else "Unknown"
 
         return f"{date_str} · {filename}"
-    else:
-        return "Unknown source"
+    return "Unknown source"
 
 
 def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
@@ -366,7 +365,7 @@ def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
             return "Index not found. Run 'chirp index' to build the search index first."
 
         try:
-            with open(manifest_file) as f:
+            with manifest_file.open() as f:
                 manifest = json.load(f)
                 if not manifest:
                     return "No files in search index. Run 'chirp index' to build the index."

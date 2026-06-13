@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import curses
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from rich.console import Console
 from rich.markdown import Heading, Markdown
@@ -46,7 +46,7 @@ class DisplayLine:
 class ManualNoteEditor:
     """A minimal modal text editor with view/insert modes."""
 
-    _COLOR_NAME_MAP = {
+    _COLOR_NAME_MAP: ClassVar[dict[str, int]] = {
         "black": curses.COLOR_BLACK,
         "red": curses.COLOR_RED,
         "green": curses.COLOR_GREEN,

@@ -162,8 +162,7 @@ def run_about(
     with Live(Group(*lines), console=console, refresh_per_second=20) as live:
         # Phase 1 — paint the entire bird in one go
         logo_start = len(lines)
-        for idx in range(len(LOGO_ROWS)):
-            lines.append(_logo_line(idx, beak_open=False))
+        lines.extend(_logo_line(idx, beak_open=False) for idx in range(len(LOGO_ROWS)))
         live.update(Group(*lines))
 
         beak_row = next(i for i, row in enumerate(LOGO_ROWS) if row.has_beak)

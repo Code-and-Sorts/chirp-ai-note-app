@@ -36,8 +36,7 @@ class PopupManager:
         try:
             if self.is_macos:
                 return self._show_macos_notification(title, message)
-            else:
-                return self._show_generic_notification(title, message)
+            return self._show_generic_notification(title, message)
         except (subprocess.SubprocessError, OSError):
             return False
 

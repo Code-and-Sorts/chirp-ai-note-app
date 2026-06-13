@@ -266,9 +266,7 @@ class LLMClient:
         keep_alive: int | None = None,
     ) -> str:
         stream = self.chat_stream(messages, model, options, keep_alive)
-        tokens: list[str] = []
-        async for token in stream:
-            tokens.append(token)
+        tokens = [token async for token in stream]
         return "".join(tokens)
 
     def chat_sync(
@@ -463,7 +461,7 @@ class LLMClient:
         env = os.environ.copy()
         env[CHIRP_DAEMON_SOCKET_ENV] = str(self.socket_path)
         try:
-            proc = subprocess.Popen(
+            proc = subprocess.Popen(  # noqa: ASYNC220 - detached fire-and-forget daemon spawn; start_new_session detachment is the point, not awaitable subprocess semantics
                 ["chirpd"],
                 env=env,
                 start_new_session=True,

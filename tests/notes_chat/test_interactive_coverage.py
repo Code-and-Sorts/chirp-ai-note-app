@@ -193,7 +193,7 @@ def test_handle_slash_unknown(mock_console, chat_session):
 def _make_prompt_side_effects(*values):
     """Return a side_effect list for PromptSession.prompt that raises StopIteration
     after returning all values so the while-True loop exits cleanly via EOFError."""
-    return list(values) + [EOFError()]
+    return [*list(values), EOFError()]
 
 
 @patch("notes_chat.interactive.console")

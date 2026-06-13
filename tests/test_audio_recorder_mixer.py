@@ -193,7 +193,7 @@ class TestPartialChunkStall:
         output = list(mixer.drain())
 
         assert len(output) >= 1
-        first_ts, first_mixed = output[0]
+        _first_ts, first_mixed = output[0]
         # First 100 samples: mic partial (0.3) + sys (0.5) = 0.8
         np.testing.assert_allclose(first_mixed[:100], 0.8, atol=1e-6)
         # Remaining samples: sys only (0.5) + silence = 0.5
@@ -222,15 +222,15 @@ class TestBufferCap:
 
 class TestValidation:
     def test_zero_frame_ms_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="frame_ms must be positive"):
             StereoToMonoMixer(frame_ms=0)
 
     def test_negative_gap_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="gap_ms must be non-negative"):
             StereoToMonoMixer(gap_ms=-1)
 
     def test_zero_sample_rate_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="sample_rate must be positive"):
             StereoToMonoMixer(sample_rate=0)
 
 

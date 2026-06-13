@@ -6,13 +6,13 @@ import pytest
 from utils.popup_manager import PopupManager
 
 
-@pytest.fixture()
+@pytest.fixture
 def macos_popup():
     with patch("utils.popup_manager.platform.system", return_value="Darwin"):
         yield PopupManager()
 
 
-@pytest.fixture()
+@pytest.fixture
 def linux_popup():
     with patch("utils.popup_manager.platform.system", return_value="Linux"):
         yield PopupManager()
@@ -31,7 +31,7 @@ class TestShowRecordingWarning:
         macos_popup.show_notification = MagicMock(return_value=True)
         result = macos_popup.show_recording_warning(30)
         macos_popup.show_notification.assert_called_once()
-        title, message = macos_popup.show_notification.call_args[0]
+        _title, message = macos_popup.show_notification.call_args[0]
         assert "30 minutes" in message
         assert result is True
 

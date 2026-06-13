@@ -72,7 +72,7 @@ class FakeAudioCapture:
 
     def __exit__(self, exc_type, exc, tb):
         self._exit_event.set()
-        return None
+        return
 
     def frames(self) -> Iterator[tuple[int, int, np.ndarray]]:
         for index, frame in enumerate(self._frames):
@@ -186,7 +186,7 @@ class TestAudioRecorder:
         assert created_dirs == [], "empty note dir should have been cleaned up"
 
     @pytest.mark.parametrize(
-        "mic_device_name,expected_meta_mic",
+        ("mic_device_name", "expected_meta_mic"),
         [
             ("MockMic", "MockMic"),
             ("Studio Mic Pro", "Studio Mic Pro"),
@@ -239,11 +239,13 @@ class TestAudioRecorder:
         self, mock_settings, mock_device_manager
     ):
         recorder = AudioRecorder(mock_settings, mock_device_manager)
-        with patch("sys.platform", "linux"):
-            with pytest.raises(
+        with (
+            patch("sys.platform", "linux"),
+            pytest.raises(
                 RuntimeError, match="chirp record requires macOS 13 or later"
-            ):
-                recorder.start_recording(title="non-mac")
+            ),
+        ):
+            recorder.start_recording(title="non-mac")
 
     def test_start_recording_cleans_up_when_audio_capture_fails_to_start(
         self, tmp_path, mock_settings, mock_device_manager
@@ -257,11 +259,13 @@ class TestAudioRecorder:
             def __exit__(self, exc_type, exc, tb):
                 return None
 
-        with patch(
-            "recorder.audio_recorder.AudioCapture", return_value=FailingCapture()
+        with (
+            patch(
+                "recorder.audio_recorder.AudioCapture", return_value=FailingCapture()
+            ),
+            pytest.raises(RuntimeError, match="helper-startup-boom"),
         ):
-            with pytest.raises(RuntimeError, match="helper-startup-boom"):
-                recorder.start_recording(title="startup-fail")
+            recorder.start_recording(title="startup-fail")
 
         assert recorder.is_recording is False
         assert list(tmp_path.iterdir()) == []
@@ -323,14 +327,16 @@ class TestAudioRecorder:
                 time.sleep(0.05)
                 raise RuntimeError("worker-boom")
 
-        with patch(
-            "recorder.audio_recorder.AudioCapture",
-            return_value=CrashAfterPartial(),
-        ):
-            with pytest.raises(
+        with (
+            patch(
+                "recorder.audio_recorder.AudioCapture",
+                return_value=CrashAfterPartial(),
+            ),
+            pytest.raises(
                 RecordingError, match="audio capture worker crashed mid-recording"
-            ) as excinfo:
-                recorder.start_recording(title="worker-crash")
+            ) as excinfo,
+        ):
+            recorder.start_recording(title="worker-crash")
 
         assert isinstance(excinfo.value.__cause__, RuntimeError)
         assert "worker-boom" in str(excinfo.value.__cause__)
@@ -407,14 +413,16 @@ class TestPartialRecordingTruncationCrash:
                     yield (SOURCE_MICROPHONE, ts, np.full(512, 0.2, dtype=np.float32))
                 raise RuntimeError("mid-stream-crash")
 
-        with patch(
-            "recorder.audio_recorder.AudioCapture",
-            return_value=CrashMidStream(),
-        ):
-            with pytest.raises(
+        with (
+            patch(
+                "recorder.audio_recorder.AudioCapture",
+                return_value=CrashMidStream(),
+            ),
+            pytest.raises(
                 RecordingError, match="audio capture worker crashed mid-recording"
-            ) as excinfo:
-                recorder.start_recording(title="partial-crash")
+            ) as excinfo,
+        ):
+            recorder.start_recording(title="partial-crash")
 
         assert "mid-stream-crash" in str(excinfo.value.__cause__)
         assert list(tmp_path.iterdir()) == [], (

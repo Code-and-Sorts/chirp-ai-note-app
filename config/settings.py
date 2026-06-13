@@ -43,8 +43,6 @@ def resolve_idle_timeout_seconds() -> float:
 class ConfigurationError(Exception):
     """Exception raised for configuration-related errors."""
 
-    pass
-
 
 def default_notes_root() -> Path:
     return Path(user_documents_dir()) / "chirp"
@@ -178,7 +176,7 @@ class ChirpSettings(BaseModel):
             console.print(f"[dim]Edit {config_path} to customize settings[/dim]")
             return settings
 
-        with open(config_path, "rb") as config_file:
+        with config_path.open("rb") as config_file:
             config_data = tomllib.load(config_file)
 
         return cls(**config_data)
@@ -189,7 +187,7 @@ class ChirpSettings(BaseModel):
         config_dict = self.model_dump()
         _stringify_paths(config_dict)
 
-        with open(config_path, "wb") as config_file:
+        with config_path.open("wb") as config_file:
             tomli_w.dump(config_dict, config_file)
 
     def ensure_directories_exist(self):

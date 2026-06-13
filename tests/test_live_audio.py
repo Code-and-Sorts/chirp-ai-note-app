@@ -189,9 +189,9 @@ def test_start_cleans_up_audio_capture_when_thread_start_fails() -> None:
             "recorder.live_audio.threading.Thread",
             side_effect=RuntimeError("can't start new thread"),
         ),
+        pytest.raises(RuntimeError, match="can't start new thread"),
     ):
-        with pytest.raises(RuntimeError, match="can't start new thread"):
-            stream.start()
+        stream.start()
 
     assert fake.exit_calls == 1
     assert stream._cap_ctx is None
@@ -218,7 +218,10 @@ def test_close_is_idempotent() -> None:
 
     with mock.patch("recorder.live_audio.AudioCapture", return_value=fake):
         stream.start()
-        assert stream._mixer_thread is not None and stream._mixer_thread.is_alive(), (
+        assert stream._mixer_thread is not None, (
+            "mixer thread must exist before testing idempotent close"
+        )
+        assert stream._mixer_thread.is_alive(), (
             "mixer thread must be alive before testing idempotent close"
         )
         stream.close()

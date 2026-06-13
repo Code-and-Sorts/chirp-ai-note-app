@@ -131,7 +131,7 @@ class AudioRecorder:
             raise
 
         try:
-            wave_file = wave.open(str(audio_path), "wb")
+            wave_file = wave.open(str(audio_path), "wb")  # noqa: SIM115 - handle is long-lived; written across frames and closed in the finalize path
             wave_file.setnchannels(OUTPUT_CHANNELS)
             wave_file.setsampwidth(OUTPUT_SAMPLE_WIDTH_BYTES)
             wave_file.setframerate(OUTPUT_SAMPLE_RATE)
@@ -245,7 +245,7 @@ class AudioRecorder:
                 if not self._paused_event.is_set():
                     self._append_mixed_frame(mixed, wave_file)
         except Exception as exc:
-            logger.error("audio-recorder-capture worker crashed", exc_info=True)
+            logger.exception("audio-recorder-capture worker crashed")
             self._capture_error = exc
             self._is_recording_event.clear()
         else:

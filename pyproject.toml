@@ -61,14 +61,31 @@ extend-exclude = ["audio_capture/swift", "audio_capture/CaptureAudio.app"]
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # Pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-    "BLE", # flake8-blind-except (BLE001: bare/blind `except` swallows errors)
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "BLE",  # flake8-blind-except (BLE001: bare/blind `except` swallows errors)
+    "FA",   # flake8-future-annotations
+    "ISC",  # flake8-implicit-str-concat
+    "ICN",  # flake8-import-conventions
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+    "TID",  # flake8-tidy-imports
+    "PTH",  # flake8-use-pathlib
+    "TD",   # flake8-todos
+    "NPY",  # numpy-specific rules
+    "RUF",  # ruff-specific rules
+    "PERF", # perflint
+    "PT",   # flake8-pytest-style
+    "ASYNC", # flake8-async (blocking calls in async functions)
+    "PGH",  # pygrep-hooks (blanket noqa / type: ignore)
+    "PIE",  # flake8-pie
+    "LOG",  # flake8-logging
+    "G",    # flake8-logging-format
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
@@ -77,6 +94,22 @@ ignore = [
     "F405", # may be undefined from star imports
     "B904", # Within except clause, raise exceptions with raise ... from err (too verbose for this use case)
     "E722", # Do not use bare except (acceptable in test function)
+    "ISC001", # implicit string concat on one line (conflicts with the formatter)
+    "SIM105", # contextlib.suppress is slower and not always clearer than try/except: pass
+    "TD002", # missing TODO author (not a team convention)
+    "TD003", # missing TODO issue link (not a team convention)
+    "RUF001", # ambiguous unicode in strings (intentional em-dashes/quotes in user-facing notes text)
+    "RUF002", # ambiguous unicode in docstrings (same rationale as RUF001)
+    "RUF003", # ambiguous unicode in comments (same rationale as RUF001)
+    "ASYNC240", # advises trio.Path/anyio.path; this project is asyncio-only, so pathlib in async is fine
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "ASYNC109", # test helpers legitimately take a `timeout` parameter
+    "ASYNC110", # tests intentionally poll with `await asyncio.sleep` while waiting on external state
+    "PERF",     # perflint targets production hot paths; test clarity wins over micro-perf, and stream-consume loops must collect partial results before a raise
+    "SIM117",   # nested `with mock.patch(...)` is a readable pytest idiom; flattening deep patch stacks adds no clarity (rule stays active for production code)
 ]
 
 [tool.ruff.format]

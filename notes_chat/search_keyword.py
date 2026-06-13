@@ -368,9 +368,12 @@ def _is_close(candidate: str, query_token: str) -> bool:
         return True
     if len(candidate) >= 3 and candidate in query_token:
         return True
-    if len(candidate) >= 3 and len(query_token) >= 3:
-        if candidate[:3] == query_token[:3]:
-            return True
+    if (
+        len(candidate) >= 3
+        and len(query_token) >= 3
+        and candidate[:3] == query_token[:3]
+    ):
+        return True
     return _levenshtein(candidate, query_token) <= 2
 
 
