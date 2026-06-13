@@ -476,7 +476,7 @@ def _offer_launch_agent(
     if is_launch_agent_installed():
         # Nothing to ask (e.g. user ran `chirp daemon enable` themselves).
         if settings.init.launch_agent_prompted_at is None:
-            _persist_prompt_timestamp(settings)
+            _persist_prompt_timestamp(settings, console)
         return
     if not force_prompt and settings.init.launch_agent_prompted_at is not None:
         return
@@ -504,16 +504,20 @@ def _offer_launch_agent(
         )
     # Persisted on every answered path — including install failure: the user
     # was asked; a flaky launchctl must not cause a re-prompt next init.
-    _persist_prompt_timestamp(settings)
+    _persist_prompt_timestamp(settings, console)
 
 
-def _persist_prompt_timestamp(settings: ChirpSettings) -> None:
+def _persist_prompt_timestamp(settings: ChirpSettings, console: Console) -> None:
     settings.init.launch_agent_prompted_at = datetime.now(UTC)
+    # Thread the console through so a corrupt-config backup+rewrite during this
+    # interactive write surfaces its warning instead of looking like silent
+    # data loss.
     _merge_config(
         ChirpSettings.get_config_path(),
         updates={
             "init": {"launch_agent_prompted_at": settings.init.launch_agent_prompted_at}
         },
+        console=console,
     )
 
 

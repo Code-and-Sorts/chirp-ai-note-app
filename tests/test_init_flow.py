@@ -999,6 +999,23 @@ def test_launch_agent_prompt_yes_installs(tmp_path, monkeypatch):
     assert _persisted_timestamp(config_path) is not None
 
 
+def test_launch_agent_persist_surfaces_corrupt_config_warning(tmp_path, monkeypatch):
+    """Persisting the prompt answer over a corrupt config warns, not silently
+    backs up — the console is threaded through _persist_prompt_timestamp."""
+    console, _install_calls, _prompt_calls, config_path = _launch_agent_env(
+        monkeypatch, tmp_path, answer=""
+    )
+    config_path.write_text("this is { not valid toml\n", encoding="utf-8")
+    settings = _fake_settings(tmp_path)
+
+    init_flow._offer_launch_agent(settings, console)
+
+    output = console.file.getvalue()
+    assert "could not be parsed" in output
+    assert list(tmp_path.glob("config.toml.bak-*"))  # backup taken
+    assert _persisted_timestamp(config_path) is not None
+
+
 def test_launch_agent_prompt_install_failure_persists_anyway(tmp_path, monkeypatch):
     console, _install_calls, _prompt_calls, config_path = _launch_agent_env(
         monkeypatch, tmp_path, answer="y"
