@@ -114,7 +114,7 @@ validate: ## Validate code compiles and imports work
 	@uv run python -c "import recorder.audio_recorder; print('Recorder imports successfully')" || echo "Recorder may need audio dependencies"
 	@uv run python -c "import transcriber.whisper_transcriber; print('Transcriber imports successfully')" || echo "Transcriber may need model downloads"
 	@uv run python -c "import notes.note_generator; print('Notes generator imports successfully')"
-	@uv run python -c "import notes_chat.index; print('Notes chat imports successfully')" || echo "Notes chat may need chirpd running"
+	@uv run python -c "import notes_chat.index; print('Notes chat imports successfully')"
 	@echo "Code validation complete!"
 
 # Quality check combination
@@ -135,7 +135,7 @@ setup: install ## Initial setup for new installations
 	@echo "Chirp setup complete!"
 	@echo "Next steps:"
 	@echo "  1. Install BlackHole: make setup-blackhole"
-	@echo "  2. Register a chat model: chirp models add mlx-community/gemma-4-4b-it-4bit"
+	@echo "  2. Register a chat model: uv run chirp models add mlx-community/gemma-4-4b-it-4bit"
 	@echo "  3. Run 'make verify-deps' to verify setup"
 
 setup-blackhole: ## Show BlackHole installation instructions
