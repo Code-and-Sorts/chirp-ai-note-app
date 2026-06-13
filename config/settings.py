@@ -145,6 +145,16 @@ class ChirpSettings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     init: InitConfig = Field(default_factory=InitConfig)
 
+    @field_validator("init", mode="before")
+    @classmethod
+    def _coerce_non_table_init(cls, value):
+        # config.toml is user-editable; a hand-written non-table `init` value
+        # (e.g. ``init = "..."``) must not fail validation and block every CLI
+        # command at load time. Fall back to defaults instead.
+        if isinstance(value, dict | InitConfig):
+            return value
+        return {}
+
     @classmethod
     def get_config_path(cls) -> Path:
         return default_chirp_home() / "config.toml"
