@@ -153,8 +153,12 @@ class MLXBackend:
             # gc only drops the Python references; MLX parks freed Metal
             # buffers in its allocator cache, so without clearing it the
             # daemon's resident memory never shrinks after an idle unload.
-            import mlx.core as mx
-
+            # Best-effort: MLX is gated to darwin+arm64, so off that platform
+            # there is no cache to clear and the import simply won't resolve.
+            try:
+                import mlx.core as mx
+            except ImportError:
+                return
             mx.clear_cache()
 
         await asyncio.to_thread(_collect_and_release)
