@@ -13,6 +13,39 @@ from notes_chat.prompting import (
 )
 
 
+class TestQuestionBounding:
+    """The user question is length-bounded + delimited in every prompt (AC-11, L2)."""
+
+    def test_grounded_prompt_bounds_and_delimits_question(self):
+        from notes_chat.prompting import MAX_QUESTION_CHARS, _grounded_answer_prompt
+
+        question = "X" * (MAX_QUESTION_CHARS + 5000)
+        prompt = _grounded_answer_prompt(question, "some context")
+        # The raw over-length question is not interpolated verbatim.
+        assert question not in prompt
+        # It is fenced inside triple quotes.
+        assert '"""' in prompt
+        # Bounded to the cap (the X-run in the prompt is <= the cap).
+        assert "X" * (MAX_QUESTION_CHARS + 1) not in prompt
+
+    def test_chat_messages_bound_question(self):
+        from notes_chat.prompting import MAX_QUESTION_CHARS, build_chat_messages
+
+        question = "Y" * (MAX_QUESTION_CHARS + 5000)
+        prompt = build_chat_messages(question, "ctx")[0]["content"]
+        assert "Y" * (MAX_QUESTION_CHARS + 1) not in prompt
+        assert '"""' in prompt
+
+    def test_conversational_prompt_bounds_question(self):
+        """L2: `_conversational_prompt` must also bound/delimit the raw question."""
+        from notes_chat.prompting import MAX_QUESTION_CHARS, _conversational_prompt
+
+        question = "Z" * (MAX_QUESTION_CHARS + 5000)
+        prompt = _conversational_prompt(question)
+        assert "Z" * (MAX_QUESTION_CHARS + 1) not in prompt
+        assert '"""' in prompt
+
+
 class TestPrompting:
     @pytest.fixture(autouse=True)
     def _llm_fakes(

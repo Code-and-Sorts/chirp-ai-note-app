@@ -31,6 +31,9 @@ def index(
 
     if force:
         console.print("[yellow]--force specified, rebuilding entire index[/yellow]")
+        from notes_chat.cache import clear_cache
+
+        clear_cache()
 
     try:
         from notes_chat.index import build_index
