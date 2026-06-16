@@ -8,8 +8,8 @@ and installs cleanly otherwise.
 
 When the bundle is present, the wheel ships a macOS-arm64 Mach-O executable
 and therefore is not pure-Python: the hook marks it non-purelib and tags it
-`py3-none-macosx_11_0_arm64` so pip refuses it on Linux/Windows/Intel instead
-of installing a binary that can only fail at runtime.
+`py3-none-macosx_13_0_arm64` so pip refuses it on Linux/Windows/Intel (and on
+macOS 11/12) instead of installing a binary that can only fail at runtime.
 """
 
 from __future__ import annotations
@@ -27,7 +27,8 @@ class CustomBuildHook(BuildHookInterface):
                 "audio_capture/CaptureAudio.app"
             )
             # py3-none keeps the wheel CPython-version-agnostic (the helper is a
-            # subprocess, not a C extension); macosx_11_0 is the arm64 floor and
-            # covers the macOS 13+ runtime requirement (audio_capture enforces it).
+            # subprocess, not a C extension); macosx_13_0 matches the helper's
+            # build target and the macOS 13+ runtime requirement, so pip refuses
+            # the wheel on macOS 11/12 rather than installing a binary that can't run.
             build_data["pure_python"] = False
-            build_data["tag"] = "py3-none-macosx_11_0_arm64"
+            build_data["tag"] = "py3-none-macosx_13_0_arm64"

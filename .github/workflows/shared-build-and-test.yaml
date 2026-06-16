@@ -169,13 +169,17 @@ jobs:
         fi
 
     - name: 🏗️ Build wheel
-      # Wheel-only distribution: chirp ships a platform wheel (macosx_*_arm64)
-      # with the bundled helper. We never build or publish an sdist — the helper
-      # can only be produced on a macOS host with Xcode CLT, so a from-source
-      # install would fail and a user-side rebuild would break the TCC identity.
+      # macOS-only: the wheel must bundle the arm64 helper and carry the
+      # macosx_*_arm64 tag. Building on a non-macOS runner would emit a
+      # py3-none-any wheel — exactly the mistag this story exists to prevent.
+      # Wheel-only distribution: we never build or publish an sdist, because the
+      # helper can only be produced on a macOS host with Xcode CLT and a
+      # user-side rebuild would break the TCC identity.
+      if: runner.os == 'macOS'
       run: uv build --wheel
 
     - name: ✅ Validate wheel metadata
+      if: runner.os == 'macOS'
       run: uvx twine check dist/*
 
     - name: 🧪 Run unit tests

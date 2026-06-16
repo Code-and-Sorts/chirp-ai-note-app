@@ -650,16 +650,22 @@ def test_wheel_is_platform_tagged_arm64(tmp_path: Path) -> None:
 
     with zipfile.ZipFile(wheels[0]) as zf:
         wheel_metadata = next(
-            zf.read(name).decode()
-            for name in zf.namelist()
-            if name.endswith(".dist-info/WHEEL")
+            (
+                zf.read(name).decode()
+                for name in zf.namelist()
+                if name.endswith(".dist-info/WHEEL")
+            ),
+            None,
         )
+    assert wheel_metadata is not None, "wheel has no .dist-info/WHEEL metadata"
     assert "Root-Is-Purelib: false" in wheel_metadata, (
         f"WHEEL still marks the package pure-Python:\n{wheel_metadata}"
     )
     tag_line = next(
-        line for line in wheel_metadata.splitlines() if line.startswith("Tag:")
+        (line for line in wheel_metadata.splitlines() if line.startswith("Tag:")),
+        None,
     )
+    assert tag_line is not None, f"WHEEL has no Tag line:\n{wheel_metadata}"
     assert re.search(r"macosx_\d+_\d+_arm64", tag_line), (
         f"WHEEL tag is not arm64 macOS: {tag_line!r}"
     )
