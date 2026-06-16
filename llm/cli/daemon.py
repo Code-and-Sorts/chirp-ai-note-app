@@ -1,10 +1,9 @@
 """``chirp daemon`` Typer subcommands.
 
-This module is the eventual home of the seven ``chirp daemon`` subcommands:
-``status`` (5.2), ``start`` / ``stop`` / ``restart`` (5.3), ``enable`` /
-``disable`` (5.4), and ``logs`` (5.5). Story 5.6 wires ``daemon_app`` into the
-top-level CLI; until then the subapp is reachable only through its Typer
-instance (``python -m`` / ``CliRunner``).
+This module implements the seven ``chirp daemon`` subcommands — ``status``,
+``start`` / ``stop`` / ``restart``, ``enable`` / ``disable``, and ``logs`` —
+and ``daemon_app`` is wired into the top-level CLI (``chirp/cli.py``), so the
+commands are reachable as ``chirp daemon <subcommand>``.
 
 ``status`` issues ``health`` then ``model.status`` via :class:`llm.client.LLMClient`
 and renders the merged snapshot — a Rich table on a TTY, a single JSON document

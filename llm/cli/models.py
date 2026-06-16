@@ -1,11 +1,10 @@
 """``chirp models`` Typer subcommands.
 
-This module is the eventual home of all six ``chirp models`` subcommands.
-Story 4.3 adds ``add`` and 4.4 adds ``list``; story 4.5 fills in the update /
-delete / refresh surface — ``show``, ``default``, ``remove``, and ``pull`` —
-each pulling on the same plumbing the model-registry epic introduces:
-HuggingFace validation/download/cache lookup (:mod:`llm.hf`), atomic registry
-writes (:mod:`llm.registry`), and daemon warm (:class:`llm.client.LLMClient`).
+This module implements all six ``chirp models`` subcommands — ``add``,
+``list``, ``show``, ``default``, ``remove``, and ``pull`` — wired into the
+top-level CLI (``chirp/cli.py``). They share the same plumbing: HuggingFace
+validation/download/cache lookup (:mod:`llm.hf`), atomic registry writes
+(:mod:`llm.registry`), and daemon warm (:class:`llm.client.LLMClient`).
 
 ``add``'s execution order is fixed (epic §3 decision 8): validate → resolve
 role → resolve alias → download → read registry → mutate → write → warm. Any

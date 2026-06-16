@@ -2,7 +2,17 @@ import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
-from config.settings import ChirpSettings
+import pytest
+
+from config.settings import (
+    DEFAULT_INFERENCE_TIMEOUT_SECONDS,
+    DEFAULT_MAX_RESIDENT_CHAT,
+    DEFAULT_MAX_RESIDENT_EMBED,
+    ChirpSettings,
+    resolve_inference_timeout_seconds,
+    resolve_max_resident_chat,
+    resolve_max_resident_embed,
+)
 
 
 class TestChirpSettings:
@@ -68,3 +78,108 @@ class TestChirpSettings:
         reloaded = ChirpSettings.load_from_file(config_path)
 
         assert reloaded.init.launch_agent_prompted_at is None
+
+
+class TestResolveInferenceTimeout:
+    """AC-1: env → config → default precedence, mirroring the idle-timeout shape."""
+
+    def test_env_override_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CHIRP_INFERENCE_TIMEOUT", "12.5")
+        assert resolve_inference_timeout_seconds() == 12.5
+
+    def test_config_value_used_when_no_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CHIRP_INFERENCE_TIMEOUT", raising=False)
+
+        class _LLM:
+            inference_timeout_seconds = 7.0
+
+        class _Settings:
+            llm = _LLM()
+
+        monkeypatch.setattr("config.settings.get_settings", lambda: _Settings())
+        assert resolve_inference_timeout_seconds() == 7.0
+
+    def test_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("CHIRP_INFERENCE_TIMEOUT", raising=False)
+
+        def _boom() -> object:
+            raise RuntimeError("config blew up")
+
+        monkeypatch.setattr("config.settings.get_settings", _boom)
+        assert resolve_inference_timeout_seconds() == DEFAULT_INFERENCE_TIMEOUT_SECONDS
+
+    def test_non_numeric_env_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CHIRP_INFERENCE_TIMEOUT", "not-a-number")
+
+        class _LLM:
+            inference_timeout_seconds = 9.0
+
+        class _Settings:
+            llm = _LLM()
+
+        monkeypatch.setattr("config.settings.get_settings", lambda: _Settings())
+        assert resolve_inference_timeout_seconds() == 9.0
+
+    def test_llm_settings_default_field(self) -> None:
+        assert (
+            ChirpSettings().llm.inference_timeout_seconds
+            == DEFAULT_INFERENCE_TIMEOUT_SECONDS
+        )
+
+
+class TestResolveResidentCaps:
+    """M1/AC-5: resident caps are operator-configurable via env → config."""
+
+    def test_chat_env_override_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CHIRP_MAX_RESIDENT_CHAT", "3")
+        assert resolve_max_resident_chat() == 3
+
+    def test_embed_env_override_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CHIRP_MAX_RESIDENT_EMBED", "2")
+        assert resolve_max_resident_embed() == 2
+
+    def test_chat_config_value_used_when_no_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CHIRP_MAX_RESIDENT_CHAT", raising=False)
+
+        class _LLM:
+            max_resident_chat = 4
+
+        class _Settings:
+            llm = _LLM()
+
+        monkeypatch.setattr("config.settings.get_settings", lambda: _Settings())
+        assert resolve_max_resident_chat() == 4
+
+    def test_falls_back_to_default_on_config_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CHIRP_MAX_RESIDENT_CHAT", raising=False)
+        monkeypatch.delenv("CHIRP_MAX_RESIDENT_EMBED", raising=False)
+
+        def _boom() -> object:
+            raise RuntimeError("config blew up")
+
+        monkeypatch.setattr("config.settings.get_settings", _boom)
+        assert resolve_max_resident_chat() == DEFAULT_MAX_RESIDENT_CHAT
+        assert resolve_max_resident_embed() == DEFAULT_MAX_RESIDENT_EMBED
+
+    def test_non_numeric_env_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CHIRP_MAX_RESIDENT_CHAT", "lots")
+
+        class _LLM:
+            max_resident_chat = 5
+
+        class _Settings:
+            llm = _LLM()
+
+        monkeypatch.setattr("config.settings.get_settings", lambda: _Settings())
+        assert resolve_max_resident_chat() == 5
+
+    def test_llm_settings_default_fields(self) -> None:
+        settings = ChirpSettings()
+        assert settings.llm.max_resident_chat == DEFAULT_MAX_RESIDENT_CHAT
+        assert settings.llm.max_resident_embed == DEFAULT_MAX_RESIDENT_EMBED

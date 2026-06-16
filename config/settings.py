@@ -11,8 +11,20 @@ from rich.console import Console
 
 CHIRP_DAEMON_SOCKET_ENV = "CHIRP_DAEMON_SOCKET"
 CHIRP_MODEL_IDLE_TIMEOUT_ENV = "CHIRP_MODEL_IDLE_TIMEOUT"
+CHIRP_INFERENCE_TIMEOUT_ENV = "CHIRP_INFERENCE_TIMEOUT"
+CHIRP_MAX_RESIDENT_CHAT_ENV = "CHIRP_MAX_RESIDENT_CHAT"
+CHIRP_MAX_RESIDENT_EMBED_ENV = "CHIRP_MAX_RESIDENT_EMBED"
 
 DEFAULT_IDLE_TIMEOUT_SECONDS = 300.0
+# Per inter-event read budget (not per whole request): a healthy stream emits a
+# token well within this, so it only fires on a wedged daemon. The first event
+# spans cold model load + first token, so it gets the larger budget below.
+DEFAULT_INFERENCE_TIMEOUT_SECONDS = 60.0
+DEFAULT_FIRST_EVENT_TIMEOUT_SECONDS = 120.0
+# Generous per-role resident cap: a typical session holds one chat + one pinned
+# embed model. Mirrors chirpd.state's defaults so config and state agree.
+DEFAULT_MAX_RESIDENT_CHAT = 1
+DEFAULT_MAX_RESIDENT_EMBED = 1
 
 
 def get_daemon_socket_override() -> Path | None:
@@ -38,6 +50,56 @@ def resolve_idle_timeout_seconds() -> float:
         return get_settings().llm.idle_timeout_seconds
     except Exception:  # noqa: BLE001 — config failures must not block daemon start
         return DEFAULT_IDLE_TIMEOUT_SECONDS
+
+
+def get_inference_timeout_override() -> float | None:
+    override = os.environ.get(CHIRP_INFERENCE_TIMEOUT_ENV)
+    if not override:
+        return None
+    try:
+        return float(override)
+    except ValueError:
+        return None
+
+
+def resolve_inference_timeout_seconds() -> float:
+    override = get_inference_timeout_override()
+    if override is not None:
+        return override
+    try:
+        return get_settings().llm.inference_timeout_seconds
+    except Exception:  # noqa: BLE001 — config failures must not block daemon start
+        return DEFAULT_INFERENCE_TIMEOUT_SECONDS
+
+
+def _resolve_resident_cap(env_var: str, config_value: int, default: int) -> int:
+    override = os.environ.get(env_var)
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            pass
+    return config_value
+
+
+def resolve_max_resident_chat() -> int:
+    try:
+        configured = get_settings().llm.max_resident_chat
+    except Exception:  # noqa: BLE001 — config failures must not block daemon start
+        configured = DEFAULT_MAX_RESIDENT_CHAT
+    return _resolve_resident_cap(
+        CHIRP_MAX_RESIDENT_CHAT_ENV, configured, DEFAULT_MAX_RESIDENT_CHAT
+    )
+
+
+def resolve_max_resident_embed() -> int:
+    try:
+        configured = get_settings().llm.max_resident_embed
+    except Exception:  # noqa: BLE001 — config failures must not block daemon start
+        configured = DEFAULT_MAX_RESIDENT_EMBED
+    return _resolve_resident_cap(
+        CHIRP_MAX_RESIDENT_EMBED_ENV, configured, DEFAULT_MAX_RESIDENT_EMBED
+    )
 
 
 class ConfigurationError(Exception):
@@ -105,6 +167,9 @@ class LLMSettings(BaseModel):
     backend: Literal["chirpd"] = "chirpd"
     daemon_socket: Path | None = None
     idle_timeout_seconds: float = DEFAULT_IDLE_TIMEOUT_SECONDS
+    inference_timeout_seconds: float = DEFAULT_INFERENCE_TIMEOUT_SECONDS
+    max_resident_chat: int = DEFAULT_MAX_RESIDENT_CHAT
+    max_resident_embed: int = DEFAULT_MAX_RESIDENT_EMBED
 
     @field_validator("daemon_socket", mode="before")
     @classmethod

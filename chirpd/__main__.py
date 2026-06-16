@@ -17,11 +17,14 @@ from chirpd.lifecycle import (
 )
 from chirpd.logging_setup import configure_logging
 from chirpd.paths import SOCKET_PATH as DEFAULT_SOCKET_PATH
+from chirpd.paths import lock_path_for_socket
 from chirpd.server import serve
 from chirpd.state import DaemonState
 from config.settings import (
     get_daemon_socket_override,
     resolve_idle_timeout_seconds,
+    resolve_max_resident_chat,
+    resolve_max_resident_embed,
 )
 from llm.registry import read_registry
 
@@ -45,11 +48,11 @@ def main() -> int:
     ensure_runtime_dirs()
 
     logger = logging.getLogger("chirpd")
-    with single_instance_lock() as acquired:
+    socket_path = _resolve_socket_path()
+    with single_instance_lock(lock_path_for_socket(socket_path)) as acquired:
         if not acquired:
             return 0
         try:
-            socket_path = _resolve_socket_path()
             backend = MLXBackend()
             registry = read_registry()
             state = DaemonState(
@@ -57,6 +60,8 @@ def main() -> int:
                 registry=registry,
                 idle_timeout_s=resolve_idle_timeout_seconds(),
                 registry_reader=read_registry,
+                max_resident_chat=resolve_max_resident_chat(),
+                max_resident_embed=resolve_max_resident_embed(),
             )
             dispatcher = Dispatcher(state=state)
             logger.info("chirpd starting", extra={"op": "startup"})

@@ -17,6 +17,12 @@ from llm.exceptions import LLMMalformedResponse
 
 DISTRIBUTION_NAME: Final[str] = "chirp-notes-ai"
 
+# Wire-format contract version. Bumped ONLY when the envelope/op/event grammar
+# changes — never on a cosmetic package release. The ``hello`` handshake
+# compares this (not ``package_version()``), so a patch/docs/dependency bump
+# keeps a warm daemon resident instead of evicting its model on a respawn.
+PROTOCOL_VERSION: Final[int] = 1
+
 
 def package_version() -> str:
     """Return the installed chirp distribution version, falling back to 0.0.0."""

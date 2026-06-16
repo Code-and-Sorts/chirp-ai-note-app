@@ -76,8 +76,7 @@ def read_registry(path: Path | None = None) -> Registry:
     if schema_version != SUPPORTED_SCHEMA_VERSION:
         raise LLMModelNotFound(
             f"models.toml schema_version {schema_version!r} not supported; "
-            "re-init your registry with `chirp models init` "
-            "(coming in EPIC-MODEL-REGISTRY)",
+            "delete the file and re-register your models with `chirp models add`",
             details={
                 "path": str(target),
                 "schema_version": schema_version,

@@ -197,3 +197,23 @@ def test_validate_request_rejects_non_dict_envelope(not_a_dict: object) -> None:
 def test_decoded_line_round_trip_preserves_order_insensitive_structure() -> None:
     payload = json.dumps({"id": "r-abcdef012345", "op": "chat"}).encode("utf-8")
     assert protocol.decode_line(payload) == {"id": "r-abcdef012345", "op": "chat"}
+
+
+def test_protocol_version_is_a_small_integer_seed() -> None:
+    # AC-2: the wire-format contract version is its own constant, seeded at 1,
+    # and is NOT the package/marketing version.
+    assert protocol.PROTOCOL_VERSION == 1
+    assert isinstance(protocol.PROTOCOL_VERSION, int)
+
+
+def test_protocol_version_is_not_derived_from_package_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A cosmetic package bump must NOT move PROTOCOL_VERSION — they are
+    # independent. Patch package_version to a different string and assert the
+    # protocol constant is unaffected (i.e. it is a fixed int, not derived).
+    monkeypatch.setattr(protocol, "package_version", lambda: "9.9.9-cosmetic")
+    assert protocol.PROTOCOL_VERSION == 1
+    assert isinstance(protocol.PROTOCOL_VERSION, int)
+    # And it is stable across calls regardless of the package version.
+    assert protocol.PROTOCOL_VERSION == 1
