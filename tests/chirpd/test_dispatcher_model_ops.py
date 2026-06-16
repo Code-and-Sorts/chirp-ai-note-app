@@ -28,6 +28,7 @@ from llm.protocol import (
     OP_MODEL_LOAD,
     OP_MODEL_STATUS,
     OP_MODEL_UNLOAD,
+    PROTOCOL_VERSION,
     new_request_id,
 )
 from llm.registry import Registry, RegistryEntry
@@ -102,6 +103,7 @@ async def _do_hello(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) 
         "id": new_request_id(),
         "op": OP_HELLO,
         "client_version": package_version(),
+        "protocol_version": PROTOCOL_VERSION,
     }
     writer.write(json.dumps(envelope).encode("utf-8") + b"\n")
     await writer.drain()

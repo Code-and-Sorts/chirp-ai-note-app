@@ -10,7 +10,7 @@ import pytest
 
 from chirpd.backend import FakeBackend
 from chirpd.state import DaemonState
-from llm.exceptions import LLMModelNotFound
+from llm.exceptions import LLMModelCapacityExceeded, LLMModelNotFound
 from llm.registry import Registry, RegistryEntry
 
 
@@ -333,3 +333,193 @@ async def test_load_without_snapshot_reresolves_current_default() -> None:
 
     loaded = await state.load("default", "chat")
     assert loaded.alias == "other"
+
+
+# --- AC-4: cancellation registration is conflict-aware and identity-safe ---
+
+
+def test_register_cancellation_refuses_duplicate_in_flight() -> None:
+    backend = FakeBackend()
+    state = DaemonState(backend=backend, registry=_registry(), idle_timeout_s=60.0)
+
+    first = asyncio.Event()
+    second = asyncio.Event()
+    assert state.register_cancellation("r-aaaaaaaaaaaa", first) is True
+    assert state.register_cancellation("r-aaaaaaaaaaaa", second) is False
+    # The original event is untouched — a cancel still reaches it, not the dup.
+    assert state.get_cancellation("r-aaaaaaaaaaaa") is first
+
+
+def test_clear_cancellation_is_identity_safe() -> None:
+    backend = FakeBackend()
+    state = DaemonState(backend=backend, registry=_registry(), idle_timeout_s=60.0)
+
+    original = asyncio.Event()
+    rejected_dup = asyncio.Event()
+    state.register_cancellation("r-bbbbbbbbbbbb", original)
+
+    # A rejected duplicate's finally must not evict the original's live event.
+    state.clear_cancellation("r-bbbbbbbbbbbb", rejected_dup)
+    assert state.get_cancellation("r-bbbbbbbbbbbb") is original
+
+    # The owning request clears its own event normally.
+    state.clear_cancellation("r-bbbbbbbbbbbb", original)
+    assert state.get_cancellation("r-bbbbbbbbbbbb") is None
+
+
+# --- AC-5: resident-cap + LRU eviction, embed-pin respected ---
+
+
+async def test_resident_cap_evicts_lru_non_in_flight_model() -> None:
+    backend = FakeBackend()
+    registry = _registry(
+        gemma=_chat_entry("mlx-community/gemma"),
+        other=_chat_entry("mlx-community/other"),
+    )
+    state = DaemonState(
+        backend=backend,
+        registry=registry,
+        idle_timeout_s=60.0,
+        max_resident_chat=1,
+    )
+
+    first = await state.load("gemma", "chat")
+    first.last_used = datetime.now(UTC) - timedelta(seconds=10)
+    await state.load("other", "chat")
+
+    assert state.get("gemma") is None, "LRU chat model should be evicted under cap"
+    assert state.get("other") is not None
+    assert backend.unload_calls, "eviction must unload the evicted model"
+
+
+async def test_concurrent_distinct_alias_loads_respect_cap() -> None:
+    # H1 regression: two concurrent loads for DIFFERENT aliases (different
+    # requests, nothing serializes them at the per-alias level) must not both
+    # pass the cap check and both load. Without the state-wide load gate both
+    # see len(resident) < cap during their overlapping backend load and end up
+    # resident together — the exact OOM the cap exists to prevent.
+    backend = FakeBackend(load_delay_s=0.05)  # widen the overlap window
+    registry = _registry(
+        gemma=_chat_entry("mlx-community/gemma"),
+        other=_chat_entry("mlx-community/other"),
+    )
+    state = DaemonState(
+        backend=backend,
+        registry=registry,
+        idle_timeout_s=60.0,
+        max_resident_chat=1,
+    )
+
+    await asyncio.gather(
+        state.load("gemma", "chat"),
+        state.load("other", "chat"),
+    )
+
+    resident_chat = [
+        alias for alias in ("gemma", "other") if state.get(alias) is not None
+    ]
+    assert len(resident_chat) == 1, (
+        f"cap=1 must hold under concurrent distinct-alias loads; "
+        f"resident chat models: {resident_chat}"
+    )
+
+
+async def test_resident_cap_never_evicts_in_flight_model() -> None:
+    backend = FakeBackend()
+    registry = _registry(
+        gemma=_chat_entry("mlx-community/gemma"),
+        other=_chat_entry("mlx-community/other"),
+    )
+    state = DaemonState(
+        backend=backend,
+        registry=registry,
+        idle_timeout_s=60.0,
+        max_resident_chat=1,
+    )
+
+    in_flight = await state.load("gemma", "chat")
+    async with in_flight.lock:
+        with pytest.raises(LLMModelCapacityExceeded):
+            await state.load("other", "chat")
+    # The in-flight model survived; nothing was evicted.
+    assert state.get("gemma") is not None
+    assert state.get("other") is None
+
+
+async def test_resident_cap_is_per_role_embed_not_evicted_by_chat() -> None:
+    backend = FakeBackend()
+    registry = _registry(
+        gemma=_chat_entry("mlx-community/gemma"),
+        other=_chat_entry("mlx-community/other"),
+        nomic=_embed_entry("mlx-community/nomic"),
+    )
+    state = DaemonState(
+        backend=backend,
+        registry=registry,
+        idle_timeout_s=60.0,
+        max_resident_chat=1,
+        max_resident_embed=1,
+    )
+
+    await state.load("nomic", "embed")
+    await state.load("gemma", "chat")
+    await state.load("other", "chat")  # evicts gemma (chat), not nomic (embed)
+
+    assert state.get("nomic") is not None, "embed pin survives a chat eviction"
+    assert state.get("other") is not None
+
+
+async def test_embed_model_not_idle_unloaded_on_timer() -> None:
+    backend = FakeBackend()
+    registry = _registry(nomic=_embed_entry())
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.05)
+
+    await state.load("nomic", "embed")
+    await asyncio.sleep(0.15)
+    assert state.get("nomic") is not None, "embed pin: no plain idle-timer unload"
+
+
+async def test_status_reports_resident_counts_caps_and_eviction() -> None:
+    backend = FakeBackend()
+    registry = _registry(
+        gemma=_chat_entry("mlx-community/gemma"),
+        other=_chat_entry("mlx-community/other"),
+    )
+    state = DaemonState(
+        backend=backend,
+        registry=registry,
+        idle_timeout_s=60.0,
+        max_resident_chat=1,
+    )
+
+    await state.load("gemma", "chat")
+    await state.load("other", "chat")  # triggers an eviction of gemma
+
+    status = state.status()
+    assert status["resident_caps"]["chat"] == 1
+    assert status["resident_counts"]["chat"] == 1
+    assert status["last_eviction"] is not None
+    assert status["last_eviction"]["alias"] == "gemma"
+    assert status["last_eviction"]["reason"] == "resident_cap"
+
+
+# --- AC-6: a long generation must not get its model idle-unloaded ---
+
+
+async def test_delayed_unload_skips_and_reschedules_while_lock_held() -> None:
+    # The core AC-6 invariant: a _delayed_unload whose sleep elapses while the
+    # model is mid-generation (lock held) must NOT unload it out from under the
+    # request — it reschedules instead.
+    backend = FakeBackend()
+    registry = _registry(gemma=_chat_entry())
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.05)
+
+    loaded = await state.load("gemma", "chat")
+
+    async with loaded.lock:
+        # Let the idle timer fire while we hold the lock (mid-generation).
+        await asyncio.sleep(0.2)
+        assert state.get("gemma") is not None, "must not unload an in-flight model"
+        assert backend.unload_calls == []
+    # After release, the rescheduled timer governs the real idle countdown.
+    assert state.get("gemma") is not None

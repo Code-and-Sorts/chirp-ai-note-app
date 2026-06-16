@@ -45,6 +45,15 @@ class LLMDaemonSpawnFailed(LLMTransportError):
     """Lazy-spawn of the daemon process could not produce a working daemon."""
 
 
+class LLMInferenceTimeout(LLMTransportError):
+    """No event arrived from the daemon within the inference read budget.
+
+    Client-local: raised when ``asyncio.wait_for`` around a per-event socket
+    read elapses. It never travels the wire, so it carries no class-level
+    ``code`` and is absent from :data:`CODE_TO_EXCEPTION`.
+    """
+
+
 class LLMProtocolError(LLMError):
     """Protocol-level violation: malformed envelope, version mismatch, etc."""
 
@@ -59,6 +68,18 @@ class LLMMalformedResponse(LLMProtocolError):
     """An envelope that cannot be produced or parsed as a valid NDJSON line."""
 
     code: ClassVar[str] = error_codes.PROTOCOL_MALFORMED
+
+
+class LLMRequestConflict(LLMProtocolError):
+    """A request id was reused while the original is still in flight."""
+
+    code: ClassVar[str] = error_codes.PROTOCOL_REQUEST_CONFLICT
+
+
+class LLMRequestNotFound(LLMProtocolError):
+    """A cancel named a target id with no matching in-flight request."""
+
+    code: ClassVar[str] = error_codes.REQUEST_NOT_FOUND
 
 
 class LLMModelError(LLMError):
@@ -89,11 +110,20 @@ class LLMCancelled(LLMModelError):
     code: ClassVar[str] = error_codes.MODEL_CANCELLED
 
 
+class LLMModelCapacityExceeded(LLMModelError):
+    """The resident-model set is full and no model is free to evict."""
+
+    code: ClassVar[str] = error_codes.MODEL_CAPACITY_EXCEEDED
+
+
 CODE_TO_EXCEPTION: dict[str, type[LLMError]] = {
     error_codes.PROTOCOL_VERSION_MISMATCH: LLMVersionMismatch,
     error_codes.PROTOCOL_MALFORMED: LLMMalformedResponse,
+    error_codes.PROTOCOL_REQUEST_CONFLICT: LLMRequestConflict,
+    error_codes.REQUEST_NOT_FOUND: LLMRequestNotFound,
     error_codes.MODEL_NOT_FOUND: LLMModelNotFound,
     error_codes.MODEL_LOAD_FAILED: LLMModelLoadFailed,
     error_codes.MODEL_GENERATION_FAILED: LLMGenerationFailed,
     error_codes.MODEL_CANCELLED: LLMCancelled,
+    error_codes.MODEL_CAPACITY_EXCEEDED: LLMModelCapacityExceeded,
 }
