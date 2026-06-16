@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Generator
 from typing import Any
 
@@ -18,6 +19,7 @@ PROMPT_VERSION = "2"
 # Bounds prompt size and shrinks the surface for prompt-shaped text smuggling
 # instructions through the question (the question is fenced, not interpolated raw).
 MAX_QUESTION_CHARS = 2000
+_QUOTE_FENCE_RUN = re.compile(r'"{3,}')
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based ONLY on the provided meeting notes and transcripts.
 
@@ -59,7 +61,9 @@ def _bound_question(question: str) -> str:
     instructions or blow up the prompt. Grounding guardrails live in
     ``SYSTEM_PROMPT`` and are left intact.
     """
-    bounded = question.strip()[:MAX_QUESTION_CHARS]
+    # Collapse any run of 3+ double-quotes so the question can't close the
+    # triple-quote fence below and smuggle instructions past the delimiter.
+    bounded = _QUOTE_FENCE_RUN.sub('""', question.strip()[:MAX_QUESTION_CHARS])
     return f'"""\n{bounded}\n"""'
 
 

@@ -76,7 +76,7 @@ def resolve_inference_timeout_seconds() -> float:
         return DEFAULT_INFERENCE_TIMEOUT_SECONDS
 
 
-def _resolve_resident_cap(env_var: str, config_value: int, default: int) -> int:
+def _resolve_resident_cap(env_var: str, config_value: int) -> int:
     override = os.environ.get(env_var)
     if override:
         try:
@@ -91,9 +91,7 @@ def resolve_max_resident_chat() -> int:
         configured = get_settings().llm.max_resident_chat
     except Exception:  # noqa: BLE001 — config failures must not block daemon start
         configured = DEFAULT_MAX_RESIDENT_CHAT
-    return _resolve_resident_cap(
-        CHIRP_MAX_RESIDENT_CHAT_ENV, configured, DEFAULT_MAX_RESIDENT_CHAT
-    )
+    return _resolve_resident_cap(CHIRP_MAX_RESIDENT_CHAT_ENV, configured)
 
 
 def resolve_max_resident_embed() -> int:
@@ -101,9 +99,7 @@ def resolve_max_resident_embed() -> int:
         configured = get_settings().llm.max_resident_embed
     except Exception:  # noqa: BLE001 — config failures must not block daemon start
         configured = DEFAULT_MAX_RESIDENT_EMBED
-    return _resolve_resident_cap(
-        CHIRP_MAX_RESIDENT_EMBED_ENV, configured, DEFAULT_MAX_RESIDENT_EMBED
-    )
+    return _resolve_resident_cap(CHIRP_MAX_RESIDENT_EMBED_ENV, configured)
 
 
 class ConfigurationError(Exception):
