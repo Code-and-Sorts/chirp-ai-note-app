@@ -9,6 +9,16 @@ from llm.protocol import new_request_id
 
 logger = logging.getLogger(__name__)
 
+# Bump whenever SYSTEM_PROMPT or _grounded_answer_prompt changes so the answer
+# cache (notes_chat/cache.py) treats answers produced by an older prompt as
+# stale and recomputes them.
+PROMPT_VERSION = "2"
+
+# Hard cap on the user question length before it is delimited into a prompt.
+# Bounds prompt size and shrinks the surface for prompt-shaped text smuggling
+# instructions through the question (the question is fenced, not interpolated raw).
+MAX_QUESTION_CHARS = 2000
+
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based ONLY on the provided meeting notes and transcripts.
 
 Guidelines:
@@ -41,9 +51,21 @@ Question: {question}
 Response:"""
 
 
+def _bound_question(question: str) -> str:
+    """Length-bound and delimit the user question for prompt interpolation.
+
+    The question is fenced inside an explicit delimiter and truncated to
+    ``MAX_QUESTION_CHARS`` so prompt-shaped text in the question can't smuggle
+    instructions or blow up the prompt. Grounding guardrails live in
+    ``SYSTEM_PROMPT`` and are left intact.
+    """
+    bounded = question.strip()[:MAX_QUESTION_CHARS]
+    return f'"""\n{bounded}\n"""'
+
+
 def build_chat_messages(question: str, context: str) -> list[dict[str, str]]:
     """Assemble the chat-message list for the ask flow's grounded-answer prompt."""
-    prompt = SYSTEM_PROMPT.format(context=context, question=question)
+    prompt = SYSTEM_PROMPT.format(context=context, question=_bound_question(question))
     return [{"role": "user", "content": prompt}]
 
 
@@ -81,11 +103,12 @@ def stream_answer_tokens(
 
 
 def _conversational_prompt(question: str) -> str:
-    return CONVERSATIONAL_PROMPT.format(question=question)
+    return CONVERSATIONAL_PROMPT.format(question=_bound_question(question))
 
 
 def _grounded_answer_prompt(question: str, context: str) -> str:
-    return f"""Answer: "{question}"
+    return f"""Answer the following question, delimited by triple quotes:
+{_bound_question(question)}
 
 Context: {context}
 

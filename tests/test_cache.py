@@ -1,4 +1,5 @@
 import json
+import time
 from unittest.mock import patch
 
 from notes_chat.cache import cache_answer, clear_cache, get_cached_answer
@@ -145,3 +146,143 @@ class TestCache:
 
             cached = get_cached_answer(question, retrieved_ids)
             assert cached == answer
+
+
+class TestCacheKeying:
+    def test_different_chat_model_changes_key(self):
+        """A `chirp models default` chat switch must invalidate the key (AC-7)."""
+        from notes_chat.cache import _generate_cache_key
+
+        question = "What was decided?"
+        ids = ["chunk1", "chunk2"]
+
+        with patch(
+            "notes_chat.cache._resolved_models", return_value=("model-a", "embed-x")
+        ):
+            key_a = _generate_cache_key(question, ids)
+        with patch(
+            "notes_chat.cache._resolved_models", return_value=("model-b", "embed-x")
+        ):
+            key_b = _generate_cache_key(question, ids)
+
+        assert key_a != key_b
+
+    def test_different_embed_model_changes_key(self):
+        from notes_chat.cache import _generate_cache_key
+
+        question = "What was decided?"
+        ids = ["chunk1"]
+        with patch(
+            "notes_chat.cache._resolved_models", return_value=("model-a", "embed-x")
+        ):
+            key_x = _generate_cache_key(question, ids)
+        with patch(
+            "notes_chat.cache._resolved_models", return_value=("model-a", "embed-y")
+        ):
+            key_y = _generate_cache_key(question, ids)
+
+        assert key_x != key_y
+
+    def test_prompt_version_changes_key(self):
+        """Bumping the prompt version must invalidate cached answers (AC-7)."""
+        from notes_chat import cache as cache_module
+
+        question = "What was decided?"
+        ids = ["chunk1"]
+        with patch(
+            "notes_chat.cache._resolved_models", return_value=("model-a", "embed-x")
+        ):
+            with patch.object(cache_module, "PROMPT_VERSION", "1"):
+                key_v1 = cache_module._generate_cache_key(question, ids)
+            with patch.object(cache_module, "PROMPT_VERSION", "2"):
+                key_v2 = cache_module._generate_cache_key(question, ids)
+
+        assert key_v1 != key_v2
+
+    def test_stale_answer_from_old_model_is_not_returned(self, tmp_path):
+        """An answer cached under model-a is a miss after switching to model-b."""
+        with patch("notes_chat.cache.get_notes_config") as mock_config:
+            mock_config.return_value.notes_chat.index_dir = tmp_path
+            question = "What was decided?"
+            ids = ["chunk1"]
+
+            with patch(
+                "notes_chat.cache._resolved_models",
+                return_value=("model-a", "embed-x"),
+            ):
+                cache_answer(question, ids, "old-model answer")
+                assert get_cached_answer(question, ids) == "old-model answer"
+
+            with patch(
+                "notes_chat.cache._resolved_models",
+                return_value=("model-b", "embed-x"),
+            ):
+                assert get_cached_answer(question, ids) is None
+
+
+class TestCacheEviction:
+    def test_ttl_expired_entry_is_a_miss(self, tmp_path):
+        with patch("notes_chat.cache.get_notes_config") as mock_config:
+            mock_config.return_value.notes_chat.index_dir = tmp_path
+            cache_answer("q", ["c1"], "answer")
+
+            with patch("notes_chat.cache.CACHE_TTL_SECONDS", -1):
+                assert get_cached_answer("q", ["c1"]) is None
+            # And the stale file is pruned.
+            assert list((tmp_path / "cache").glob("*.json")) == []
+
+    def test_size_eviction_settles_at_cap_not_one(self, tmp_path):
+        """Filling well past the cap settles the count AT the cap, not at 1.
+
+        Regression for H2: `entries[:overflow]` with a negative overflow (when
+        under the cap) is a negative slice that deletes almost everything, so the
+        cache collapsed to a tiny size (e.g. 2). Each `cache_answer` after the
+        first write would re-trigger that, leaving ~1 entry. The fix guards
+        `overflow <= 0`.
+        """
+        cap = 10
+        with patch("notes_chat.cache.get_notes_config") as mock_config:
+            mock_config.return_value.notes_chat.index_dir = tmp_path
+            with patch("notes_chat.cache.CACHE_MAX_ENTRIES", cap):
+                for i in range(30):
+                    cache_answer(f"q{i}", [f"c{i}"], f"a{i}")
+                    time.sleep(0.005)
+
+            files = list((tmp_path / "cache").glob("*.json"))
+            # Settles exactly at the cap — NOT collapsed to ~1 by the negative
+            # slice, and NOT growing unbounded.
+            assert len(files) == cap
+
+    def test_under_cap_does_not_evict(self, tmp_path):
+        """When under the cap, nothing is evicted (the H2 negative-slice trap)."""
+        with patch("notes_chat.cache.get_notes_config") as mock_config:
+            mock_config.return_value.notes_chat.index_dir = tmp_path
+            with patch("notes_chat.cache.CACHE_MAX_ENTRIES", 500):
+                for i in range(5):
+                    cache_answer(f"q{i}", [f"c{i}"], f"a{i}")
+                    time.sleep(0.005)
+
+            files = list((tmp_path / "cache").glob("*.json"))
+            assert len(files) == 5  # all kept; old bug would leave ~2
+
+    def test_force_reindex_clears_cache(self, tmp_path):
+        """`chirp index --force` must invalidate the answer cache (AC-7)."""
+        from typer.testing import CliRunner
+
+        from notes_chat.cli import app
+
+        with patch("notes_chat.cache.get_notes_config") as mock_config:
+            mock_config.return_value.notes_chat.index_dir = tmp_path
+            cache_answer("q1", ["c1"], "a1")
+            cache_answer("q2", ["c2"], "a2")
+            assert len(list((tmp_path / "cache").glob("*.json"))) == 2
+
+        with (
+            patch("notes_chat.cli.get_notes_config"),
+            patch("notes_chat.index.build_index", return_value={"success": True}),
+            patch("notes_chat.cache.get_notes_config") as cli_cache_config,
+        ):
+            cli_cache_config.return_value.notes_chat.index_dir = tmp_path
+            CliRunner().invoke(app, ["index", "--force"])
+
+        assert list((tmp_path / "cache").glob("*.json")) == []

@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+import tomllib
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -11,14 +12,21 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from rich.console import Console
 
+from chirp.exceptions import EmbedModelChanged
 from config.settings import ChirpSettings
 from llm.client import LLMClient
 from llm.exceptions import LLMError
 from notes_chat.types import Chunk, NoteMeta
+from utils.file_utils import META_FILENAME, _resolve_created_at
 
 logger = logging.getLogger(__name__)
 
 console = Console()
+
+COLLECTION_NAME = "notes"
+TEMP_COLLECTION_NAME = "notes_rebuild"
+EMBED_ALIAS_KEY = "embed_alias"
+EMBED_DIM_KEY = "embed_dim"
 
 
 class IndexManager:
@@ -33,8 +41,9 @@ class IndexManager:
             settings=ChromaSettings(allow_reset=True),
         )
         self.collection = self.chroma_client.get_or_create_collection(
-            name="notes", metadata={"hnsw:space": "cosine"}
+            name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
         )
+        self._temp_collection = None
 
         self.manifest_file = self.settings.index_dir / "manifest.json"
         self.bm25_file = self.settings.index_dir / "bm25.json"
@@ -45,11 +54,12 @@ class IndexManager:
         progress_callback: Callable | None = None,
     ) -> dict[str, Any]:
         """Build or update the search index."""
+        if force:
+            return self._force_rebuild(progress_callback)
+
         try:
             self.config.ensure_directories_exist()
-
-            if force:
-                self._reset_index()
+            self._ensure_embed_fingerprint()
 
             manifest = self._load_manifest()
             current_files = self._scan_notes_files()
@@ -69,7 +79,7 @@ class IndexManager:
             )
 
             total_changes = len(added_files) + len(modified_files) + len(removed_files)
-            if total_changes == 0 and not force:
+            if total_changes == 0:
                 return {
                     "success": True,
                     "message": "Index is up to date",
@@ -77,22 +87,31 @@ class IndexManager:
                 }
 
             processed_count = 0
+            failed_files: list[str] = []
 
             for file_path in removed_files:
                 self._remove_from_index(file_path)
+                manifest.pop(file_path, None)
                 processed_count += 1
                 if progress_callback:
                     progress_callback()
 
             for file_path in added_files + modified_files:
                 if self._add_to_index(Path(file_path)):
+                    # Record only files that actually indexed, so a failed embed
+                    # is retried next run instead of being marked done forever.
+                    manifest[file_path] = current_files[file_path]
                     processed_count += 1
                     if progress_callback:
                         progress_callback()
+                else:
+                    manifest.pop(file_path, None)
+                    failed_files.append(file_path)
 
-            new_manifest = current_files
-            self._save_manifest(new_manifest)
+            self._save_manifest(manifest)
             self._rebuild_bm25()
+            self._stamp_fingerprint_if_missing()
+            self._report_failures(failed_files)
 
             return {
                 "success": True,
@@ -100,27 +119,212 @@ class IndexManager:
                 "added": len(added_files),
                 "modified": len(modified_files),
                 "removed": len(removed_files),
+                "failed": len(failed_files),
             }
 
         except Exception as e:  # noqa: BLE001 - build_index orchestrates many subsystems
             logger.debug("Index build failed: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
 
-    def _reset_index(self):
-        """Reset the entire index."""
-        try:
-            self.chroma_client.delete_collection("notes")
-        except Exception as exc:  # noqa: BLE001 - chromadb raises various internal exceptions
-            logger.debug("Could not delete chroma collection: %s", exc)
+    def _force_rebuild(
+        self, progress_callback: Callable | None = None
+    ) -> dict[str, Any]:
+        """Rebuild the whole index atomically: the prior index survives a crash.
 
-        self.collection = self.chroma_client.get_or_create_collection(
-            name="notes", metadata={"hnsw:space": "cosine"}
+        The new vectors are written into a temp collection and the new
+        manifest/bm25 into temp files; only after the add loop completes are the
+        old artifacts swapped out. An interruption (Ctrl-C, embed failure mid-run)
+        therefore leaves the previous collection, manifest, and bm25.json intact
+        rather than the empty/partial state the up-front delete used to produce.
+        """
+        try:
+            self.config.ensure_directories_exist()
+
+            current_files = self._scan_notes_files()
+            temp_collection = self._reset_temp_collection()
+
+            new_manifest: dict[str, Any] = {}
+            failed_files: list[str] = []
+            processed_count = 0
+
+            active_collection = self.collection
+            self.collection = temp_collection
+            try:
+                for file_path in current_files:
+                    if self._add_to_index(Path(file_path)):
+                        new_manifest[file_path] = current_files[file_path]
+                        processed_count += 1
+                        if progress_callback:
+                            progress_callback()
+                    else:
+                        failed_files.append(file_path)
+            finally:
+                self.collection = active_collection
+
+            self._promote_temp_collection()
+            self._write_fingerprint_metadata(self.collection)
+            self._save_manifest(new_manifest)
+            self._rebuild_bm25()
+            self._report_failures(failed_files)
+
+            return {
+                "success": True,
+                "files_processed": processed_count,
+                "added": len(new_manifest),
+                "modified": 0,
+                "removed": 0,
+                "failed": len(failed_files),
+            }
+
+        except Exception as e:  # noqa: BLE001 - force rebuild orchestrates many subsystems
+            logger.debug("Index force-rebuild failed: %s", e, exc_info=True)
+            self._discard_temp_collection()
+            return {"success": False, "error": str(e)}
+
+    def _report_failures(self, failed_files: list[str]) -> None:
+        if not failed_files:
+            return
+        names = ", ".join(Path(path).parent.name for path in failed_files)
+        console.print(
+            f"[yellow]{len(failed_files)} note(s) failed to index and will be "
+            f"retried next run: {names}[/yellow]"
         )
 
-        if self.manifest_file.exists():
-            self.manifest_file.unlink()
-        if self.bm25_file.exists():
-            self.bm25_file.unlink()
+    def _reset_temp_collection(self):
+        """Create a fresh temp collection the force rebuild writes into."""
+        try:
+            self.chroma_client.delete_collection(TEMP_COLLECTION_NAME)
+        except Exception as exc:  # noqa: BLE001 - chromadb raises various internal exceptions
+            logger.debug("Could not delete temp chroma collection: %s", exc)
+
+        self._temp_collection = self.chroma_client.get_or_create_collection(
+            name=TEMP_COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
+        )
+        return self._temp_collection
+
+    def _promote_temp_collection(self):
+        """Swap the freshly-built temp collection in for the live one.
+
+        The old ``notes`` collection is only touched here, after the rebuild's
+        add loop has finished — so an interruption before this point leaves the
+        previous index fully intact. The swap deletes the old collection and
+        renames the temp into its place (chromadb 1.5.6 ``modify(name=...)``),
+        which avoids re-adding every vector. The non-atomic window is two
+        metadata ops (delete-old → rename-temp); chromadb has no transactional
+        rename, so a crash *between* them would leave no ``notes`` collection,
+        but the manifest/bm25 are still rewritten only after this returns, and
+        the next build recreates the empty collection.
+        """
+        if self._temp_collection is None:
+            return
+
+        try:
+            self.chroma_client.delete_collection(COLLECTION_NAME)
+        except Exception as exc:  # noqa: BLE001 - chromadb raises various internal exceptions
+            logger.debug("Could not delete live chroma collection: %s", exc)
+
+        self._temp_collection.modify(name=COLLECTION_NAME)
+        self.collection = self.chroma_client.get_or_create_collection(
+            name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
+        )
+        self._temp_collection = None
+
+    def _discard_temp_collection(self):
+        try:
+            self.chroma_client.delete_collection(TEMP_COLLECTION_NAME)
+        except Exception as exc:  # noqa: BLE001 - chromadb raises various internal exceptions
+            logger.debug("Could not delete temp chroma collection: %s", exc)
+        self._temp_collection = None
+
+    def _resolved_embed_alias(self) -> str:
+        """Resolve the active embed model alias from the registry (best effort).
+
+        Used as the human-readable half of the collection's embed fingerprint.
+        Falls back to ``"unknown"`` so fingerprinting never blocks indexing when
+        the registry is absent (the dimension half still catches real changes).
+        """
+        try:
+            from llm.registry import read_registry
+
+            return read_registry().default_embed or "unknown"
+        except Exception as exc:  # noqa: BLE001 - registry IO/parse: fingerprint is best-effort
+            logger.debug("Could not resolve embed alias: %s", exc)
+            return "unknown"
+
+    def _stored_fingerprint(self) -> tuple[str | None, int | None]:
+        metadata = self.collection.metadata or {}
+        alias = metadata.get(EMBED_ALIAS_KEY)
+        dim = metadata.get(EMBED_DIM_KEY)
+        return (alias, int(dim) if dim is not None else None)
+
+    def _current_vector_dim(self) -> int | None:
+        try:
+            sample = self.collection.get(include=["embeddings"], limit=1)
+        except Exception as exc:  # noqa: BLE001 - chromadb raises various internal exceptions
+            logger.debug("Could not sample vector dimension: %s", exc)
+            return None
+        embeddings = sample.get("embeddings")
+        if embeddings is not None and len(embeddings) > 0:
+            return len(embeddings[0])
+        return None
+
+    def _write_fingerprint_metadata(self, collection) -> None:
+        # `collection.modify` rejects the `hnsw:space` key (the distance function
+        # is fixed at creation), so the fingerprint metadata omits it. The cosine
+        # space set at creation still governs retrieval.
+        metadata: dict[str, Any] = {EMBED_ALIAS_KEY: self._resolved_embed_alias()}
+        dim = None
+        try:
+            sample = collection.get(include=["embeddings"], limit=1)
+            embeddings = sample.get("embeddings")
+            if embeddings is not None and len(embeddings) > 0:
+                dim = len(embeddings[0])
+        except Exception as exc:  # noqa: BLE001 - chromadb raises various internal exceptions
+            logger.debug("Could not read vector dimension for fingerprint: %s", exc)
+        if dim is not None:
+            metadata[EMBED_DIM_KEY] = dim
+        try:
+            collection.modify(metadata=metadata)
+        except Exception as exc:  # noqa: BLE001 - chromadb raises various internal exceptions
+            logger.debug("Could not write embed fingerprint: %s", exc)
+
+    def _stamp_fingerprint_if_missing(self) -> None:
+        """Write the embed fingerprint after the first incremental build.
+
+        A force rebuild stamps it explicitly; an index first populated by an
+        incremental build (or auto-index) would otherwise carry no fingerprint,
+        so a later model change couldn't be detected. Only stamps when absent and
+        the collection actually has vectors.
+        """
+        stored_alias, stored_dim = self._stored_fingerprint()
+        if stored_alias is not None or stored_dim is not None:
+            return
+        if self._current_vector_dim() is None:
+            return
+        self._write_fingerprint_metadata(self.collection)
+
+    def _ensure_embed_fingerprint(self) -> None:
+        """Guard incremental builds against an embed-model/dimension change.
+
+        ``.docs/embeddings.md`` invites swapping the embed model, but new-dim
+        vectors silently mismatch the old ones. If the active embed alias differs
+        from the fingerprint stored on the collection, raise an actionable error
+        telling the user to rebuild — rather than appending mismatched vectors.
+        """
+        stored_alias, stored_dim = self._stored_fingerprint()
+        if stored_alias is None and stored_dim is None:
+            return
+
+        current_alias = self._resolved_embed_alias()
+        if (
+            stored_alias not in (None, "unknown")
+            and current_alias != "unknown"
+            and current_alias != stored_alias
+        ):
+            raise EmbedModelChanged(
+                f"embed model changed ({stored_alias!r} → {current_alias!r}); "
+                "run `chirp index --force` to rebuild the index"
+            )
 
     def _scan_notes_files(self) -> dict[str, dict[str, Any]]:
         """Scan per-note directories and return file signatures."""
@@ -211,12 +415,7 @@ class IndexManager:
             title_match = re.search(r"^# (.+)$", content, re.MULTILINE)
             title = title_match.group(1) if title_match else file_path.stem
 
-            date_match = re.search(r"(\d{4}-\d{2}-\d{2})", file_path.name)
-            if date_match:
-                date = datetime.strptime(date_match.group(1), "%Y-%m-%d")
-            else:
-                stat = file_path.stat()
-                date = datetime.fromtimestamp(stat.st_mtime)
+            date = self._resolve_meeting_date(file_path.parent)
 
             participants = []
             participant_matches = re.findall(
@@ -246,6 +445,24 @@ class IndexManager:
             )
             return None
 
+    def _resolve_meeting_date(self, note_dir: Path) -> datetime:
+        """Return the canonical (naive-local) meeting date for a note directory.
+
+        Reuses ``utils.file_utils._resolve_created_at`` — the single source of
+        truth that prefers ``meta.toml``'s ``date`` and falls back to the note
+        directory's mtime. The note file's own mtime is deliberately NOT used:
+        regenerating ``notes.md`` must not move a meeting's date to "today".
+        """
+        meta: dict[str, Any] = {}
+        meta_path = note_dir / META_FILENAME
+        if meta_path.exists():
+            try:
+                with meta_path.open("rb") as fh:
+                    meta = dict(tomllib.load(fh))
+            except (OSError, tomllib.TOMLDecodeError):
+                meta = {}
+        return _resolve_created_at(meta, note_dir)
+
     def _chunk_content(
         self, file_path: Path, content: str, meta: NoteMeta
     ) -> list[Chunk]:
@@ -265,7 +482,11 @@ class IndexManager:
                 continue
 
             if len(section) <= self.settings.chunk_size:
-                chunk_id = f"{file_path.stem}_{i:03d}"
+                # Prefix by the note's slug (parent dir), not file_path.stem —
+                # the stem is always "notes" so stem-prefixed ids collide across
+                # every note, and Chroma's add silently keeps only one note's
+                # chunks per id. The slug is unique per note directory.
+                chunk_id = f"{file_path.parent.name}_{i:03d}"
                 norm = re.sub(r"\s+", " ", section.strip()).lower()
                 content_hash = hashlib.sha256(norm.encode()).hexdigest()[:16]
 
@@ -280,7 +501,7 @@ class IndexManager:
                 )
             else:
                 for j, chunk_text in enumerate(self._split_large_section(section)):
-                    chunk_id = f"{file_path.stem}_{i:03d}_{j:03d}"
+                    chunk_id = f"{file_path.parent.name}_{i:03d}_{j:03d}"
                     norm = re.sub(r"\s+", " ", chunk_text.strip()).lower()
                     content_hash = hashlib.sha256(norm.encode()).hexdigest()[:16]
 
@@ -360,6 +581,32 @@ class IndexManager:
         except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes
             logger.debug("Failed to rebuild BM25 index: %s", e)
             console.print(f"[yellow]Failed to rebuild BM25 index: {e}[/yellow]")
+
+    def append_bm25_for_file(self, file_path: str) -> None:
+        """Incrementally merge one note's chunks into the BM25 lexicon.
+
+        Used by the auto-index-on-save path so a single save doesn't trigger a
+        full-corpus re-tokenize (a burst of N saves would otherwise cost N full
+        rebuilds — see AC-6).
+        """
+        try:
+            from notes_chat.bm25 import append_bm25_index
+
+            records = self.collection.get(where={"path": file_path})
+            doc_ids = records.get("ids") or []
+            documents = records.get("documents") or []
+            if doc_ids:
+                # Chunk ids are `{slug}_NNN`; purge ghost ids for this note that
+                # vanished when it was re-chunked into fewer chunks.
+                slug_prefix = f"{Path(file_path).parent.name}_"
+                append_bm25_index(
+                    self.bm25_file,
+                    doc_ids,
+                    documents,
+                    stale_id_prefix=slug_prefix,
+                )
+        except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes
+            logger.debug("Failed to append BM25 index for %s: %s", file_path, e)
 
 
 def build_index(

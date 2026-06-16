@@ -204,3 +204,80 @@ class TestNoteGenerator:
 
         assert result["success"] is False
         assert "Insufficient" in result["error"]
+
+    def test_parse_failure_retries_once(self, mock_settings):
+        """Unparsable output is retried once before giving up (AC-12)."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            with patch.object(
+                generator, "_call_llm", return_value="not xml at all"
+            ) as mock_llm:
+                result = generator._generate_structured_notes("a transcript")
+
+        assert result is None
+        assert mock_llm.call_count == 2  # initial + one retry
+
+    def test_parse_failure_does_not_write_or_index_junk_note(
+        self, mock_settings, tmp_path
+    ):
+        """A persistent parse failure writes no note and triggers no auto-index."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(
+                tmp_path,
+                title="Broken",
+                transcript=(
+                    "This transcript is long enough to clear the 50-char minimum "
+                    "but the model keeps returning unparsable garbage."
+                ),
+            )
+
+            with (
+                patch.object(generator, "_call_llm", return_value="garbage, no xml"),
+                patch.object(generator, "_auto_index_note") as mock_index,
+            ):
+                result = generator._generate_for_record(record, force=False)
+
+        assert result["success"] is False
+        assert result.get("degraded") is True
+        assert not (record.dir / "notes.md").exists()  # no junk note on disk
+        mock_index.assert_not_called()  # nothing poisons the index
+
+    def test_long_transcript_is_windowed_with_warning(self, mock_settings):
+        """A transcript past the cap is windowed (not silently truncated) (AC-11)."""
+        from notes.note_generator import MAX_TRANSCRIPT_CHARS
+
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            console = Mock()
+            generator = NoteGenerator(mock_settings, console=console)
+            long_transcript = "word " * (MAX_TRANSCRIPT_CHARS)  # well over the cap
+
+            with (
+                patch.object(generator, "_call_llm", return_value=None) as mock_llm,
+                patch.object(
+                    generator,
+                    "_parse_xml_response",
+                    return_value={"meeting_title": "T"},
+                ),
+            ):
+                generator._generate_structured_notes(long_transcript)
+
+            sent_prompt = mock_llm.call_args.args[0]
+
+        # The transcript injected into the prompt is bounded by the cap.
+        assert len(sent_prompt) < len(long_transcript)
+        # The user was warned about truncation.
+        warned = any(
+            "truncating" in str(call.args[0]).lower()
+            for call in console.print.call_args_list
+        )
+        assert warned
