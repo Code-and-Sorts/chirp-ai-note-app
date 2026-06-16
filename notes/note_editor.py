@@ -24,7 +24,7 @@ class EditorResult:
 class PlainHeading(Heading):
     """Render h1 headings without Rich's default border."""
 
-    def __rich_console__(self, console: Console, options):  # type: ignore[override]
+    def __rich_console__(self, console: Console, options):
         text = self.text
         text.justify = "left"
         yield text

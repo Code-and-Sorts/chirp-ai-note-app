@@ -2,12 +2,16 @@ import os
 import tomllib
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import tomli_w
 from platformdirs import user_documents_dir
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from rich.console import Console
+
+SUPPORTED_CONFIG_SCHEMA_VERSION = 1
+
+_MISSING = object()
 
 CHIRP_DAEMON_SOCKET_ENV = "CHIRP_DAEMON_SOCKET"
 CHIRP_MODEL_IDLE_TIMEOUT_ENV = "CHIRP_MODEL_IDLE_TIMEOUT"
@@ -199,6 +203,7 @@ class InitConfig(BaseModel):
 
 
 class ChirpSettings(BaseModel):
+    schema_version: int = SUPPORTED_CONFIG_SCHEMA_VERSION
     directories: DirectoriesConfig = Field(default_factory=DirectoriesConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
@@ -241,10 +246,117 @@ class ChirpSettings(BaseModel):
             console.print(f"[dim]Edit {config_path} to customize settings[/dim]")
             return settings
 
-        with config_path.open("rb") as config_file:
-            config_data = tomllib.load(config_file)
+        warnings = Console(stderr=True)
+        try:
+            with config_path.open("rb") as config_file:
+                config_data = tomllib.load(config_file)
+        except tomllib.TOMLDecodeError as error:
+            cls._emit_warning(
+                warnings,
+                f"Warning: {config_path} is not valid TOML ({error}); falling "
+                "back to default settings. Fix the file or run `chirp init` to "
+                "reset it.",
+            )
+            return cls()
 
-        return cls(**config_data)
+        cls._warn_on_schema_version(config_data, config_path, warnings)
+        cls._warn_on_unknown_top_level_keys(config_data, config_path, warnings)
+        return cls._validate_tolerantly(config_data, config_path, warnings)
+
+    @staticmethod
+    def _emit_warning(console: Console, message: str) -> None:
+        # markup=False + soft_wrap keep file paths and bracketed section names
+        # intact (Rich would treat ``[monitoring]`` as a style tag and wrap long
+        # paths across lines, breaking the user-facing warning).
+        console.print(message, style="yellow", markup=False, soft_wrap=True)
+
+    @classmethod
+    def _warn_on_schema_version(
+        cls, config_data: dict[str, Any], config_path: Path, warnings: Console
+    ) -> None:
+        version = config_data.get("schema_version")
+        # A non-int version is a type error handled by the per-field recovery
+        # path; only warn here on a well-formed but unsupported version number
+        # so a bad type does not double-warn.
+        if isinstance(version, int) and version != SUPPORTED_CONFIG_SCHEMA_VERSION:
+            cls._emit_warning(
+                warnings,
+                f"Warning: {config_path} has schema_version {version!r}, which "
+                f"this chirp does not recognise "
+                f"(supported: {SUPPORTED_CONFIG_SCHEMA_VERSION}). Continuing with "
+                "best-effort defaults; delete the file or run `chirp init` to "
+                "reset it.",
+            )
+
+    @classmethod
+    def _warn_on_unknown_top_level_keys(
+        cls, config_data: dict[str, Any], config_path: Path, warnings: Console
+    ) -> None:
+        unknown_keys = set(config_data) - set(cls.model_fields)
+        for key in sorted(unknown_keys):
+            cls._emit_warning(
+                warnings,
+                f"Warning: unknown config section [{key}] in {config_path} was "
+                "ignored. Check for a typo or a renamed section.",
+            )
+
+    @classmethod
+    def _validate_tolerantly(
+        cls, config_data: dict[str, Any], config_path: Path, warnings: Console
+    ) -> "ChirpSettings":
+        recovered = dict(config_data)
+        for _ in range(len(recovered) + 1):
+            try:
+                return cls(**recovered)
+            except ValidationError as error:
+                dropped = cls._drop_invalid_fields(
+                    recovered, error, config_path, warnings
+                )
+                if not dropped:
+                    break
+
+        cls._emit_warning(
+            warnings,
+            f"Warning: {config_path} could not be fully parsed; falling back to "
+            "default settings.",
+        )
+        return cls()
+
+    @classmethod
+    def _drop_invalid_fields(
+        cls,
+        recovered: dict[str, Any],
+        error: ValidationError,
+        config_path: Path,
+        warnings: Console,
+    ) -> bool:
+        dropped = False
+        for entry in error.errors():
+            location = entry.get("loc", ())
+            if not location:
+                continue
+            field_path = ".".join(str(part) for part in location)
+            section = location[0]
+            if section not in recovered:
+                continue
+            if cls._drop_field(recovered, location):
+                dropped = True
+                cls._emit_warning(
+                    warnings,
+                    f"Warning: config field '{field_path}' in {config_path} is "
+                    f"invalid (value {entry.get('input')!r}); using the default "
+                    "instead.",
+                )
+        return dropped
+
+    @classmethod
+    def _drop_field(cls, recovered: dict[str, Any], location: tuple) -> bool:
+        if len(location) == 1:
+            return recovered.pop(location[0], _MISSING) is not _MISSING
+        parent = recovered.get(location[0])
+        if not isinstance(parent, dict):
+            return recovered.pop(location[0], _MISSING) is not _MISSING
+        return parent.pop(location[1], _MISSING) is not _MISSING
 
     def save_to_file(self, config_path: Path):
         config_path.parent.mkdir(parents=True, exist_ok=True)
