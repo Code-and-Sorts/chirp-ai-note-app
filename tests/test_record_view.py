@@ -115,7 +115,7 @@ class TestRecordTagFlag:
     def test_repeated_tag_flags_reach_recorder(self, tmp_path, monkeypatch):
         from typer.testing import CliRunner
 
-        import chirp.cli
+        from chirp.cli import app
         from config.settings import ChirpSettings
 
         captured: dict = {}
@@ -175,7 +175,7 @@ class TestRecordTagFlag:
 
         runner = CliRunner()
         result = runner.invoke(
-            chirp.cli.app,
+            app,
             [
                 "record",
                 "--title",

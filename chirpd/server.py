@@ -58,7 +58,7 @@ async def serve(socket_path: Path, dispatcher: Dispatcher) -> None:
             return_when=asyncio.FIRST_COMPLETED,
         )
     except asyncio.CancelledError:  # pragma: no cover — cancel path covered via _run
-        pass
+        _logger.debug("serve() cancelled while awaiting shutdown")
     finally:
         shutdown_waiter.cancel()
         if not serve_forever_task.done():
@@ -66,8 +66,8 @@ async def serve(socket_path: Path, dispatcher: Dispatcher) -> None:
         for task in (serve_forever_task, shutdown_waiter):
             try:
                 await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+            except (asyncio.CancelledError, Exception) as exc:  # noqa: BLE001
+                _logger.debug("serve() teardown task raised: %s", exc)
         await _close_server(server)
         _unlink_stale_socket(socket_path)
 
@@ -76,8 +76,8 @@ async def _close_server(server: asyncio.base_events.Server) -> None:
     server.close()
     try:
         await server.wait_closed()
-    except Exception:  # noqa: BLE001 — best-effort teardown
-        pass
+    except Exception as exc:  # noqa: BLE001 — best-effort teardown
+        _logger.debug("server.wait_closed() raised during teardown: %s", exc)
 
 
 def _ensure_socket_parent(socket_path: Path) -> None:
@@ -92,8 +92,8 @@ def _ensure_socket_parent(socket_path: Path) -> None:
     parent.mkdir(parents=True, exist_ok=True, mode=paths.RUNTIME_DIR_MODE)
     try:
         parent.chmod(paths.RUNTIME_DIR_MODE)
-    except OSError:  # pragma: no cover — best-effort on an unowned parent
-        pass
+    except OSError as exc:  # pragma: no cover — best-effort on an unowned parent
+        _logger.debug("could not tighten socket parent %s permissions: %s", parent, exc)
 
 
 async def _bind_with_restricted_umask(
@@ -123,7 +123,7 @@ def _unlink_stale_socket(socket_path: Path) -> None:
         if socket_path.is_socket():
             socket_path.unlink()
     except FileNotFoundError:
-        pass
+        _logger.debug("stale socket %s already removed", socket_path)
 
 
 async def _handle_connection(
@@ -270,8 +270,8 @@ async def _write_event(writer: asyncio.StreamWriter, envelope: dict[str, Any]) -
     try:
         writer.write(encode_event(envelope))
         await writer.drain()
-    except (ConnectionResetError, BrokenPipeError):  # pragma: no cover
-        pass
+    except (ConnectionResetError, BrokenPipeError) as exc:  # pragma: no cover
+        _logger.debug("could not write event; peer closed connection: %s", exc)
 
 
 async def _safe_close(writer: asyncio.StreamWriter) -> None:
@@ -279,5 +279,5 @@ async def _safe_close(writer: asyncio.StreamWriter) -> None:
         if not writer.is_closing():
             writer.close()
         await writer.wait_closed()
-    except (ConnectionResetError, BrokenPipeError, OSError):  # pragma: no cover
-        pass
+    except (ConnectionResetError, BrokenPipeError, OSError) as exc:  # pragma: no cover
+        _logger.debug("could not close writer cleanly: %s", exc)

@@ -30,10 +30,12 @@ def socket_path() -> Iterator[Path]:
             if path.exists():
                 path.unlink()
         except OSError:
+            # Best-effort cleanup: the temp file may already be removed.
             pass
         try:
             tmp_dir.rmdir()
         except OSError:
+            # Best-effort cleanup: the temp directory may be missing or non-empty.
             pass
 
 
@@ -56,6 +58,7 @@ async def running_server(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (TimeoutError, asyncio.CancelledError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -87,6 +90,7 @@ async def client_connection(
             try:
                 await writer.wait_closed()
             except (ConnectionResetError, BrokenPipeError, OSError):
+                # Best-effort teardown: the writer/peer may already be gone.
                 pass
 
 

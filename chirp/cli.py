@@ -190,12 +190,12 @@ def _restore_terminal(fd: int | None, old_settings) -> None:
 
         try:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        except (termios.error, OSError):
-            pass
+        except (termios.error, OSError) as exc:
+            logger.debug("could not restore terminal attributes on teardown: %s", exc)
     try:
         console.show_cursor(True)
-    except Exception:  # noqa: BLE001 - cursor restore is best-effort on teardown
-        pass
+    except Exception as exc:  # noqa: BLE001 - cursor restore is best-effort on teardown
+        logger.debug("could not restore cursor visibility on teardown: %s", exc)
 
 
 def _resolve_mic_name(device_manager) -> str:
@@ -1082,8 +1082,8 @@ def _resolve_display_title(record: NoteRecord) -> str:
                 stripped = raw.strip()
                 if stripped.startswith("# "):
                     return stripped[2:].strip()
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug("could not read note title from %s: %s", record.notes, exc)
     return record.slug
 
 

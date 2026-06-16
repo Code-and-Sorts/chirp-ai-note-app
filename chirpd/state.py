@@ -431,7 +431,7 @@ class DaemonState:
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            _logger.debug("idle-unload task for %s cancelled", model.alias)
 
 
 def _alias_for_default(registry: Registry, role: ModelRole) -> str:

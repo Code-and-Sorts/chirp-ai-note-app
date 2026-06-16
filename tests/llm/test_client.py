@@ -151,6 +151,7 @@ def test_health_sync_against_in_process_daemon(
             try:
                 await asyncio.wait_for(task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
+                # Best-effort teardown: the task is already being cancelled.
                 pass
 
     payload = asyncio.run(_drive())
@@ -712,6 +713,7 @@ async def test_chat_stream_yields_tokens(temp_socket_path: Path) -> None:
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -754,6 +756,7 @@ async def test_chat_non_streaming_returns_concatenated_string(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -791,6 +794,7 @@ async def test_embed_batched_round_trip(temp_socket_path: Path) -> None:
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -843,13 +847,14 @@ async def test_cancel_in_flight_chat_raises_llm_cancelled(
         await asyncio.sleep(0.15)
         await cancel_client.cancel(chat_request_id)
         with pytest.raises(LLMCancelled):
-            await chat_task
+            _ = await chat_task
     finally:
         if not task.done():
             task.cancel()
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -892,6 +897,7 @@ async def test_chat_propagates_model_generation_failed(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -941,6 +947,7 @@ def test_chat_stream_sync_returns_generator(temp_socket_path: Path) -> None:
             try:
                 await asyncio.wait_for(task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
+                # Best-effort teardown: the task is already being cancelled.
                 pass
 
     tokens = asyncio.run(_drive())
@@ -1347,6 +1354,7 @@ async def test_model_list_against_in_process_daemon(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -1389,6 +1397,7 @@ async def test_model_load_unload_round_trip(temp_socket_path: Path) -> None:
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -1433,6 +1442,7 @@ async def test_model_status_returns_rich_dict(temp_socket_path: Path) -> None:
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 

@@ -66,6 +66,7 @@ class _DaemonHarness:
             try:
                 loop.run_until_complete(self._serve_task)
             except asyncio.CancelledError:
+                # Best-effort teardown: the task is already being cancelled.
                 pass
             finally:
                 loop.close()
@@ -103,10 +104,12 @@ def socket_path() -> Iterator[Path]:
         if path.exists():
             path.unlink()
     except OSError:
+        # Best-effort cleanup: the temp file may already be removed.
         pass
     try:
         tmp.rmdir()
     except OSError:
+        # Best-effort cleanup: the temp directory may be missing or non-empty.
         pass
 
 

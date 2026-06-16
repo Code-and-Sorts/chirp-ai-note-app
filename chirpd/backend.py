@@ -23,9 +23,11 @@ ModelRole = Literal["chat", "embed"]
 class LLMBackend(Protocol):
     """Inference-backend protocol used by ``DaemonState``."""
 
-    async def load(self, repo: str, role: ModelRole) -> Any: ...
+    async def load(self, repo: str, role: ModelRole) -> Any:
+        """Load ``repo`` for ``role`` and return an opaque model handle."""
 
-    async def unload(self, handle: Any) -> None: ...
+    async def unload(self, handle: Any) -> None:
+        """Release the resources held by a previously loaded ``handle``."""
 
     def stream_generate(
         self,
@@ -34,13 +36,15 @@ class LLMBackend(Protocol):
         options: dict[str, Any],
         should_stop: asyncio.Event,
         usage_out: dict[str, int],
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[str]:
+        """Yield generated tokens until exhaustion or ``should_stop`` is set."""
 
     async def embed(
         self,
         handle: Any,
         inputs: list[str],
-    ) -> list[list[float]]: ...
+    ) -> list[list[float]]:
+        """Return one embedding vector per input string."""
 
 
 class MLXBackend:

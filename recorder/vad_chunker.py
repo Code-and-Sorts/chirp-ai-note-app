@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import collections
+import logging
 import queue
 import threading
 from collections.abc import Callable
 
 from recorder.live_types import AudioFrame, SpeechChunk
+
+logger = logging.getLogger(__name__)
 
 SILERO_FRAME_SAMPLES_16K = 512
 SILERO_FRAME_MS = 32
@@ -177,8 +180,10 @@ class VADChunker(threading.Thread):
         event = DashboardEvent(type=event_type, payload=payload)
         try:
             self.event_queue.put_nowait(event)
-        except queue.Full:
-            pass
+        except queue.Full as exc:
+            logger.debug(
+                "dropped dashboard %s event; event queue full: %s", event_type, exc
+            )
 
 
 class _SileroVADWrapper:

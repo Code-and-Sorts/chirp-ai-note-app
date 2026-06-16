@@ -240,8 +240,8 @@ class LiveTranscriptionSession:
                 event = DashboardEvent(type="level", payload={"value": level})
                 try:
                     self.event_queue.put_nowait(event)
-                except queue.Full:
-                    pass
+                except queue.Full as exc:
+                    logger.debug("dropped level event; event queue full: %s", exc)
 
         threading.Thread(target=forward_levels, daemon=True).start()
 
@@ -266,8 +266,8 @@ class LiveTranscriptionSession:
 
             try:
                 self.chunk_queue.put_nowait(chunk)
-            except queue.Full:
-                pass
+            except queue.Full as exc:
+                logger.debug("dropped speech chunk; chunk queue full: %s", exc)
 
         def forward_frames():
             frame_duration = self.audio_stream.frame_duration
@@ -302,8 +302,8 @@ class LiveTranscriptionSession:
     def _publish_event(self, event: DashboardEvent):
         try:
             self.event_queue.put_nowait(event)
-        except queue.Full:
-            pass
+        except queue.Full as exc:
+            logger.debug("dropped %s event; event queue full: %s", event.type, exc)
 
     @property
     def _debug_dir(self) -> Path:

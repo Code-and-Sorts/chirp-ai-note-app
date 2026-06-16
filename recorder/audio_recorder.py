@@ -178,7 +178,7 @@ class AudioRecorder:
             except KeyboardInterrupt:
                 self._is_recording_event.clear()
         except KeyboardInterrupt:
-            pass
+            logger.debug("recording interrupted by user; stopping capture")
         except Exception:
             shutil.rmtree(note_dir, ignore_errors=True)
             raise

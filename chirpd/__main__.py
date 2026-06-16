@@ -28,6 +28,8 @@ from config.settings import (
 )
 from llm.registry import read_registry
 
+_logger = logging.getLogger("chirpd")
+
 _REQUIRED_MACHINE = "arm64"
 
 
@@ -47,7 +49,6 @@ def main() -> int:
     configure_logging(to_stderr=sys.stdout.isatty())
     ensure_runtime_dirs()
 
-    logger = logging.getLogger("chirpd")
     socket_path = _resolve_socket_path()
     with single_instance_lock(lock_path_for_socket(socket_path)) as acquired:
         if not acquired:
@@ -64,14 +65,14 @@ def main() -> int:
                 max_resident_embed=resolve_max_resident_embed(),
             )
             dispatcher = Dispatcher(state=state)
-            logger.info("chirpd starting", extra={"op": "startup"})
+            _logger.info("chirpd starting", extra={"op": "startup"})
 
             try:
                 asyncio.run(_run(socket_path, dispatcher))
             except KeyboardInterrupt:
-                pass
+                _logger.debug("chirpd interrupted by user; shutting down")
         finally:
-            logger.info("chirpd stopped", extra={"op": "shutdown"})
+            _logger.info("chirpd stopped", extra={"op": "shutdown"})
     return 0
 
 
@@ -86,13 +87,15 @@ async def _run(socket_path: Path, dispatcher: Dispatcher) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, _request_stop)
-        except NotImplementedError:  # pragma: no cover — non-Unix loops
-            pass
+        except NotImplementedError as exc:  # pragma: no cover — non-Unix loops
+            _logger.debug(
+                "signal handler for %s unsupported on this loop: %s", sig, exc
+            )
 
     try:
         await serve_task
     except asyncio.CancelledError:
-        pass
+        _logger.debug("serve task cancelled during shutdown")
 
 
 if __name__ == "__main__":

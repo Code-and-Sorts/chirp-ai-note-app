@@ -41,10 +41,12 @@ def chat_socket_path() -> Iterator[Path]:
         if path.exists():
             path.unlink()
     except OSError:
+        # Best-effort cleanup: the temp file may already be removed.
         pass
     try:
         tmp_dir.rmdir()
     except OSError:
+        # Best-effort cleanup: the temp directory may be missing or non-empty.
         pass
 
 
@@ -86,6 +88,7 @@ async def chat_server(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
 
@@ -138,6 +141,7 @@ async def _close(writer: asyncio.StreamWriter) -> None:
         try:
             await writer.wait_closed()
         except (ConnectionResetError, BrokenPipeError, OSError):
+            # Best-effort teardown: the writer/peer may already be gone.
             pass
 
 
@@ -590,7 +594,7 @@ class _LateCancelBackend(FakeBackend):
         super().__init__(chat_tokens=tokens)
         self.cancel_fired = False
 
-    async def stream_generate(self, handle, messages, options, should_stop, usage_out):  # type: ignore[no-untyped-def]
+    async def stream_generate(self, handle, messages, options, should_stop, usage_out):
         self.last_messages = list(messages)
         self.last_options = dict(options)
         self.last_prompt = "<assistant>"
@@ -634,6 +638,7 @@ async def test_late_cancel_after_full_stream_is_graceful(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
 
     # The late cancel really fired (the test isn't a tautology)...
@@ -695,10 +700,12 @@ async def test_idle_unload_race_keeps_model_resident_after_long_generation() -> 
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # Best-effort teardown: the task is already being cancelled.
             pass
         try:
             if socket_path.exists():
                 socket_path.unlink()
             socket_dir.rmdir()
         except OSError:
+            # Best-effort cleanup: the temp directory may be missing or non-empty.
             pass

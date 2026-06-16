@@ -26,9 +26,16 @@ repos:
       - id: check-yaml
       - id: check-merge-conflict
 
-  # Optional: Type checking (can be slow)
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.7.1
+  # Type checking — run through the project env (uv) so it matches
+  # `make check` / CI exactly: resolves chromadb/mlx/etc. types and the
+  # pyproject `files`/`warn_unused_ignores` config, instead of an isolated
+  # mirrors-mypy env that can't see runtime deps (which produced spurious
+  # unused-ignore errors on the chromadb type: ignore[arg-type] comments).
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [types-PyYAML, types-requests, types-python-dateutil]
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false

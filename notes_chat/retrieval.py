@@ -470,8 +470,8 @@ def _create_chunk_header(data: dict[str, Any]) -> str:
             try:
                 date_obj = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
                 date_str = date_obj.strftime("%Y-%m-%d")
-            except (ValueError, AttributeError):
-                pass
+            except (ValueError, AttributeError) as exc:
+                logger.debug("could not normalize source date %r: %s", date_str, exc)
 
         path = metadata.get("path", "Unknown")
         filename = Path(path).name if path != "Unknown" else "Unknown"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import select
@@ -25,6 +26,8 @@ from rich.table import Table
 from rich.text import Text
 
 from recorder.live_types import DashboardEvent, TranscriptSegment
+
+logger = logging.getLogger(__name__)
 
 
 class LiveDashboard:
@@ -86,8 +89,8 @@ class LiveDashboard:
                     termios.tcsetattr(
                         self._stdin_fd, termios.TCSADRAIN, self._old_settings
                     )
-                except (termios.error, OSError):
-                    pass
+                except (termios.error, OSError) as exc:
+                    logger.debug("could not restore terminal attributes: %s", exc)
 
     def _handle_scroll_up(self):
         with self._lock:
@@ -261,7 +264,6 @@ class LiveDashboard:
 
         if auto_scroll:
             visible_segments = segments[-max_lines:]
-            start_idx = max(0, len(segments) - max_lines)
         else:
             end_idx = len(segments) - scroll_offset
             start_idx = max(0, end_idx - max_lines)

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
-import llm
 from llm import error_codes
 from llm.exceptions import (
     CODE_TO_EXCEPTION,
@@ -149,4 +150,5 @@ def test_re_exports_from_llm_package() -> None:
         "LLMCancelled",
         "LLMModelCapacityExceeded",
     ):
-        assert hasattr(llm, name), f"llm package should re-export {name}"
+        llm_package = importlib.import_module("llm")
+        assert hasattr(llm_package, name), f"llm package should re-export {name}"

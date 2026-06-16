@@ -44,5 +44,5 @@ def single_instance_lock(
         finally:
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
+            except OSError as exc:
+                _logger.debug("could not release chirpd lock: %s", exc)

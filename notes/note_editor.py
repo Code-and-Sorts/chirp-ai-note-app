@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import curses
+import logging
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -10,6 +11,8 @@ from rich.console import Console
 from rich.markdown import Heading, Markdown
 from rich.segment import Segment
 from rich.style import Style
+
+logger = logging.getLogger(__name__)
 
 _HAS_ITALIC = hasattr(curses, "A_ITALIC")
 _ITALIC_ATTR = getattr(curses, "A_ITALIC", 0)
@@ -199,8 +202,8 @@ class ManualNoteEditor:
         try:
             stdscr.addstr(height - 1, 0, " " * max(1, width - 1), status_attr)
             stdscr.addstr(height - 1, 0, status, status_attr)
-        except curses.error:
-            pass
+        except curses.error as exc:
+            logger.debug("could not draw status line: %s", exc)
 
         if self.mode == "view":
             cursor_screen_y = 0
@@ -213,8 +216,13 @@ class ManualNoteEditor:
 
         try:
             stdscr.move(cursor_screen_y, cursor_screen_x)
-        except curses.error:
-            pass
+        except curses.error as exc:
+            logger.debug(
+                "could not move cursor to (%d, %d): %s",
+                cursor_screen_y,
+                cursor_screen_x,
+                exc,
+            )
 
         stdscr.refresh()
 
@@ -226,8 +234,8 @@ class ManualNoteEditor:
         try:
             stdscr.addstr(hint_row, 0, " " * max(1, width - 1))
             stdscr.addstr(hint_row, 0, hint, attr)
-        except curses.error:
-            pass
+        except curses.error as exc:
+            logger.debug("could not draw keybinding hint: %s", exc)
 
     def _render_help_overlay(
         self, stdscr: curses.window, height: int, width: int
@@ -261,8 +269,8 @@ class ManualNoteEditor:
             display_line = line[:text_width]
             try:
                 stdscr.addstr(idx, 0, display_line, attr)
-            except curses.error:
-                pass
+            except curses.error as exc:
+                logger.debug("could not draw insert-mode line %d: %s", idx, exc)
 
     def _render_view_mode(
         self, stdscr: curses.window, text_height: int, text_width: int
@@ -302,8 +310,10 @@ class ManualNoteEditor:
             attr = self._style_to_attr(segment.style, "view")
             try:
                 stdscr.addstr(screen_row, col, snippet, attr)
-            except curses.error:
-                pass
+            except curses.error as exc:
+                logger.debug(
+                    "could not draw segment at row %d col %d: %s", screen_row, col, exc
+                )
             col += len(snippet)
 
     def _status_line(self, width: int) -> str:
@@ -619,8 +629,8 @@ class ManualNoteEditor:
         curses.start_color()
         try:
             curses.use_default_colors()
-        except curses.error:
-            pass
+        except curses.error as exc:
+            logger.debug("could not use terminal default colors: %s", exc)
 
         insert_attr = self._register_color_pair(
             self._default_fg["insert"], self._default_bg["insert"]
@@ -822,7 +832,7 @@ class ManualNoteEditor:
             self._readonly_notified = True
             try:
                 curses.beep()
-            except curses.error:
-                pass
+            except curses.error as exc:
+                logger.debug("could not emit terminal beep: %s", exc)
         else:
             self.message = "Read-only note"
