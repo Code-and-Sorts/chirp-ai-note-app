@@ -24,8 +24,9 @@ jobs:
         uv run pytest tests/ -v --cov=chirp --cov=config --cov=recorder --cov=transcriber --cov=notes --cov=utils --cov-report=xml
 
     - name: Build package
+      # Wheel-only distribution (see shared-build-and-test.yaml); never build an sdist.
       run: |
-        uv build
+        uv build --wheel
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v7

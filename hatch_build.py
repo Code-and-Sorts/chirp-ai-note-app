@@ -1,10 +1,15 @@
-"""Hatchling build hook: include CaptureAudio.app only when it exists.
+"""Hatchling build hook: bundle CaptureAudio.app and platform-tag the wheel.
 
 The Swift helper is a build artifact (gitignored).  A plain force-include
 entry errors at install time in environments that haven't run the Swift
 build step (CI, dev installs, etc.).  This hook adds the bundle
 conditionally so the wheel works when built locally after `make build`,
 and installs cleanly otherwise.
+
+When the bundle is present, the wheel ships a macOS-arm64 Mach-O executable
+and therefore is not pure-Python: the hook marks it non-purelib and tags it
+`py3-none-macosx_11_0_arm64` so pip refuses it on Linux/Windows/Intel instead
+of installing a binary that can only fail at runtime.
 """
 
 from __future__ import annotations
@@ -21,3 +26,8 @@ class CustomBuildHook(BuildHookInterface):
             build_data["force_include"]["audio_capture/CaptureAudio.app"] = (
                 "audio_capture/CaptureAudio.app"
             )
+            # py3-none keeps the wheel CPython-version-agnostic (the helper is a
+            # subprocess, not a C extension); macosx_11_0 is the arm64 floor and
+            # covers the macOS 13+ runtime requirement (audio_capture enforces it).
+            build_data["pure_python"] = False
+            build_data["tag"] = "py3-none-macosx_11_0_arm64"
