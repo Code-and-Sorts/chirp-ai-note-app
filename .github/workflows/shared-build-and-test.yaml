@@ -180,7 +180,9 @@ jobs:
 
     - name: ✅ Validate wheel metadata
       if: runner.os == 'macOS'
-      run: uvx twine check dist/*
+      # Only the wheel — `dist/` also holds the CI-written VERSION.txt, which
+      # `twine check` rejects as an unknown distribution format.
+      run: uvx twine check dist/*.whl
 
     - name: 🧪 Run unit tests
       run: uv run pytest --cov --cov-report=term
