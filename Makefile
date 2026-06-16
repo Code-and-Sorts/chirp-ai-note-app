@@ -67,7 +67,7 @@ test-file: ## Run a single test file (FILE=tests/test_settings.py)
 test-match: ## Run tests matching a pattern (PATTERN=slugify)
 	uv run pytest -k "$(PATTERN)"
 
-test-coverage: ## Run tests with coverage report
+test-coverage: ## Run tests with coverage report (fails below the pyproject fail_under floor)
 	uv run pytest --cov --cov-report=html --cov-report=term
 
 test-failed: ## Run only failed tests from last run
@@ -120,7 +120,7 @@ validate: ## Validate code compiles and imports work
 # Quality check combination
 check: validate style-check type-check ## Run all quality checks (excluding tests)
 
-ci: lint format-check type-check test ## Run CI checks (lint, format, type-check, test)
+ci: lint format-check type-check test-coverage ## Run CI checks (lint, format, type-check, test with coverage floor)
 
 # Dependency management
 verify-deps: ## Verify dependencies via chirp init --recheck

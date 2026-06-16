@@ -8,6 +8,7 @@ from config.settings import (
     DEFAULT_INFERENCE_TIMEOUT_SECONDS,
     DEFAULT_MAX_RESIDENT_CHAT,
     DEFAULT_MAX_RESIDENT_EMBED,
+    SUPPORTED_CONFIG_SCHEMA_VERSION,
     ChirpSettings,
     resolve_inference_timeout_seconds,
     resolve_max_resident_chat,
@@ -78,6 +79,102 @@ class TestChirpSettings:
         reloaded = ChirpSettings.load_from_file(config_path)
 
         assert reloaded.init.launch_agent_prompted_at is None
+
+
+class TestTolerantConfigLoad:
+    """AC-1/AC-2/AC-3: a hand-edited config never bricks the CLI at load."""
+
+    def test_malformed_value_does_not_block_load(self, tmp_path, capsys):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[monitoring]\nwarning_minutes = "soon"\n', encoding="utf-8"
+        )
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert reloaded.monitoring.warning_minutes == 60
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "warning_minutes" in captured.err
+        assert str(config_path) in captured.err
+
+    def test_malformed_field_preserves_other_valid_fields(self, tmp_path, capsys):
+        config_path = tmp_path / "config.toml"
+        custom_root = tmp_path / "my-notes"
+        config_path.write_text(
+            f'[directories]\nnotes_root = "{custom_root}"\n\n[notes_chat]\nk = "ten"\n',
+            encoding="utf-8",
+        )
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert reloaded.notes_chat.k == 10
+        assert reloaded.directories.notes_root == custom_root
+        assert "k" in capsys.readouterr().err
+
+    def test_unknown_schema_version_warns_but_loads(self, tmp_path, capsys):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("schema_version = 999\n", encoding="utf-8")
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert isinstance(reloaded, ChirpSettings)
+        captured = capsys.readouterr()
+        assert "schema_version" in captured.err
+        assert "999" in captured.err
+
+    def test_missing_schema_version_defaults_to_current(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[monitoring]\nwarning_minutes = 30\n", encoding="utf-8")
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert reloaded.schema_version == SUPPORTED_CONFIG_SCHEMA_VERSION
+        assert reloaded.monitoring.warning_minutes == 30
+
+    def test_schema_version_round_trips_through_save(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        ChirpSettings().save_to_file(config_path)
+
+        with config_path.open("rb") as fh:
+            parsed = tomllib.load(fh)
+
+        assert parsed["schema_version"] == SUPPORTED_CONFIG_SCHEMA_VERSION
+
+    def test_unknown_top_level_key_warns(self, tmp_path, capsys):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[notez]\nfoo = 1\n", encoding="utf-8")
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert isinstance(reloaded, ChirpSettings)
+        assert "notez" in capsys.readouterr().err
+
+    def test_invalid_toml_does_not_block_load(self, tmp_path, capsys):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[monitoring\nwarning_minutes = "', encoding="utf-8")
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert isinstance(reloaded, ChirpSettings)
+        assert reloaded.monitoring.warning_minutes == 60
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "not valid TOML" in captured.err
+        assert str(config_path) in captured.err
+
+    def test_bad_type_schema_version_warns_once(self, tmp_path, capsys):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('schema_version = "v1"\n', encoding="utf-8")
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert reloaded.schema_version == SUPPORTED_CONFIG_SCHEMA_VERSION
+        warning_lines = [
+            line for line in capsys.readouterr().err.splitlines() if "Warning:" in line
+        ]
+        assert len(warning_lines) == 1
+        assert "does not recognise" not in "\n".join(warning_lines)
 
 
 class TestResolveInferenceTimeout:

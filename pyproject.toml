@@ -50,6 +50,7 @@ dev = [
     "types-python-dateutil>=2.8.0",
     "codespell>=2.2.0",
     "pre-commit>=3.0.0",
+    "pyyaml>=6.0.0",
 ]
 
 [tool.ruff]
@@ -147,6 +148,12 @@ omit = [
 ]
 
 [tool.coverage.report]
+# Single source of truth for the coverage floor, honored by every path that
+# runs `--cov` + a report (both workflows, `make ci`, `make test-coverage`).
+# Set just below the measured TOTAL (84% with 8.5 landed) to absorb run-to-run
+# variance from the MLX `# pragma: no cover` paths and platform-skipped audio
+# tests. Ratchet toward 84%+ as cli.py coverage continues to rise.
+fail_under = 82
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
@@ -161,6 +168,13 @@ exclude_lines = [
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+# Staged tightening (story 8.6, stage 1): two cheap flags that add type
+# discipline without churn. `ignore_missing_imports` stays true because
+# MLX/chromadb/silero ship no stubs. Stage 2 (follow-up): per-module
+# `[[tool.mypy.overrides]]` with `disallow_untyped_defs = true` for the new
+# typed surfaces (chirp, llm, chirpd, registry), ratcheting outward.
+warn_unused_ignores = true
+no_implicit_optional = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
 files = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
@@ -176,4 +190,5 @@ dev = [
     "types-python-dateutil>=2.8.0",
     "codespell>=2.2.0",
     "pre-commit>=3.0.0",
+    "pyyaml>=6.0.0",
 ]

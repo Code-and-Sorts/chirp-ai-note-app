@@ -13,6 +13,15 @@
         "github/gh-aw-actions/**"
       ],
       "enabled": false
+    },
+    {
+      "description": "Exact-pinned MLX deps drive the only real-inference code path, which is `# pragma: no cover` and never exercised by CI's FakeBackend. A green check on a bump proves nothing about real inference, so these require manual review before merge.",
+      "matchPackageNames": [
+        "mlx-lm",
+        "mlx-embeddings"
+      ],
+      "automerge": false,
+      "platformAutomerge": false
     }
   ]
 }
