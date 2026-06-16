@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -94,36 +95,48 @@ def run_search(settings: Any, options: SearchOptions) -> dict:
     }
 
 
-def render_results(console: Console, options: SearchOptions, result: dict) -> None:
+def render_results(
+    stdout_console: Console,
+    stderr_console: Console,
+    options: SearchOptions,
+    result: dict,
+) -> None:
+    """Render a search result with output split per clig.dev.
+
+    The result table and per-note excerpt blocks are *data* → ``stdout_console``;
+    the searching-preamble, optional scope line, match summary, and footer hints
+    are *chrome* → ``stderr_console`` so ``chirp search ... 2>/dev/null`` leaves
+    only the matches in the data stream.
+    """
     query = options.query
     total = result["total_notes_scanned"]
     matches = result["matches"]
 
-    console.print()
-    console.print(
+    stderr_console.print()
+    stderr_console.print(
         f" [dim]searching {total} {_plural(total, 'note')} for[/dim] "
         f'[bold yellow]"{query}"[/bold yellow] '
         f"[dim]· keyword (ripgrep over transcripts + notes)[/dim]"
     )
-    console.print()
+    stderr_console.print()
 
     if options.since_minutes is not None:
-        console.print(
+        stderr_console.print(
             f" [dim]scope: last {_humanize_duration(options.since_minutes)}[/dim]"
         )
-        console.print()
+        stderr_console.print()
 
     if not matches:
         return
 
     note_count = len(matches)
     match_count = sum(m["hits"] for m in matches)
-    console.print(
+    stderr_console.print(
         f" [bold white]{note_count} {_plural(note_count, 'note')}[/bold white] "
         f"[dim]· {match_count} {_plural(match_count, 'match', 'matches')} "
         f"· {result['duration_seconds']:.2f}s[/dim]"
     )
-    console.print()
+    stderr_console.print()
 
     table = Table(
         show_header=True,
@@ -143,11 +156,11 @@ def render_results(console: Console, options: SearchOptions, result: dict) -> No
             _format_date(match["date"]),
             str(match["hits"]),
         )
-    console.print(table)
-    console.print()
+    stdout_console.print(table)
+    stdout_console.print()
 
     for match in matches:
-        console.print(
+        stdout_console.print(
             f" [bold yellow]› #{match['id']} {match['title']}[/bold yellow] "
             f"[dim]· {_format_date(match['date'])}[/dim]"
         )
@@ -158,12 +171,14 @@ def render_results(console: Console, options: SearchOptions, result: dict) -> No
                 else f"notes.md:{excerpt['line']}"
             )
             text = _markup_excerpt(excerpt["text"], options.query, options.regex)
-            console.print(f"   [dim]{prefix}[/dim]  {text}")
-        console.print()
+            stdout_console.print(f"   [dim]{prefix}[/dim]  {text}")
+        stdout_console.print()
 
     top_id = matches[0]["id"]
-    console.print(f" [dim]› chirp notes view {top_id}      · open a result[/dim]")
-    console.print(
+    stderr_console.print(
+        f" [dim]› chirp notes view {top_id}      · open a result[/dim]"
+    )
+    stderr_console.print(
         f' [dim]› chirp ask "{query}"          · semantic answer instead[/dim]'
     )
 
@@ -398,3 +413,13 @@ def _levenshtein(a: str, b: str) -> int:
 
 def emit_json(result: dict) -> str:
     return json.dumps(result, indent=2)
+
+
+def write_json(result: dict) -> None:
+    """Write the search result as raw JSON to stdout (no Rich console).
+
+    Routing JSON through a Rich console risks reflow/markup mangling, so the
+    document is written straight to ``sys.stdout`` (mirrors
+    ``llm/cli/daemon.py`` and ``models.py``).
+    """
+    sys.stdout.write(emit_json(result) + "\n")
