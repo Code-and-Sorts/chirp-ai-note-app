@@ -55,6 +55,13 @@ class VADChunker(threading.Thread):
         self._frame_count = 0
         self._speech_frame_count = 0
         self._chunk_count = 0
+        self._dropped_chunks = 0
+        self._dropped_chunks_lock = threading.Lock()
+
+    @property
+    def dropped_chunks(self) -> int:
+        with self._dropped_chunks_lock:
+            return self._dropped_chunks
 
     def run(self):
         while not self.stop_event.is_set():
@@ -151,7 +158,16 @@ class VADChunker(threading.Thread):
                 },
             )
         except queue.Full:
-            pass
+            # The transcriber can't keep up; this speech chunk is lost from the
+            # live transcript only. The saved WAV is written upstream and stays
+            # complete. Count and surface the loss instead of dropping silently.
+            with self._dropped_chunks_lock:
+                self._dropped_chunks += 1
+                dropped = self._dropped_chunks
+            # The dashboard event is best-effort (it can itself be queue-dropped);
+            # the authoritative total is `dropped_chunks`, read into
+            # LiveSessionResult and the final summary at end of session.
+            self._publish_event("dropped", {"dropped_chunks": dropped})
 
     def _publish_event(self, event_type: str, payload: dict):
         if self.event_queue is None:

@@ -494,13 +494,20 @@ def check_permissions() -> dict[str, str]:
                 "capture_audio binary not found. Build it with: "
                 "python -m audio_capture.build"
             )
-        result = subprocess.run(
-            [str(binary_path), "--check-permissions"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [str(binary_path), "--check-permissions"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AudioCaptureStartTimeout(
+                "The capture helper did not respond to --check-permissions "
+                "within 3s; it may be wedged. Check System Settings → Privacy "
+                "& Security (Microphone and Screen Recording) and try again."
+            ) from exc
     if result.returncode != 0:
         raise RuntimeError(
             f"capture_audio --check-permissions exited {result.returncode}: "

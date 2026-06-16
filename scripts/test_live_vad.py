@@ -16,9 +16,9 @@ from recorder.vad_chunker import VADChunker
 
 def main():
     settings = get_settings()
-    device_manager = DeviceManager()
 
-    device_index = device_manager.get_recommended_device()
+    with DeviceManager() as device_manager:
+        device_index = device_manager.get_recommended_device()
     if device_index is None:
         print("No suitable audio input device found.")
         return 1
@@ -35,7 +35,6 @@ def main():
 
     audio_stream = LiveAudioStream(
         settings=settings,
-        device_manager=device_manager,
         frame_queue=frame_queue,
         stop_event=stop_event,
         level_queue=level_queue,

@@ -264,7 +264,6 @@ def record(
     from utils.time_utils import parse_timeframe
 
     settings = get_settings()
-    device_manager = DeviceManager()
 
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
     if title is None and is_tty:
@@ -289,7 +288,6 @@ def record(
     if live_transcribe:
         _run_live_transcription(
             settings,
-            device_manager,
             title,
             duration,
             debug_live=debug_live,
@@ -297,8 +295,9 @@ def record(
         )
         return
 
-    recorder = AudioRecorder(settings, device_manager)
-    mic_name = _resolve_mic_name(device_manager)
+    recorder = AudioRecorder(settings)
+    with DeviceManager() as device_manager:
+        mic_name = _resolve_mic_name(device_manager)
     state = _RecordViewState(
         title=title,
         cap_minutes=duration,
@@ -392,12 +391,12 @@ def record(
 
 def _run_live_transcription(
     settings,
-    device_manager,
     title: str | None,
     duration: int | None,
     debug_live: bool = False,
     tags: list[str] | None = None,
 ):
+    from chirp.exceptions import WhisperModelLoadError
     from recorder.live_session import LiveSessionResult, LiveTranscriptionSession
 
     if title:
@@ -407,7 +406,6 @@ def _run_live_transcription(
 
     session = LiveTranscriptionSession(
         settings=settings,
-        device_manager=device_manager,
         console=console,
         title=title,
         duration_minutes=duration,
@@ -419,6 +417,9 @@ def _run_live_transcription(
         result: LiveSessionResult = session.run()
     except ImportError as e:
         console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    except WhisperModelLoadError as e:
+        console.print(f"[red]{e!s}[/red]")
         raise typer.Exit(1)
     except RecordingError as e:
         console.print(f"[red]Live recording error: {e!s}[/red]")
@@ -432,6 +433,15 @@ def _run_live_transcription(
     console.print(
         f"[dim]Duration:[/dim] {format_duration(result.duration_seconds)}  •  [dim]Live words transcribed:[/dim] {result.total_words}"
     )
+    if result.dropped_chunks > 0 or result.dropped_frames > 0:
+        console.print(
+            f"[yellow]⚠ This machine couldn't keep up: "
+            f"{result.dropped_chunks} speech chunk(s) and "
+            f"{result.dropped_frames} audio frame(s) were dropped, so the live "
+            f"transcript may be incomplete. The saved audio.wav is complete and "
+            f"unaffected — run 'chirp transcribe' for the full transcript."
+            f"[/yellow]"
+        )
     console.print(
         "[dim]Run 'chirp transcribe' to generate the high-quality transcript.[/dim]"
     )
@@ -486,7 +496,13 @@ def transcribe(
     if model:
         console.print(f"[cyan]Using Whisper model: {model}[/cyan]")
 
-    processor = BatchProcessor(settings, model_override=model)
+    from chirp.exceptions import WhisperModelLoadError
+
+    try:
+        processor = BatchProcessor(settings, model_override=model)
+    except WhisperModelLoadError as e:
+        console.print(f"[red]{e!s}[/red]")
+        raise typer.Exit(1)
     processor.run_queue(n=n, force=force, console=console)
 
 
@@ -1105,11 +1121,10 @@ def devices():
     """List available audio devices"""
     from recorder.device_manager import DeviceManager
 
-    device_manager = DeviceManager()
-    devices_info = device_manager.list_devices()
-
-    default_input_index = device_manager.get_default_input_device()
-    default_output_index = device_manager.get_default_output_device()
+    with DeviceManager() as device_manager:
+        devices_info = device_manager.list_devices()
+        default_input_index = device_manager.get_default_input_device()
+        default_output_index = device_manager.get_default_output_device()
 
     input_devices = [d for d in devices_info if d["max_input_channels"] > 0]
     output_devices = [d for d in devices_info if d["max_output_channels"] > 0]

@@ -457,3 +457,57 @@ class TestWhisperTranscriber:
             "max_speech_duration_s": 30,
             "speech_pad_ms": 300,
         }
+
+    def test_model_load_failure_raises_typed_actionable_error(self, mock_settings):
+        from chirp.exceptions import WhisperModelLoadError
+
+        with (
+            patch(
+                "transcriber.whisper_transcriber.WhisperModel",
+                side_effect=OSError("connection reset"),
+            ),
+            patch.object(WhisperTranscriber, "_get_optimal_device", return_value="cpu"),
+            patch.object(WhisperTranscriber, "_get_compute_type", return_value="int8"),
+            patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
+        ):
+            with pytest.raises(WhisperModelLoadError) as excinfo:
+                WhisperTranscriber(mock_settings)
+
+        message = str(excinfo.value)
+        assert "Whisper model" in message
+        assert "small" in message
+        assert isinstance(excinfo.value.__cause__, OSError)
+
+    def test_close_is_idempotent_and_nulls_model(self, mock_settings):
+        with (
+            patch(
+                "transcriber.whisper_transcriber.WhisperModel",
+                return_value=Mock(),
+            ),
+            patch.object(WhisperTranscriber, "_get_optimal_device", return_value="cpu"),
+            patch.object(WhisperTranscriber, "_get_compute_type", return_value="int8"),
+            patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
+        ):
+            transcriber = WhisperTranscriber(mock_settings)
+
+        assert transcriber.model is not None
+        transcriber.close()
+        transcriber.close()
+        assert transcriber.model is None
+
+    def test_get_model_info_reports_cpu_int8_on_darwin(self, mock_settings):
+        with (
+            patch(
+                "transcriber.whisper_transcriber.WhisperModel",
+                return_value=Mock(),
+            ),
+            patch(
+                "transcriber.whisper_transcriber.platform.system", return_value="Darwin"
+            ),
+            patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
+        ):
+            transcriber = WhisperTranscriber(mock_settings)
+            info = transcriber.get_model_info()
+
+        assert info["device"] == "cpu"
+        assert info["compute_type"] == "int8"

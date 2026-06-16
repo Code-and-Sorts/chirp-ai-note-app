@@ -11,10 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    # Imported only for type hints. `recorder.device_manager` pulls in
-    # PyAudio at import time, which would defeat platform-neutral imports
-    # of this module on hosts without PyAudio.
-    from recorder.device_manager import DeviceManager
     from recorder.vad_chunker import VADChunker
 
 import tomli_w
@@ -37,13 +33,14 @@ class LiveSessionResult:
     transcript_path: Path | None
     duration_seconds: float
     total_words: int
+    dropped_chunks: int = 0
+    dropped_frames: int = 0
 
 
 class LiveTranscriptionSession:
     def __init__(
         self,
         settings: ChirpSettings,
-        device_manager: DeviceManager,
         console: Console,
         title: str | None = None,
         duration_minutes: int | None = None,
@@ -51,7 +48,6 @@ class LiveTranscriptionSession:
         tags: list[str] | None = None,
     ):
         self.settings = settings
-        self.device_manager = device_manager
         self.console = console
         self.title = title
         self.duration_minutes = duration_minutes
@@ -74,16 +70,30 @@ class LiveTranscriptionSession:
         self.start_time = time.monotonic()
         self.audio_stream = LiveAudioStream(
             settings=self.settings,
-            device_manager=self.device_manager,
             frame_queue=self.frame_queue,
             stop_event=self.stop_event,
             level_queue=self.level_queue,
             debug_dir=self._debug_dir if self.debug else None,
         )
 
+        # Load/validate the Whisper model before opening capture. A download
+        # failure must surface as WhisperModelLoadError before the mic/screen
+        # helper is opened, never abort an already-capturing session.
+        self.transcriber = LiveTranscriber(
+            settings=self.settings,
+            chunk_queue=self.chunk_queue,
+            event_queue=self.event_queue,
+            stop_event=self.stop_event,
+            meeting_name=self.title,
+            sample_rate=self.audio_stream.sample_rate,
+            debug_dir=self._debug_dir if self.debug else None,
+            transcription_interval=1.0,
+        )
+
         try:
             self.audio_stream.start()
         except Exception as exc:  # pragma: no cover - hardware dependent
+            self.transcriber.close()
             raise RecordingError(str(exc)) from exc
 
         self._publish_event(
@@ -114,16 +124,6 @@ class LiveTranscriptionSession:
             )
             self.vad_chunker.start()
 
-        self.transcriber = LiveTranscriber(
-            settings=self.settings,
-            chunk_queue=self.chunk_queue,
-            event_queue=self.event_queue,
-            stop_event=self.stop_event,
-            meeting_name=self.title,
-            sample_rate=self.audio_stream.sample_rate,
-            debug_dir=self._debug_dir if self.debug else None,
-            transcription_interval=1.0,
-        )
         self.transcriber.start()
 
         self.dashboard = LiveDashboard(
@@ -160,9 +160,14 @@ class LiveTranscriptionSession:
         note_dir.mkdir(parents=True, exist_ok=True)
         audio_path = note_dir / AUDIO_FILENAME
 
+        dropped_frames = self.audio_stream.dropped_frames
+        dropped_chunks = self.vad_chunker.dropped_chunks if self.vad_chunker else 0
+
         if capture_error is not None:
             logger.error("live capture failed mid-recording", exc_info=capture_error)
             self.audio_stream.close()
+            if self.transcriber:
+                self.transcriber.close()
             shutil.rmtree(note_dir, ignore_errors=True)
             raise RecordingError("live capture failed mid-recording") from capture_error
 
@@ -178,6 +183,7 @@ class LiveTranscriptionSession:
             if self.transcriber.segments:
                 transcript_path = note_dir / "transcript.live.txt"
                 self.transcriber.export_transcript(transcript_path)
+            self.transcriber.close()
 
         duration_seconds = time.monotonic() - self.start_time
 
@@ -186,6 +192,8 @@ class LiveTranscriptionSession:
             transcript_path=transcript_path,
             duration_seconds=duration_seconds,
             total_words=total_words,
+            dropped_chunks=dropped_chunks,
+            dropped_frames=dropped_frames,
         )
 
     def _stop_pipeline(self):
@@ -195,12 +203,18 @@ class LiveTranscriptionSession:
         if self.vad_chunker:
             self.vad_chunker.join(timeout=1)
         if self.transcriber:
-            self.transcriber.join(timeout=1)
+            # Join unbounded: the worker's final _maybe_transcribe(force=True)
+            # is a full CPU-int8 Whisper pass that can run for several seconds,
+            # and the exported segments must reflect it. Bounding this join
+            # would let export read a half-written transcript.
+            self.transcriber.join()
 
     def stop(self):
         self._stop_pipeline()
         if self.audio_stream:
             self.audio_stream.close()
+        if self.transcriber:
+            self.transcriber.close()
 
     def _wait_for_completion(self):
         if self.duration_minutes is None:
