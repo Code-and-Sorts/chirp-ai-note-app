@@ -2,6 +2,16 @@ import platform
 import subprocess
 
 
+def _escape_applescript(value: str) -> str:
+    """Escape a string for safe interpolation inside an AppleScript "..." literal.
+
+    Backslashes and double quotes are the two characters that break (or could be
+    used to inject into) a quoted AppleScript string, so both are backslash-
+    escaped. Backslash must be escaped first to avoid double-escaping.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 class PopupManager:
     def __init__(self):
         self.is_macos = platform.system() == "Darwin"
@@ -41,8 +51,10 @@ class PopupManager:
             return False
 
     def _show_macos_notification(self, title: str, message: str) -> bool:
+        safe_message = _escape_applescript(message)
+        safe_title = _escape_applescript(title)
         applescript = f"""
-        display notification "{message}" with title "{title}"
+        display notification "{safe_message}" with title "{safe_title}"
         """
         try:
             subprocess.run(
@@ -65,8 +77,10 @@ class PopupManager:
         if not self.is_macos:
             return None
 
+        safe_question = _escape_applescript(question)
+        safe_title = _escape_applescript(title)
         applescript = f"""
-        display dialog "{question}" with title "{title}" buttons {{"No", "Yes"}} default button "Yes"
+        display dialog "{safe_question}" with title "{safe_title}" buttons {{"No", "Yes"}} default button "Yes"
         """
         try:
             result = subprocess.run(

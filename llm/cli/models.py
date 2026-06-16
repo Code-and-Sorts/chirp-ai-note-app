@@ -28,6 +28,7 @@ from typing import Any, Literal, NoReturn
 import typer
 from rich.table import Table
 
+from chirp import glyphs
 from chirpd.paths import MODELS_TOML_PATH
 from llm import hf
 from llm.cli._console import console, stdout_console
@@ -221,8 +222,8 @@ def _render_list_table(rows: list[ListRow], daemon_reachable: bool) -> None:
         table.add_row(
             row.alias,
             row.role,
-            "★" if row.is_default else "",
-            "●" if daemon_reachable and row.loaded else "—",
+            glyphs.DEFAULT_MARKER if row.is_default else "",
+            glyphs.ACTIVE_MARKER if daemon_reachable and row.loaded else glyphs.PENDING,
             row.hf_repo,
         )
     stdout_console.print(table)

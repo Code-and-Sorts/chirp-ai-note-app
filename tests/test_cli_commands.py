@@ -51,13 +51,15 @@ class TestListNotes:
         runner, app = self._runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
-        assert "No notes found" in result.stdout
+        # Empty-state message is a diagnostic → stderr (AC-1).
+        assert "No notes found" in result.stderr
 
     def test_list_notes_shows_title_from_header(self, tmp_path, monkeypatch):
         _write_note(tmp_path, "team-standup-2026-01-15", "Team Standup", "Content")
         runner, app = self._runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
+        # The table is data → stdout (AC-1).
         assert "Team Standup" in result.stdout
 
     def test_list_notes_shows_total_count(self, tmp_path, monkeypatch):
@@ -66,17 +68,20 @@ class TestListNotes:
         runner, app = self._runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
-        assert "2 total" in result.stdout
+        # The "N total" preamble is a diagnostic → stderr (AC-1).
+        assert "2 total" in result.stderr
 
     def test_list_notes_shows_subcommand_hints(self, tmp_path, monkeypatch):
         _write_note(tmp_path, "team-standup-2026-01-15", "Team Standup", "Content")
         runner, app = self._runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
-        assert "chirp notes view <id>" in result.stdout
-        assert "chirp notes edit <id>" in result.stdout
-        assert "chirp notes delete <id>" in result.stdout
-        assert "chirp notes --tag meeting" in result.stdout
+        # Hint lines are diagnostics → stderr (AC-1); never on the data stream.
+        assert "chirp notes view <id>" in result.stderr
+        assert "chirp notes edit <id>" in result.stderr
+        assert "chirp notes delete <id>" in result.stderr
+        assert "chirp notes --tag meeting" in result.stderr
+        assert "chirp notes view <id>" not in result.stdout
 
 
 class TestTranscribeCli:
@@ -174,7 +179,7 @@ class TestTranscribeCli:
         runner = CliRunner()
         result = runner.invoke(chirp.cli.app, ["transcribe", "0"])
         assert result.exit_code == 2
-        assert "must be a positive integer" in result.stdout
+        assert "must be a positive integer" in result.stderr
 
     def test_no_stream_flag_removed(self, tmp_path, monkeypatch):
         settings = _make_settings(tmp_path)
@@ -187,7 +192,8 @@ class TestTranscribeCli:
         runner = CliRunner()
         result = runner.invoke(chirp.cli.app, ["transcribe", "--no-stream"])
         assert result.exit_code != 0
-        assert "no such option" in result.stdout.lower() or result.exit_code == 2
+        # Click usage errors land on stderr; result.output is the combined stream.
+        assert "no such option" in result.output.lower() or result.exit_code == 2
 
 
 class TestTranscribeRegen:
@@ -241,7 +247,7 @@ class TestTranscribeRegen:
         assert result.exit_code == 0
         assert captured.get("force") is True
         assert len(captured.get("records", [])) == 2
-        assert "Regenerated notes for 2/2" in result.stdout
+        assert "Regenerated notes for 2/2" in result.stderr
 
     def test_regen_with_n_rejected(self, tmp_path, monkeypatch):
         settings = _make_settings(tmp_path)
@@ -255,7 +261,7 @@ class TestTranscribeRegen:
         result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "1"])
 
         assert result.exit_code == 2
-        assert "do not pass N" in result.stdout
+        assert "do not pass N" in result.stderr
 
     def test_regen_with_force_rejected(self, tmp_path, monkeypatch):
         settings = _make_settings(tmp_path)
@@ -269,7 +275,7 @@ class TestTranscribeRegen:
         result = runner.invoke(chirp.cli.app, ["transcribe", "--regen", "--force"])
 
         assert result.exit_code == 2
-        assert "mutually exclusive" in result.stdout
+        assert "mutually exclusive" in result.stderr
 
     def test_regen_when_no_transcripts(self, tmp_path, monkeypatch):
         settings = _make_settings(tmp_path)
@@ -283,7 +289,7 @@ class TestTranscribeRegen:
         result = runner.invoke(chirp.cli.app, ["transcribe", "--regen"])
 
         assert result.exit_code == 0
-        assert "No transcripts found" in result.stdout
+        assert "No transcripts found" in result.stderr
 
 
 class TestNotesResolveAndTagFilter:
@@ -304,16 +310,16 @@ class TestNotesResolveAndTagFilter:
 
         result = runner.invoke(app, ["notes", "--tag", "meeting"])
         assert result.exit_code == 0
-        assert "2 of 3" in result.stdout
-        assert "tag: meeting" in result.stdout
+        assert "2 of 3" in result.stderr
+        assert "tag: meeting" in result.stderr
 
         result = runner.invoke(app, ["notes", "--tag", "meeting,pricing"])
         assert result.exit_code == 0
-        assert "1 of 3" in result.stdout
+        assert "1 of 3" in result.stderr
 
         result = runner.invoke(app, ["notes", "--tag", "nope"])
         assert result.exit_code == 0
-        assert "No notes matching tag 'nope'" in result.stdout
+        assert "No notes matching tag 'nope'" in result.stderr
 
     def test_tag_with_subcommand_rejected(self, tmp_path, monkeypatch):
         _write_note(tmp_path, "a-2026-04-20", "A", "x")
@@ -321,7 +327,7 @@ class TestNotesResolveAndTagFilter:
 
         result = runner.invoke(app, ["notes", "--tag", "meeting", "view", "a"])
         assert result.exit_code == 2
-        assert "--tag is only valid when listing notes" in result.stdout
+        assert "--tag is only valid when listing notes" in result.stderr
 
     def test_unknown_id(self, tmp_path, monkeypatch):
         _write_note(tmp_path, "a-2026-04-20", "A", "x")
@@ -329,7 +335,7 @@ class TestNotesResolveAndTagFilter:
 
         result = runner.invoke(app, ["notes", "view", "missing"])
         assert result.exit_code == 1
-        assert "no note matching 'missing'" in result.stdout
+        assert "no note matching 'missing'" in result.stderr
 
     def test_ambiguous_prefix(self, tmp_path, monkeypatch):
         _write_note(tmp_path, "standup-monday-2026-04-20", "M", "x")
@@ -338,7 +344,7 @@ class TestNotesResolveAndTagFilter:
 
         result = runner.invoke(app, ["notes", "view", "standup"])
         assert result.exit_code == 1
-        assert "matches 2 notes" in result.stdout
+        assert "matches 2 notes" in result.stderr
 
     def test_resolve_full_id(self, tmp_path, monkeypatch):
         import chirp.cli
@@ -424,7 +430,8 @@ class TestNotesDelete:
 
         result = runner.invoke(app, ["notes", "delete", "doomed", "--yes"])
         assert result.exit_code == 0
-        assert "Deleted" in result.stdout
+        # Status message is a diagnostic → stderr (AC-1).
+        assert "deleted" in result.stderr.lower()
         assert not (tmp_path / "doomed-2026-04-20").exists()
         assert "doomed-2026-04-20/notes.md" in captured.get("dropped", "")
 
@@ -435,7 +442,7 @@ class TestNotesDelete:
 
         result = runner.invoke(app, ["notes", "delete", "safe"], input="n\n")
         assert result.exit_code == 0
-        assert "Deletion cancelled" in result.stdout
+        assert "deletion cancelled" in result.stderr.lower()
         assert (tmp_path / "safe-2026-04-20").exists()
 
 
@@ -544,6 +551,7 @@ class TestNotesReviewPatches:
 
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
+        # The table (and its em-dash tag cell) is data → stdout.
         assert "—" in result.stdout
 
     def test_empty_note_id_reports_not_found(self, tmp_path, monkeypatch):
@@ -552,8 +560,8 @@ class TestNotesReviewPatches:
 
         result = runner.invoke(app, ["notes", "view", ""])
         assert result.exit_code == 1
-        assert "no note matching" in result.stdout
-        assert "matches" not in result.stdout
+        assert "no note matching" in result.stderr
+        assert "matches" not in result.stderr
 
     def test_delete_handles_rmtree_error(self, tmp_path, monkeypatch):
         import shutil
@@ -569,7 +577,7 @@ class TestNotesReviewPatches:
         result = runner.invoke(app, ["notes", "delete", "doomed", "--yes"])
         assert result.exit_code == 1
         # Rich wraps long lines so flatten whitespace before asserting.
-        flat = " ".join(result.stdout.split())
+        flat = " ".join(result.stderr.split())
         assert "failed to delete" in flat
         assert "simulated permission denied" in flat
 
@@ -626,5 +634,5 @@ class TestTranscribeSurfacesModelLoadError:
         result = CliRunner().invoke(chirp.cli.app, ["transcribe"])
 
         assert result.exit_code == 1
-        flat = " ".join(result.stdout.split())
+        flat = " ".join(result.stderr.split())
         assert "Could not download or load the Whisper model" in flat

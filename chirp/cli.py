@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import platform
@@ -7,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import typer
-from rich.console import Console, Group, RenderableType
+from rich.console import Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
 from rich.spinner import Spinner
@@ -16,6 +17,8 @@ from rich.text import Text
 from typer.core import TyperGroup
 
 import audio_capture
+from chirp import exit_codes, glyphs
+from chirp._console import apply_color_mode, stderr_console, stdout_console
 from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingError
 from config.settings import ChirpSettings, get_settings
 from llm.cli.daemon import daemon_app
@@ -43,23 +46,84 @@ class OrderedCommandsGroup(TyperGroup):
                 ordered.append(name)
         return ordered
 
+    def get_params(self, ctx):
+        # Completion is enabled so the `chirp models` alias completers work, but
+        # the generated --install-completion / --show-completion meta-options are
+        # hidden to keep the top-level surface to the documented 7 commands.
+        params = super().get_params(ctx)
+        for param in params:
+            opts = set(getattr(param, "opts", [])) | set(
+                getattr(param, "secondary_opts", [])
+            )
+            if opts & _COMPLETION_META_COMMANDS:
+                param.hidden = True
+        return params
+
 
 app = typer.Typer(
     name="chirp",
     help="Chirp · AI notes for your terminal.",
     epilog="run `chirp COMMAND --help` for details",
     rich_markup_mode="rich",
-    add_completion=False,
+    add_completion=True,
     context_settings={
         "help_option_names": ["-h", "--help"],
         "max_content_width": 120,
     },
     cls=OrderedCommandsGroup,
 )
-console = Console()
+
+# Diagnostics/prompts/errors go to stderr; data and rendered artifacts go to
+# stdout. ``console`` aliases the stderr console because the overwhelming
+# majority of legacy ``console.print`` sites are diagnostics; the handful of
+# data outputs (note tables, search results) print to ``stdout_console``
+# explicitly.
+console = stderr_console
+
+# Shell completion is enabled (so the registered ``chirp models`` alias
+# completers are reachable), but the two generated meta-commands are hidden so
+# they don't bloat the documented 7-command surface.
+_COMPLETION_META_COMMANDS = frozenset(
+    {
+        "--install-completion",
+        "--show-completion",
+        "install-completion",
+        "show-completion",
+    }
+)
 
 MAIN_PANEL = "Commands"
 MODELS_PANEL = "Models"
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        from chirp.about import installed_version
+
+        # Plain single line on stdout so `chirp --version` pipes cleanly.
+        print(f"chirp {installed_version()}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        None,
+        "--version",
+        "-V",
+        is_eager=True,
+        callback=_version_callback,
+        help="Show the chirp version and exit.",
+    ),
+    no_color: bool = typer.Option(
+        False,
+        "--no-color",
+        "--plain",
+        help="Disable colored output (also honors the NO_COLOR env var).",
+    ),
+) -> None:
+    """Chirp · AI notes for your terminal."""
+    apply_color_mode(no_color)
 
 
 def _prompt_title() -> str:
@@ -70,7 +134,7 @@ def _prompt_title() -> str:
             value: str = console.input(" [green]›[/green] ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
-            raise typer.Exit(1)
+            raise typer.Exit(exit_codes.RUNTIME_ERROR)
         if value:
             return value
         console.print(" [dim]title can't be empty[/dim]")
@@ -88,7 +152,7 @@ def _prompt_timeframe() -> int | None:
         value = console.input(" [green]›[/green] ").strip()
     except (EOFError, KeyboardInterrupt):
         console.print()
-        return None
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     if not value:
         return None
     return parse_timeframe(value)
@@ -104,7 +168,7 @@ def _prompt_tags() -> list[str]:
         value = console.input(" [green]›[/green] ").strip()
     except (EOFError, KeyboardInterrupt):
         console.print()
-        return []
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     return _parse_tag_input(value)
 
 
@@ -112,6 +176,26 @@ def _parse_tag_input(value: str) -> list[str]:
     if not value:
         return []
     return [piece.strip() for piece in value.split(",") if piece.strip()]
+
+
+def _restore_terminal(fd: int | None, old_settings) -> None:
+    """Restore cooked mode and show the cursor — safe to call more than once.
+
+    Shared by the ``record`` ``finally`` block and its SIGTERM handler so a
+    ``kill <pid>`` mid-recording leaves the TTY usable instead of stuck in
+    cbreak with a hidden cursor.
+    """
+    if old_settings is not None and fd is not None:
+        import termios
+
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except (termios.error, OSError):
+            pass
+    try:
+        console.show_cursor(True)
+    except Exception:  # noqa: BLE001 - cursor restore is best-effort on teardown
+        pass
 
 
 def _resolve_mic_name(device_manager) -> str:
@@ -273,13 +357,13 @@ def record(
             duration = _prompt_timeframe()
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(exit_codes.USAGE_ERROR)
     elif timeframe is not None and duration is None:
         try:
             duration = parse_timeframe(timeframe)
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(exit_codes.USAGE_ERROR)
 
     resolved_tags: list[str] = list(tags) if tags else []
     if not resolved_tags and is_tty:
@@ -305,10 +389,17 @@ def record(
     )
     control = {"discard": False}
 
+    import signal
+
+    fd: int | None = None
+    old_settings = None
+    previous_sigterm = None
+    previous_sigwinch = None
+    resize_pending = {"flag": False}
+
     try:
         use_cbreak = sys.stdin.isatty() and hasattr(sys.stdin, "fileno")
 
-        old_settings = None
         if use_cbreak:
             import select
             import termios
@@ -317,6 +408,17 @@ def record(
             fd = sys.stdin.fileno()
             old_settings = termios.tcgetattr(fd)
             tty.setcbreak(fd)
+
+        def _on_sigterm(_signum, _frame):
+            _restore_terminal(fd, old_settings)
+            recorder.stop_recording()
+
+        def _on_sigwinch(_signum, _frame):
+            resize_pending["flag"] = True
+
+        previous_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
+        if hasattr(signal, "SIGWINCH"):
+            previous_sigwinch = signal.signal(signal.SIGWINCH, _on_sigwinch)
 
         def _on_tick(level: float):
             if use_cbreak and select.select([sys.stdin], [], [], 0)[0]:
@@ -338,7 +440,14 @@ def record(
                 state.elapsed_seconds = (
                     datetime.now() - recorder.start_time
                 ).total_seconds()
-            live.update(_render_record_view(state))
+            if resize_pending["flag"]:
+                # A resize happened mid-record: drop any cached width so Rich
+                # remeasures the terminal and the waveform reflows cleanly, then
+                # force a refresh against the new size.
+                resize_pending["flag"] = False
+                if hasattr(console, "_width"):
+                    console._width = None
+            live.update(_render_record_view(state), refresh=True)
 
         try:
             with Live(
@@ -353,10 +462,7 @@ def record(
                     tags=resolved_tags,
                 )
         finally:
-            if old_settings is not None:
-                import termios
-
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            _restore_terminal(fd, old_settings)
 
         note_dir = recorder.note_dir
         if control["discard"]:
@@ -370,23 +476,31 @@ def record(
             return
 
         console.print(f"[green]saved to {note_dir}[/green]")
-        console.print(" [dim]› chirp transcribe    · turn this into notes[/dim]")
+        console.print(
+            f" [dim]{glyphs.INPUT_ARROW} chirp transcribe    "
+            "· turn this into notes[/dim]"
+        )
 
     except KeyboardInterrupt:
-        console.print("[yellow]Recording stopped by user[/yellow]")
+        console.print("[yellow]recording stopped by user[/yellow]")
     except AudioDeviceError as e:
-        console.print(f"[red]Audio device error: {e!s}[/red]")
-        raise typer.Exit(1)
+        console.print(f"[red]audio device error: {e!s}[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     except RecordingError as e:
-        console.print(f"[red]Recording error: {e!s}[/red]")
-        raise typer.Exit(1)
+        console.print(f"[red]recording error: {e!s}[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     except ConfigurationError as e:
-        console.print(f"[red]Configuration error: {e!s}[/red]")
-        raise typer.Exit(1)
+        console.print(f"[red]configuration error: {e!s}[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     except Exception as e:  # noqa: BLE001 - top-level CLI handler; all specific errors caught above
         logger.debug("Unexpected error in record command: %s", e, exc_info=True)
-        console.print(f"[red]Unexpected error: {e!s}[/red]")
-        raise typer.Exit(1)
+        console.print(f"[red]unexpected error: {e!s}[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
+    finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+        if previous_sigwinch is not None and hasattr(signal, "SIGWINCH"):
+            signal.signal(signal.SIGWINCH, previous_sigwinch)
 
 
 def _run_live_transcription(
@@ -417,13 +531,13 @@ def _run_live_transcription(
         result: LiveSessionResult = session.run()
     except ImportError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     except WhisperModelLoadError as e:
         console.print(f"[red]{e!s}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.MODEL_LOAD_FAILED)
     except RecordingError as e:
-        console.print(f"[red]Live recording error: {e!s}[/red]")
-        raise typer.Exit(1)
+        console.print(f"[red]live recording error: {e!s}[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
     from utils.time_utils import format_duration
 
@@ -479,19 +593,19 @@ def transcribe(
             console.print(
                 "[red]--regen processes all transcribed records; do not pass N.[/red]"
             )
-            raise typer.Exit(2)
+            raise typer.Exit(exit_codes.USAGE_ERROR)
         if force:
             console.print(
                 "[red]--regen and --force are mutually exclusive (--force re-transcribes; "
                 "--regen reuses existing transcripts).[/red]"
             )
-            raise typer.Exit(2)
+            raise typer.Exit(exit_codes.USAGE_ERROR)
         _run_regen_pipeline(settings)
         return
 
     if n is not None and n < 1:
         console.print("[red]N must be a positive integer.[/red]")
-        raise typer.Exit(2)
+        raise typer.Exit(exit_codes.USAGE_ERROR)
 
     if model:
         console.print(f"[cyan]Using Whisper model: {model}[/cyan]")
@@ -502,7 +616,7 @@ def transcribe(
         processor = BatchProcessor(settings, model_override=model)
     except WhisperModelLoadError as e:
         console.print(f"[red]{e!s}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     processor.run_queue(n=n, force=force, console=console)
 
 
@@ -538,7 +652,7 @@ def _run_regen_pipeline(settings) -> None:
         for failure in failed:
             slug = failure.get("slug", "<unknown>")
             error = failure.get("error", "unknown error")
-            console.print(f"[red]  ✗ {slug}: {error}[/red]")
+            console.print(f"[red]  {glyphs.FAILURE} {slug}: {error}[/red]")
 
 
 notes_app = typer.Typer(help="Browse, view, edit, or delete your notes")
@@ -575,14 +689,17 @@ def notes_callback(
         "--tag",
         help="Filter by tag (comma-separated values are AND-combined).",
     ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the note list as JSON to stdout."
+    ),
 ):
     """Browse, view, edit, or delete your notes"""
     if ctx.invoked_subcommand is not None:
         if tag is not None:
             console.print("[red]--tag is only valid when listing notes.[/red]")
-            raise typer.Exit(2)
+            raise typer.Exit(exit_codes.USAGE_ERROR)
         return
-    _list_notes(tag)
+    _list_notes(tag, json_output=json_output)
 
 
 def _parse_tag_filter(tag: str | None) -> list[str]:
@@ -591,7 +708,18 @@ def _parse_tag_filter(tag: str | None) -> list[str]:
     return [piece.strip() for piece in tag.split(",") if piece.strip()]
 
 
-def _list_notes(tag: str | None) -> None:
+def _note_to_json(idx: int, record: NoteRecord) -> dict:
+    return {
+        "id": idx,
+        "slug": record.slug,
+        "title": _resolve_display_title(record),
+        "date": record.created_at.date().isoformat(),
+        "tags": list(record.tags),
+        "notes_path": str(record.notes) if record.notes else None,
+    }
+
+
+def _list_notes(tag: str | None, json_output: bool = False) -> None:
     settings = get_settings()
     all_records = [
         record
@@ -607,6 +735,14 @@ def _list_notes(tag: str | None) -> None:
         ]
     else:
         records = all_records
+
+    if json_output:
+        payload = [
+            _note_to_json(idx, record)
+            for idx, record in enumerate(reversed(records), start=1)
+        ]
+        sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+        return
 
     if not all_records:
         console.print(
@@ -669,15 +805,18 @@ def _list_notes(tag: str | None) -> None:
             date_str = "?"
             length_str = "?"
 
-        tag_cell = ", ".join(record.tags) if record.tags else "—"
+        tag_cell = ", ".join(record.tags) if record.tags else glyphs.PENDING
         table.add_row(str(idx), title, date_str, length_str, tag_cell)
 
-    console.print(table)
+    stdout_console.print(table)
+    arrow = glyphs.INPUT_ARROW
     console.print()
-    console.print(" [dim]› chirp notes view <id>      · open a note read-only[/dim]")
-    console.print(" [dim]› chirp notes edit <id>      · edit a note[/dim]")
-    console.print(" [dim]› chirp notes delete <id>    · delete a note[/dim]")
-    console.print(" [dim]› chirp notes --tag meeting  · filter by tag[/dim]")
+    console.print(
+        f" [dim]{arrow} chirp notes view <id>      · open a note read-only[/dim]"
+    )
+    console.print(f" [dim]{arrow} chirp notes edit <id>      · edit a note[/dim]")
+    console.print(f" [dim]{arrow} chirp notes delete <id>    · delete a note[/dim]")
+    console.print(f" [dim]{arrow} chirp notes --tag meeting  · filter by tag[/dim]")
 
 
 def _resolve_note(records: list[NoteRecord], note_id: str) -> NoteRecord:
@@ -714,7 +853,7 @@ def _load_notes_or_exit() -> list[NoteRecord]:
         console.print(
             f"[yellow]No notes found in {settings.directories.notes_root}[/yellow]"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     return records
 
 
@@ -723,16 +862,16 @@ def _resolve_or_exit(note_id: str) -> NoteRecord:
     try:
         return _resolve_note(records, note_id)
     except NoteNotFound:
-        console.print(f"[red]✗ no note matching '{note_id}'[/red]")
-        raise typer.Exit(1)
+        console.print(f"[red]{glyphs.FAILURE} no note matching '{note_id}'[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     except AmbiguousNoteId as exc:
         console.print(
-            f"[red]✗ '{note_id}' matches {len(exc.matches)} notes — "
+            f"[red]{glyphs.FAILURE} '{note_id}' matches {len(exc.matches)} notes — "
             "be more specific[/red]"
         )
         for slug in exc.matches:
             console.print(f"[dim]  • {slug}[/dim]")
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
 
 @notes_app.command("view")
@@ -742,15 +881,17 @@ def notes_view(note_id: str = typer.Argument(..., help="Note id (slug or prefix)
 
     record = _resolve_or_exit(note_id)
     if record.notes is None:
-        console.print(f"[red]✗ note '{record.slug}' has no notes.md[/red]")
-        raise typer.Exit(1)
+        console.print(
+            f"[red]{glyphs.FAILURE} note '{record.slug}' has no notes.md[/red]"
+        )
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         console.print(
-            "[yellow]Interactive editor requires a terminal. "
-            "Please run from an interactive shell.[/yellow]"
+            "[yellow]interactive editor requires a terminal. "
+            "please run from an interactive shell.[/yellow]"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
     title = _resolve_display_title(record)
     content = record.notes.read_text(encoding="utf-8")
@@ -758,26 +899,80 @@ def notes_view(note_id: str = typer.Argument(..., help="Note id (slug or prefix)
     try:
         editor.run()
     except KeyboardInterrupt:
-        console.print("\n[dim]Editor cancelled[/dim]")
+        console.print("\n[dim]editor cancelled[/dim]")
+
+
+def _external_editor_command() -> str | None:
+    """The user's preferred external editor, if ``$VISUAL`` / ``$EDITOR`` is set."""
+    import os
+
+    return os.environ.get("VISUAL") or os.environ.get("EDITOR") or None
+
+
+def _edit_in_external_editor(notes_path: Path, command: str) -> bool:
+    """Open ``notes_path`` in the external editor; True if it edited the file.
+
+    Returns False if the editor could not be launched so the caller can fall
+    back to the built-in modal editor.
+    """
+    import shlex
+    import subprocess
+
+    argv = [*shlex.split(command), str(notes_path)]
+    try:
+        completed = subprocess.run(argv, check=False)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]could not launch external editor '{command}': {exc}[/red]")
+        return False
+    if completed.returncode != 0:
+        console.print(
+            f"[yellow]external editor exited with status "
+            f"{completed.returncode}; notes.md left as the editor saved it.[/yellow]"
+        )
+    return True
 
 
 @notes_app.command("edit")
-def notes_edit(note_id: str = typer.Argument(..., help="Note id (slug or prefix)")):
+def notes_edit(
+    note_id: str = typer.Argument(..., help="Note id (slug or prefix)"),
+    use_external_editor: bool = typer.Option(
+        False,
+        "--editor",
+        help="Open notes.md in $VISUAL/$EDITOR instead of the built-in editor.",
+    ),
+):
     """Edit a note in the terminal editor; saves rewrite notes.md and re-index."""
     from notes.note_editor import ManualNoteEditor
 
     settings = get_settings()
     record = _resolve_or_exit(note_id)
     if record.notes is None:
-        console.print(f"[red]✗ note '{record.slug}' has no notes.md[/red]")
-        raise typer.Exit(1)
+        console.print(
+            f"[red]{glyphs.FAILURE} note '{record.slug}' has no notes.md[/red]"
+        )
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         console.print(
-            "[yellow]Interactive editor requires a terminal. "
-            "Please run from an interactive shell.[/yellow]"
+            "[yellow]interactive editor requires a terminal. "
+            "please run from an interactive shell.[/yellow]"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
+
+    if use_external_editor:
+        command = _external_editor_command()
+        if command is None:
+            console.print(
+                "[red]--editor needs $VISUAL or $EDITOR set; "
+                "neither is. drop --editor to use the built-in editor.[/red]"
+            )
+            raise typer.Exit(exit_codes.USAGE_ERROR)
+        if _edit_in_external_editor(record.notes, command):
+            console.print(f"[green]updated note: {record.notes}[/green]")
+            if settings.notes_chat.auto_index:
+                _reindex_after_edit(settings, record)
+            return
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
     title = _resolve_display_title(record)
     content = record.notes.read_text(encoding="utf-8")
@@ -785,15 +980,15 @@ def notes_edit(note_id: str = typer.Argument(..., help="Note id (slug or prefix)
     try:
         result = editor.run()
     except KeyboardInterrupt:
-        console.print("\n[dim]Editor cancelled[/dim]")
-        raise typer.Exit(1)
+        console.print("\n[dim]editor cancelled[/dim]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
     if not result.saved:
-        console.print("[yellow]Changes not saved.[/yellow]")
+        console.print("[yellow]changes not saved.[/yellow]")
         return
 
     record.notes.write_text(result.content, encoding="utf-8")
-    console.print(f"[green]Updated note: {record.notes}[/green]")
+    console.print(f"[green]updated note: {record.notes}[/green]")
 
     if settings.notes_chat.auto_index:
         _reindex_after_edit(settings, record)
@@ -815,11 +1010,13 @@ def _reindex_after_edit(settings: ChirpSettings, record: NoteRecord) -> None:
                 manifest[file_path] = current_files[file_path]
                 index_manager._save_manifest(manifest)
             index_manager._rebuild_bm25()
-            console.print(f"[dim green]✓ Re-indexed {notes_path.name}[/dim green]")
+            console.print(
+                f"[dim green]{glyphs.SUCCESS} re-indexed {notes_path.name}[/dim green]"
+            )
     except Exception as exc:  # noqa: BLE001 - defensive auto-index; IndexManager can raise many types
         logger.debug("Auto-indexing failed for %s: %s", notes_path.name, exc)
         console.print(
-            f"[dim yellow]Auto-indexing failed for "
+            f"[dim yellow]auto-indexing failed for "
             f"{notes_path.name}: {exc}[/dim yellow]"
         )
 
@@ -842,16 +1039,18 @@ def notes_delete(
             default=False,
         )
         if not confirmed:
-            console.print("[yellow]Deletion cancelled.[/yellow]")
+            console.print("[yellow]deletion cancelled.[/yellow]")
             return
 
     notes_path = record.notes
     try:
         shutil.rmtree(record.dir, ignore_errors=False)
     except OSError as exc:
-        console.print(f"[red]✗ failed to delete {record.dir}: {exc}[/red]")
-        raise typer.Exit(1)
-    console.print(f"[green]Deleted {record.dir}[/green]")
+        console.print(
+            f"[red]{glyphs.FAILURE} failed to delete {record.dir}: {exc}[/red]"
+        )
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
+    console.print(f"[green]deleted {record.dir}[/green]")
 
     if notes_path is not None:
         _drop_from_index(settings, notes_path)
@@ -869,7 +1068,7 @@ def _drop_from_index(settings: ChirpSettings, notes_path: Path) -> None:
         index_manager._rebuild_bm25()
     except Exception as exc:  # noqa: BLE001 - defensive auto-index; IndexManager can raise many types
         logger.debug("Failed to update index after delete: %s", exc)
-        console.print(f"[dim yellow]Failed to update index: {exc}[/dim yellow]")
+        console.print(f"[dim yellow]failed to update index: {exc}[/dim yellow]")
 
 
 def _resolve_display_title(record: NoteRecord) -> str:
@@ -910,10 +1109,20 @@ def ask(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show prompt without calling LLM"
     ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the answer and sources as JSON to stdout (one-shot only).",
+    ),
 ):
     """Chat with your notes"""
     from notes_chat.cli import ask
 
+    if question is not None and question_option is not None:
+        console.print(
+            "[yellow]both a positional question and --question given; "
+            "using the positional.[/yellow]"
+        )
     resolved = question if question is not None else question_option
     ask(
         question=resolved,
@@ -922,6 +1131,7 @@ def ask(
         sources=sources,
         dry_run=dry_run,
         markdown=markdown,
+        json_output=json_output,
     )
 
 
@@ -943,17 +1153,17 @@ def search(
     """Keyword search across transcripts and notes."""
     from notes_chat.search_keyword import (
         SearchOptions,
-        emit_json,
         render_no_matches,
         render_results,
         run_search,
         suggest_close_keywords,
+        write_json,
     )
     from utils.time_utils import parse_since
 
     if not query or not query.strip():
         console.print("[red]search query is required.[/red]")
-        raise typer.Exit(2)
+        raise typer.Exit(exit_codes.USAGE_ERROR)
 
     since_minutes: int | None = None
     if since is not None:
@@ -961,14 +1171,14 @@ def search(
             since_minutes = parse_since(since)
         except ValueError as exc:
             console.print(f"[red]invalid --since: {exc}[/red]")
-            raise typer.Exit(2)
+            raise typer.Exit(exit_codes.USAGE_ERROR)
 
     if regex:
         try:
             __import__("re").compile(query)
         except __import__("re").error as exc:
             console.print(f"[red]invalid regex: {exc.msg}[/red]")
-            raise typer.Exit(2)
+            raise typer.Exit(exit_codes.USAGE_ERROR)
 
     settings = get_settings()
     options = SearchOptions(
@@ -981,11 +1191,11 @@ def search(
     result = run_search(settings, options)
 
     if json_output:
-        console.print(emit_json(result))
+        write_json(result)
         return
 
     if result["matches"]:
-        render_results(console, options, result)
+        render_results(stdout_console, console, options, result)
         return
 
     bm25_path = settings.notes_chat.index_dir / "bm25.json"
@@ -1024,11 +1234,21 @@ if __name__ == "__main__":
 
 
 @app.command(rich_help_panel=MAIN_PANEL)
-def about():
+def about(
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        "--no-animate",
+        help="Print the static info panel without the animation (scripted/non-TTY).",
+    ),
+):
     """Show the bird 🐦"""
-    from chirp.about import run_about
+    from chirp.about import render_about_plain, run_about
 
     settings = get_settings()
+    if plain:
+        render_about_plain(stdout_console, settings)
+        return
     try:
         run_about(console, settings)
     except KeyboardInterrupt:
@@ -1089,7 +1309,7 @@ Warning: {settings.monitoring.warning_minutes} minutes
 Interval: {settings.monitoring.warning_interval} minutes""",
             title="Chirp Configuration",
         )
-        console.print(panel)
+        stdout_console.print(panel)
         return
 
     changes_made = False
@@ -1113,7 +1333,7 @@ Interval: {settings.monitoring.warning_interval} minutes""",
     if changes_made:
         settings.save_to_file(ChirpSettings.get_config_path())
         settings.ensure_directories_exist()
-        console.print("[green]Configuration updated[/green]")
+        console.print("[green]configuration updated[/green]")
 
 
 @app.command(hidden=True)
@@ -1149,8 +1369,8 @@ def devices():
             f"{device['default_sample_rate']:.0f} Hz",
         )
 
-    console.print(input_table)
-    console.print()
+    stdout_console.print(input_table)
+    stdout_console.print()
 
     output_table = Table(title="Output Devices (speakers & routing)")
     output_table.add_column("", style="bold")
@@ -1172,7 +1392,7 @@ def devices():
             f"{device['default_sample_rate']:.0f} Hz",
         )
 
-    console.print(output_table)
+    stdout_console.print(output_table)
 
     console.print()
     console.print(
@@ -1183,29 +1403,35 @@ def devices():
             perms = audio_capture.check_permissions()
             state = perms.get("screen_recording")
             if state == "granted":
-                console.print("[green]✅ capture ready[/green]")
+                console.print(f"[green]{glyphs.SUCCESS} capture ready[/green]")
             elif state == "undetermined":
-                console.print("[yellow]— capture will prompt on first record[/yellow]")
+                console.print(
+                    f"[yellow]{glyphs.PENDING} capture will prompt on first "
+                    "record[/yellow]"
+                )
             elif state == "denied":
                 console.print(
-                    "[red]❌ screen recording permission denied[/red]"
+                    f"[red]{glyphs.FAILURE} screen recording permission denied[/red]"
                     " — open System Settings → Privacy & Security → Screen Recording"
                 )
             else:
                 console.print(
-                    "[red]❌ capture_audio probe returned unexpected state[/red]"
-                    " — rebuild with python -m audio_capture.build"
+                    f"[red]{glyphs.FAILURE} capture_audio probe returned unexpected "
+                    "state[/red] — rebuild with python -m audio_capture.build"
                 )
         except FileNotFoundError:
             console.print(
-                "[red]❌ capture_audio binary missing[/red] — run python -m audio_capture.build"
+                f"[red]{glyphs.FAILURE} capture_audio binary missing[/red] — "
+                "run python -m audio_capture.build"
             )
         except RuntimeError as exc:
             console.print(
-                f"[red]❌ permission probe failed[/red]: {exc} — try rebuilding with python -m audio_capture.build"
+                f"[red]{glyphs.FAILURE} permission probe failed[/red]: {exc} — "
+                "try rebuilding with python -m audio_capture.build"
             )
     else:
         console.print(
-            f"[dim]— capture status not applicable on {platform.system()}[/dim]"
+            f"[dim]{glyphs.PENDING} capture status not applicable on "
+            f"{platform.system()}[/dim]"
         )
     console.print("[dim]Run 'chirp init' for first-run setup.[/dim]")
