@@ -121,7 +121,7 @@ class TestRecordTagFlag:
         captured: dict = {}
 
         class FakeRecorder:
-            def __init__(self, settings, device_manager):
+            def __init__(self, settings):
                 self.note_dir = tmp_path / "fake-2026-04-27"
                 self.note_dir.mkdir()
                 self.start_time = None
@@ -153,6 +153,12 @@ class TestRecordTagFlag:
                 return str(self.note_dir / "audio.wav")
 
         class FakeDeviceManager:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
             def get_default_input_device(self):
                 return 0
 

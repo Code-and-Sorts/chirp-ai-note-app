@@ -209,3 +209,37 @@ def test_stop_event_flushes_active_speech():
     assert not chunk_queue.empty()
     chunk = chunk_queue.get()
     assert len(chunk.data) > 0
+
+
+def test_full_chunk_queue_increments_drop_counter_and_emits_event():
+    # AC-4: a full chunk_queue must count the dropped speech chunk and surface
+    # a `dropped` dashboard event rather than discarding it silently.
+    frame_queue: queue.Queue[AudioFrame] = queue.Queue()
+    chunk_queue: queue.Queue = queue.Queue(maxsize=1)
+    event_queue: queue.Queue = queue.Queue()
+    stop_event = threading.Event()
+
+    chunker = VADChunker(
+        frame_queue=frame_queue,
+        chunk_queue=chunk_queue,
+        stop_event=stop_event,
+        sample_rate=SAMPLE_RATE,
+        frame_ms=FRAME_MS,
+        vad_factory=lambda: DummyVAD([True]),
+        event_queue=event_queue,
+        poll_timeout=0.02,
+    )
+
+    chunker._voiced_frames = [_make_frame(0.0), _make_frame(0.01)]
+    chunker._emit_chunk()
+    assert chunker.dropped_chunks == 0
+
+    chunker._voiced_frames = [_make_frame(0.02), _make_frame(0.03)]
+    chunker._emit_chunk()
+
+    assert chunker.dropped_chunks == 1
+    dropped_events = [
+        event for event in list(event_queue.queue) if event.type == "dropped"
+    ]
+    assert dropped_events
+    assert dropped_events[-1].payload["dropped_chunks"] == 1

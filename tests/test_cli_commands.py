@@ -572,3 +572,59 @@ class TestNotesReviewPatches:
         flat = " ".join(result.stdout.split())
         assert "failed to delete" in flat
         assert "simulated permission denied" in flat
+
+
+class TestDevicesReleasesHandle:
+    """AC-1a: `chirp devices` must release the PortAudio handle deterministically."""
+
+    def test_devices_closes_pyaudio_handle(self, tmp_path, monkeypatch):
+        from unittest.mock import Mock, patch
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: _make_settings(tmp_path))
+        monkeypatch.setattr("chirp.cli.platform.system", lambda: "Linux")
+
+        with patch("recorder.device_manager.pyaudio.PyAudio") as mock_pyaudio:
+            mock_audio = Mock()
+            mock_audio.get_device_count.return_value = 0
+            mock_audio.get_default_input_device_info.return_value = {"index": 0}
+            mock_audio.get_default_output_device_info.return_value = {"index": 0}
+            mock_pyaudio.return_value = mock_audio
+
+            result = CliRunner().invoke(chirp.cli.app, ["devices"])
+
+        assert result.exit_code == 0
+        mock_audio.terminate.assert_called_once()
+
+
+class TestTranscribeSurfacesModelLoadError:
+    """AC-2: offline transcribe surfaces the typed Whisper load error cleanly."""
+
+    def test_transcribe_reports_model_load_error(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+        from chirp.exceptions import WhisperModelLoadError
+
+        TestTranscribeCli()._seed_note_with_audio(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: _make_settings(tmp_path))
+
+        class _BoomProcessor:
+            def __init__(self, settings, model_override=None):
+                raise WhisperModelLoadError(
+                    "Could not download or load the Whisper model 'small'. "
+                    "Check your network connection and free disk space."
+                )
+
+        monkeypatch.setattr(
+            "transcriber.batch_processor.BatchProcessor", _BoomProcessor
+        )
+
+        result = CliRunner().invoke(chirp.cli.app, ["transcribe"])
+
+        assert result.exit_code == 1
+        flat = " ".join(result.stdout.split())
+        assert "Could not download or load the Whisper model" in flat

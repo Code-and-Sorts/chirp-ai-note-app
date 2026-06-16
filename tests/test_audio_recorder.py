@@ -30,14 +30,6 @@ def _build_settings(notes_root):
     return settings
 
 
-def _build_device_manager():
-    device_manager = Mock()
-    device_manager.list_devices.return_value = [
-        {"index": 0, "name": "Built-in Microphone"}
-    ]
-    return device_manager
-
-
 def _paired_float_frames(
     pair_count: int, samples_per_frame: int = 512, frame_us: int = 32_000
 ) -> list[tuple[int, int, np.ndarray]]:
@@ -90,28 +82,20 @@ def mock_settings(tmp_path):
     return _build_settings(tmp_path)
 
 
-@pytest.fixture
-def mock_device_manager():
-    return _build_device_manager()
-
-
 class TestAudioRecorder:
-    def test_initialization(self, mock_settings, mock_device_manager):
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+    def test_initialization(self, mock_settings):
+        recorder = AudioRecorder(mock_settings)
 
         assert recorder.settings == mock_settings
-        assert recorder.device_manager == mock_device_manager
         assert recorder.is_recording is False
         assert recorder.title is None
         assert recorder.current_level == 0.0
         assert recorder.slug is None
 
-    def test_write_initial_meta_writes_toml_fields(
-        self, tmp_path, mock_settings, mock_device_manager
-    ):
+    def test_write_initial_meta_writes_toml_fields(self, tmp_path, mock_settings):
         from datetime import datetime
 
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
 
         note_dir = tmp_path / "standup-2026-04-20"
         note_dir.mkdir()
@@ -131,12 +115,10 @@ class TestAudioRecorder:
         assert meta["tags"] == ["ops"]
         assert meta["date"].startswith("2026-04-20")
 
-    def test_update_meta_duration_merges_with_existing(
-        self, tmp_path, mock_settings, mock_device_manager
-    ):
+    def test_update_meta_duration_merges_with_existing(self, tmp_path, mock_settings):
         import tomli_w
 
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
 
         note_dir = tmp_path / "standup-2026-04-20"
         note_dir.mkdir()
@@ -152,13 +134,13 @@ class TestAudioRecorder:
         assert meta["duration_s"] == pytest.approx(123.4)
 
     def test_zero_frames_clean_eof_raises_recording_error(
-        self, tmp_path, mock_settings, mock_device_manager
+        self, tmp_path, mock_settings
     ):
         # A FakeAudioCapture that yields zero frames finishes immediately
         # (clean EOF). H6: the worker treats clean EOF while still recording
         # as an unexpected end, so RecordingError is raised with the
         # "audio capture worker crashed mid-recording" message.
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
         fake_cap = FakeAudioCapture(frames=[], mic_device_name="MockMic")
 
         with patch("recorder.audio_recorder.AudioCapture", return_value=fake_cap):
@@ -170,9 +152,9 @@ class TestAudioRecorder:
         assert recorder.is_recording is False
 
     def test_start_recording_cleans_up_note_dir_when_no_audio_captured(
-        self, tmp_path, mock_settings, mock_device_manager
+        self, tmp_path, mock_settings
     ):
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
 
         fake_cap = FakeAudioCapture(frames=[], mic_device_name="MockMic")
 
@@ -197,11 +179,10 @@ class TestAudioRecorder:
         self,
         tmp_path,
         mock_settings,
-        mock_device_manager,
         mic_device_name,
         expected_meta_mic,
     ):
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
         pair_count = 5
         frames = _paired_float_frames(pair_count=pair_count)
         fake_cap = FakeAudioCapture(
@@ -235,10 +216,8 @@ class TestAudioRecorder:
             meta = tomllib.load(fh)
         assert meta["mic"] == expected_meta_mic
 
-    def test_start_recording_raises_on_non_macos(
-        self, mock_settings, mock_device_manager
-    ):
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+    def test_start_recording_raises_on_non_macos(self, mock_settings):
+        recorder = AudioRecorder(mock_settings)
         with (
             patch("sys.platform", "linux"),
             pytest.raises(
@@ -248,9 +227,9 @@ class TestAudioRecorder:
             recorder.start_recording(title="non-mac")
 
     def test_start_recording_cleans_up_when_audio_capture_fails_to_start(
-        self, tmp_path, mock_settings, mock_device_manager
+        self, tmp_path, mock_settings
     ):
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
 
         class FailingCapture:
             def __enter__(self):
@@ -271,12 +250,12 @@ class TestAudioRecorder:
         assert list(tmp_path.iterdir()) == []
 
     def test_start_recording_unblocks_when_helper_eofs_cleanly(
-        self, tmp_path, mock_settings, mock_device_manager
+        self, tmp_path, mock_settings
     ):
         # H6: clean EOF while is_recording is still set is treated as an
         # unexpected end, so RecordingError is raised. The note dir is
         # cleaned up and is_recording is False.
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
         frames = _paired_float_frames(pair_count=3)
         fake_cap = FakeAudioCapture(frames=frames, mic_device_name="MockMic")
 
@@ -290,14 +269,14 @@ class TestAudioRecorder:
         assert list(tmp_path.iterdir()) == []
 
     def test_start_recording_surfaces_worker_crash_after_partial_capture(
-        self, tmp_path, mock_settings, mock_device_manager
+        self, tmp_path, mock_settings
     ):
         # Feeds 4 paired sys+mic chunks (drives the mixer to produce
         # output frames) and *then* raises mid-iteration.
         # Without crash propagation the recorder would silently truncate
         # and return success — this test pins the new behavior of raising
         # and discarding the partial recording.
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
 
         class CrashAfterPartial:
             def __init__(self):
@@ -349,7 +328,7 @@ class TestAudioRecorder:
 class TestAudioRecorderPause:
     def test_pause_drops_frames_in_capture_worker(self, tmp_path):
         settings = _build_settings(tmp_path)
-        recorder = AudioRecorder(settings, _build_device_manager())
+        recorder = AudioRecorder(settings)
 
         pair_count = 8
         frames = _paired_float_frames(pair_count=pair_count)
@@ -389,12 +368,10 @@ class TestAudioRecorderPause:
 
 
 class TestPartialRecordingTruncationCrash:
-    def test_partial_wav_not_left_on_disk_after_crash(
-        self, tmp_path, mock_settings, mock_device_manager
-    ):
+    def test_partial_wav_not_left_on_disk_after_crash(self, tmp_path, mock_settings):
         # M19: FakeAudioCapture yields several normal frames then raises.
         # The note dir (including the partial WAV) must be deleted.
-        recorder = AudioRecorder(mock_settings, mock_device_manager)
+        recorder = AudioRecorder(mock_settings)
 
         class CrashMidStream:
             def __init__(self):

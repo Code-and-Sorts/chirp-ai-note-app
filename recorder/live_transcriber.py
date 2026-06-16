@@ -264,14 +264,21 @@ class LiveTranscriber(threading.Thread):
         self._debug_index += 1
 
     def export_transcript(self, output_path: Path):
-        if not self._segments:
+        segments = self.segments
+        if not segments:
             return
         output_path.parent.mkdir(parents=True, exist_ok=True)
         lines = []
-        for segment in self._segments:
+        for segment in segments:
             timestamp = self._format_timestamp(segment.start)
             lines.append(f"[{timestamp}] {segment.text}")
         output_path.write_text("\n".join(lines), encoding="utf-8")
+
+    def close(self) -> None:
+        """Release the underlying Whisper model. Idempotent."""
+        transcriber = getattr(self, "transcriber", None)
+        if transcriber is not None:
+            transcriber.close()
 
     @staticmethod
     def _format_timestamp(seconds: float) -> str:

@@ -55,7 +55,6 @@ def test_run_raises_recording_error_when_audio_stream_capture_error_set(
     ):
         session = LiveTranscriptionSession(
             settings=settings,
-            device_manager=mock.MagicMock(),
             console=mock.MagicMock(),
             duration_minutes=None,
         )
@@ -95,7 +94,6 @@ def test_run_succeeds_when_audio_stream_capture_error_is_none(
 
         session = LiveTranscriptionSession(
             settings=settings,
-            device_manager=mock.MagicMock(),
             console=mock.MagicMock(),
             duration_minutes=None,
             title="ok",
@@ -129,7 +127,6 @@ def test_run_does_not_call_saver_or_transcriber_on_capture_error(
     ):
         session = LiveTranscriptionSession(
             settings=settings,
-            device_manager=mock.MagicMock(),
             console=mock.MagicMock(),
             duration_minutes=None,
             title="abort-test",
@@ -142,3 +139,165 @@ def test_run_does_not_call_saver_or_transcriber_on_capture_error(
     fake_stream.save_recording.assert_not_called()
     saver.assert_not_called()
     transcriber_mock.export_transcript.assert_not_called()
+
+
+def test_capture_not_started_when_model_load_fails(tmp_path: Path) -> None:
+    # AC-2 ordering: the Whisper model is loaded before capture opens, so a
+    # download/load failure surfaces WhisperModelLoadError without ever
+    # starting the mic/screen-recording helper.
+    from chirp.exceptions import WhisperModelLoadError
+
+    settings = _build_settings(tmp_path)
+    fake_stream = _make_fake_stream(capture_error=None)
+
+    with (
+        mock.patch("recorder.live_session.LiveAudioStream", return_value=fake_stream),
+        mock.patch("recorder.live_session.LiveDashboard"),
+        mock.patch(
+            "recorder.live_session.LiveTranscriber",
+            side_effect=WhisperModelLoadError("no network"),
+        ),
+        mock.patch("recorder.vad_chunker.VADChunker"),
+    ):
+        session = LiveTranscriptionSession(
+            settings=settings,
+            console=mock.MagicMock(),
+            duration_minutes=None,
+        )
+
+        with pytest.raises(WhisperModelLoadError):
+            session.run()
+
+    fake_stream.start.assert_not_called()
+
+
+def test_slow_final_pass_is_included_in_export(tmp_path: Path) -> None:
+    # AC-3: the worker's final pass can run past the old 1s join bound; the
+    # session must join unbounded so export reflects the final segments and no
+    # exception is raised.
+    #
+    # The transcriber is a *real* thread whose final _maybe_transcribe(force=True)
+    # pass sleeps PAST 1s before appending the final segment. This is a
+    # regression guard: under the old `join(timeout=1)` the session would read
+    # segments while the thread is still mid-pass (final segment missing,
+    # total_words == 0, no transcript written) — fail; under the unbounded
+    # `join()` it completes first — pass.
+    import threading
+    import time
+
+    from recorder.live_types import TranscriptSegment
+
+    settings = _build_settings(tmp_path)
+    fake_stream = _make_fake_stream(capture_error=None)
+
+    _FINAL_PASS_SECONDS = 1.5
+
+    class SlowTranscriber(threading.Thread):
+        def __init__(self, *args, **kwargs):
+            super().__init__(daemon=True)
+            self._segments: list[TranscriptSegment] = []
+            self._lock = threading.Lock()
+            self.total_words = 0
+            self.started = threading.Event()
+
+        def run(self):
+            self.started.set()
+            # Simulate a multi-second final Whisper pass on CPU int8.
+            time.sleep(_FINAL_PASS_SECONDS)
+            with self._lock:
+                self._segments.append(
+                    TranscriptSegment(text="final", start=0.0, end=1.0, words=1)
+                )
+                self.total_words = 1
+
+        @property
+        def segments(self):
+            with self._lock:
+                return list(self._segments)
+
+        def export_transcript(self, path):
+            segments = self.segments
+            path.write_text("\n".join(s.text for s in segments), encoding="utf-8")
+
+        def close(self):
+            pass
+
+    with (
+        mock.patch("recorder.live_session.LiveAudioStream", return_value=fake_stream),
+        mock.patch("recorder.live_session.LiveDashboard"),
+        mock.patch("recorder.live_session.LiveTranscriber", SlowTranscriber),
+        mock.patch("recorder.vad_chunker.VADChunker"),
+    ):
+        session = LiveTranscriptionSession(
+            settings=settings,
+            console=mock.MagicMock(),
+            duration_minutes=None,
+            title="slow",
+        )
+        session.stop_event.set()
+        result = session.run()
+
+    # Under the unbounded join, the multi-second final pass completes before
+    # segments are read: the final segment is present and the transcript is
+    # written. Under join(timeout=1) this assertion fails (segment missing).
+    assert result.total_words == 1
+    assert result.transcript_path is not None
+    assert result.transcript_path.read_text(encoding="utf-8") == "final"
+
+
+def test_drop_counters_surface_in_result(tmp_path: Path) -> None:
+    # AC-4: queue-full drops counted by the producers are reported back through
+    # the session result so the CLI can warn the user.
+    settings = _build_settings(tmp_path)
+    fake_stream = _make_fake_stream(capture_error=None)
+    fake_stream.dropped_frames = 4
+
+    fake_chunker = mock.MagicMock()
+    fake_chunker.dropped_chunks = 7
+
+    with (
+        mock.patch("recorder.live_session.LiveAudioStream", return_value=fake_stream),
+        mock.patch("recorder.live_session.LiveDashboard"),
+        mock.patch("recorder.live_session.LiveTranscriber") as transcriber_cls,
+        mock.patch("recorder.vad_chunker.VADChunker", return_value=fake_chunker),
+    ):
+        transcriber_cls.return_value.total_words = 0
+        transcriber_cls.return_value.segments = []
+
+        session = LiveTranscriptionSession(
+            settings=settings,
+            console=mock.MagicMock(),
+            duration_minutes=None,
+            title="drops",
+        )
+        session.stop_event.set()
+        result = session.run()
+
+    assert result.dropped_frames == 4
+    assert result.dropped_chunks == 7
+
+
+def test_transcriber_closed_during_cleanup(tmp_path: Path) -> None:
+    # AC-5: the live session releases the Whisper model on the clean path.
+    settings = _build_settings(tmp_path)
+    fake_stream = _make_fake_stream(capture_error=None)
+
+    with (
+        mock.patch("recorder.live_session.LiveAudioStream", return_value=fake_stream),
+        mock.patch("recorder.live_session.LiveDashboard"),
+        mock.patch("recorder.live_session.LiveTranscriber") as transcriber_cls,
+        mock.patch("recorder.vad_chunker.VADChunker"),
+    ):
+        transcriber_cls.return_value.total_words = 0
+        transcriber_cls.return_value.segments = []
+
+        session = LiveTranscriptionSession(
+            settings=settings,
+            console=mock.MagicMock(),
+            duration_minutes=None,
+            title="cleanup",
+        )
+        session.stop_event.set()
+        session.run()
+
+    transcriber_cls.return_value.close.assert_called()

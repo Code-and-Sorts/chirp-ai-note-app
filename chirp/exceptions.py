@@ -14,6 +14,17 @@ class TranscriptionError(ChirpException):
     pass
 
 
+class WhisperModelLoadError(TranscriptionError):
+    """The Whisper model could not be downloaded or loaded.
+
+    Raised when ``faster_whisper.WhisperModel(...)`` construction fails — for
+    example on first run with no network, a Hugging Face rate-limit, a full
+    disk, or a misconfigured model name. The message names the failure as a
+    Whisper model download/load problem and suggests a remedy so the user can
+    act rather than read a raw traceback.
+    """
+
+
 class NoteGenerationError(ChirpException):
     pass
 

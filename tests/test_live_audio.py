@@ -36,10 +36,8 @@ def _make_stream(
     stop_event = threading.Event()
     settings = mock.MagicMock()
     settings.audio.sample_rate = 16000
-    device_manager = mock.MagicMock()
     stream = LiveAudioStream(
         settings=settings,
-        device_manager=device_manager,
         frame_queue=frame_queue,
         stop_event=stop_event,
         level_queue=level_queue,
@@ -307,7 +305,6 @@ def test_frame_samples_derived_from_frame_ms() -> None:
     settings.audio.sample_rate = 16000
     stream = LiveAudioStream(
         settings=settings,
-        device_manager=mock.MagicMock(),
         frame_queue=frame_queue,
         stop_event=stop_event,
         level_queue=level_queue,
@@ -360,3 +357,30 @@ def test_audio_frame_timestamps_are_synthesized_from_frame_index() -> None:
     assert len(timestamps) >= 5
     for index, ts in enumerate(timestamps):
         assert ts == pytest.approx(index * 0.032, abs=1e-9)
+
+
+def test_full_frame_queue_increments_drop_counter() -> None:
+    # AC-4: a full frame_queue is counted, not silently dropped. The WAV write
+    # happens inside _publish_mixed_frame before the enqueue, so the saved
+    # recording is independent of these drops.
+    frame_queue: queue.Queue[AudioFrame] = queue.Queue(maxsize=1)
+    level_queue: queue.Queue[float] = queue.Queue(maxsize=1)
+    stop_event = threading.Event()
+    settings = mock.MagicMock()
+    settings.audio.sample_rate = 16000
+    stream = LiveAudioStream(
+        settings=settings,
+        frame_queue=frame_queue,
+        stop_event=stop_event,
+        level_queue=level_queue,
+    )
+
+    mixed = np.full(512, 0.1, dtype=np.float32)
+    stream._publish_mixed_frame(mixed)
+    assert stream.dropped_frames == 0
+
+    stream._publish_mixed_frame(mixed)
+    stream._publish_mixed_frame(mixed)
+
+    assert stream.dropped_frames == 2
+    assert frame_queue.qsize() == 1

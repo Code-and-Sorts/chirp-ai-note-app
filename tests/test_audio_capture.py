@@ -558,6 +558,33 @@ def test_check_permissions_raises_on_missing_keys(tmp_path: Path) -> None:
         assert "expected screen_recording and microphone" in str(excinfo.value)
 
 
+def test_check_permissions_raises_actionable_error_on_timeout(tmp_path: Path) -> None:
+    # AC-7: a wedged helper must surface a typed, actionable error rather than
+    # letting a raw subprocess.TimeoutExpired escape to the callers.
+    from audio_capture import AudioCaptureStartTimeout, check_permissions
+
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\nsleep 10\n")
+    fake_binary.chmod(0o755)
+
+    with (
+        mock.patch(
+            "audio_capture.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=["capture_audio", "--check-permissions"], timeout=3
+            ),
+        ),
+        mock.patch(
+            "audio_capture._resolve_binary_path",
+            return_value=contextlib.nullcontext(fake_binary),
+        ),
+    ):
+        with pytest.raises(AudioCaptureStartTimeout) as excinfo:
+            check_permissions()
+
+    assert "did not respond" in str(excinfo.value)
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only wheel build")
 def test_wheel_bundles_executable_helper(tmp_path: Path) -> None:
