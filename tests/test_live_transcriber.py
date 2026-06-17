@@ -333,7 +333,7 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
         try:
             for _ in range(200):
                 transcriber.export_transcript(tmp_path / "transcript.txt")
-        except BaseException as exc:  # noqa: BLE001 - capturing any race failure
+        except Exception as exc:  # noqa: BLE001 - capturing any race failure
             errors.append(exc)
 
     mutator = threading.Thread(target=mutate, daemon=True)

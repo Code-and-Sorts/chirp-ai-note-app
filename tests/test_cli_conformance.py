@@ -169,7 +169,7 @@ class TestAskJson:
     def _patch_one_shot(self, monkeypatch):
         import notes_chat.cli as nc_cli
 
-        monkeypatch.setattr(nc_cli, "get_notes_config", lambda: MagicMock())
+        monkeypatch.setattr(nc_cli, "get_notes_config", MagicMock)
 
         def fake_retrieve(config, question, when_filter=None):
             return {
@@ -571,7 +571,7 @@ class TestAskDualInput:
     def _patch(self, monkeypatch):
         import notes_chat.cli as nc_cli
 
-        monkeypatch.setattr(nc_cli, "get_notes_config", lambda: MagicMock())
+        monkeypatch.setattr(nc_cli, "get_notes_config", MagicMock)
 
         def fake_retrieve(config, question, when_filter=None):
             return {

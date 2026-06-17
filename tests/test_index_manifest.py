@@ -302,6 +302,7 @@ Test meeting content
         try:
             boom.build_index(force=True)
         except KeyboardInterrupt:
+            # Simulated ctrl-c mid-rebuild; the test asserts prior artifacts survive.
             pass
 
         # The previous artifacts survive — the next reader is not broken.
