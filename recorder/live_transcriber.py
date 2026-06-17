@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import queue
 import tempfile
 import threading
@@ -10,6 +11,8 @@ from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
 from recorder.live_types import DashboardEvent, SpeechChunk, TranscriptSegment
 from transcriber.whisper_transcriber import WhisperTranscriber
+
+logger = logging.getLogger(__name__)
 
 
 class LiveTranscriber(threading.Thread):
@@ -102,8 +105,10 @@ class LiveTranscriber(threading.Thread):
         event = DashboardEvent(type=event_type, payload=payload)
         try:
             self.event_queue.put_nowait(event)
-        except queue.Full:
-            pass
+        except queue.Full as exc:
+            logger.debug(
+                "dropped dashboard %s event; event queue full: %s", event_type, exc
+            )
 
     def _maybe_transcribe(self, force: bool):
         if not self._pcm_buffer:
@@ -264,14 +269,21 @@ class LiveTranscriber(threading.Thread):
         self._debug_index += 1
 
     def export_transcript(self, output_path: Path):
-        if not self._segments:
+        segments = self.segments
+        if not segments:
             return
         output_path.parent.mkdir(parents=True, exist_ok=True)
         lines = []
-        for segment in self._segments:
+        for segment in segments:
             timestamp = self._format_timestamp(segment.start)
             lines.append(f"[{timestamp}] {segment.text}")
         output_path.write_text("\n".join(lines), encoding="utf-8")
+
+    def close(self) -> None:
+        """Release the underlying Whisper model. Idempotent."""
+        transcriber = getattr(self, "transcriber", None)
+        if transcriber is not None:
+            transcriber.close()
 
     @staticmethod
     def _format_timestamp(seconds: float) -> str:

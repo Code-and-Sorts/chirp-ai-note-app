@@ -148,7 +148,7 @@ class _RedactionViolationFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if getattr(record, "_chirp_redaction_checked", False):
             return True
-        record._chirp_redaction_checked = True  # type: ignore[attr-defined]
+        record._chirp_redaction_checked = True
         if getattr(_redaction_guard, "active", False):
             return True
         keys = _forbidden_keys(record)

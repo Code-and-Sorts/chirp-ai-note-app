@@ -197,3 +197,19 @@ def test_validate_request_rejects_non_dict_envelope(not_a_dict: object) -> None:
 def test_decoded_line_round_trip_preserves_order_insensitive_structure() -> None:
     payload = json.dumps({"id": "r-abcdef012345", "op": "chat"}).encode("utf-8")
     assert protocol.decode_line(payload) == {"id": "r-abcdef012345", "op": "chat"}
+
+
+def test_protocol_version_is_a_small_integer_seed() -> None:
+    assert protocol.PROTOCOL_VERSION == 1
+    assert isinstance(protocol.PROTOCOL_VERSION, int)
+
+
+def test_protocol_version_is_not_derived_from_package_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # AC-2: a cosmetic package bump must NOT move PROTOCOL_VERSION — it is a fixed
+    # int, not derived from the package string.
+    monkeypatch.setattr(protocol, "package_version", lambda: "9.9.9-cosmetic")
+    assert protocol.PROTOCOL_VERSION == 1
+    assert isinstance(protocol.PROTOCOL_VERSION, int)
+    assert protocol.PROTOCOL_VERSION == 1

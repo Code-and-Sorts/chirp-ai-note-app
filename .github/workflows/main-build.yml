@@ -20,12 +20,17 @@ jobs:
       uses: ./.github/actions/quality-checks
 
     - name: Run tests
+      # Bare `--cov` uses the full [tool.coverage.run] source set in
+      # pyproject.toml (all 10 packages), matching shared-build-and-test.yaml so
+      # both gates measure the same surface. The fail_under floor lives in
+      # pyproject [tool.coverage.report].
       run: |
-        uv run pytest tests/ -v --cov=chirp --cov=config --cov=recorder --cov=transcriber --cov=notes --cov=utils --cov-report=xml
+        uv run pytest tests/ -v --cov --cov-report=xml --cov-report=term
 
     - name: Build package
+      # Wheel-only distribution (see shared-build-and-test.yaml); never build an sdist.
       run: |
-        uv build
+        uv build --wheel
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v7

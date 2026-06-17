@@ -263,6 +263,69 @@ class TestSearchChroma:
         assert "$and" in called_kwargs["where"]
         assert len(result) == 1
 
+    def test_where_clause_bounds_match_stored_date_shape(self):
+        """AC-3/AC-4: the real TimeRange feeds naive bounds that match storage.
+
+        The stored chunk `date` is naive (`datetime.isoformat()` with no offset);
+        the time-range filter used to build tz-aware ISO strings with an offset,
+        so Chroma's lexical string comparison mis-compared. This drives the REAL
+        `parse_time_range` through `_search_chroma`'s where-clause builder and
+        asserts both bounds carry no tz offset — same shape as the stored value.
+        """
+        from datetime import datetime
+
+        from notes_chat.index import IndexManager
+        from notes_chat.time_ranges import parse_time_range
+        from notes_chat.types import Chunk, NoteMeta
+
+        time_range = parse_time_range("meetings", when_arg="on:2025-01-15")
+        assert time_range is not None
+        # The real TimeRange is tz-aware (datetime.now(tzlocal())).
+        assert time_range.start.tzinfo is not None
+
+        manager = MagicMock()
+        manager.collection.query.return_value = {
+            "ids": [[]],
+            "distances": [[]],
+            "metadatas": [[]],
+            "documents": [[]],
+        }
+        with patch(
+            "notes_chat.retrieval._get_query_embedding",
+            return_value=[0.1, 0.2],
+        ):
+            _search_chroma(manager, "query", 5, time_range)
+
+        where = manager.collection.query.call_args.kwargs["where"]
+        gte = where["$and"][0]["date"]["$gte"]
+        lt = where["$and"][1]["date"]["$lt"]
+
+        # Stored date is a naive isoformat: no "+HH:MM"/"Z" offset.
+        stored_meta = NoteMeta(
+            path=Path("/n/slug/notes.md"),
+            title="t",
+            date=datetime(2025, 1, 15),
+            participants=[],
+            duration=0,
+            mtime=0.0,
+            size=0,
+        )
+        chunk = Chunk(
+            id="x",
+            path=stored_meta.path,
+            content="c",
+            meta=stored_meta,
+            content_hash="h",
+        )
+        stored_date = IndexManager.__dict__["_chunk_to_metadata"](manager, chunk)[
+            "date"
+        ]
+
+        for bound in (gte, lt, stored_date):
+            assert "+" not in bound
+            assert not bound.endswith("Z")
+        assert gte <= "2025-01-15T12:00:00" < lt
+
     def test_returns_empty_on_exception(self):
         manager = MagicMock()
         manager.collection.query.side_effect = Exception("chroma down")

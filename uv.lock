@@ -354,7 +354,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "rank-bm25" },
-    { name = "requests" },
     { name = "rich" },
     { name = "silero-vad" },
     { name = "tomli-w" },
@@ -370,9 +369,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "types-python-dateutil" },
-    { name = "types-requests" },
 ]
 
 [package.dev-dependencies]
@@ -384,9 +383,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "types-python-dateutil" },
-    { name = "types-requests" },
 ]
 
 [package.metadata]
@@ -410,15 +409,14 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "python-dateutil", specifier = ">=2.8.0" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "rank-bm25", specifier = ">=0.2.0" },
-    { name = "requests", specifier = ">=2.31.0" },
     { name = "rich", specifier = ">=14.1.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "silero-vad", specifier = ">=5.1" },
     { name = "tomli-w", specifier = ">=1.0.0" },
     { name = "typer", specifier = ">=0.9.0" },
     { name = "types-python-dateutil", marker = "extra == 'dev'", specifier = ">=2.8.0" },
-    { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
 ]
 provides-extras = ["dev"]
 
@@ -431,9 +429,9 @@ dev = [
     { name = "pytest", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "pytest-cov", specifier = ">=4.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", specifier = ">=0.1.0" },
     { name = "types-python-dateutil", specifier = ">=2.8.0" },
-    { name = "types-requests", specifier = ">=2.31.0" },
 ]
 
 [[package]]
@@ -3371,18 +3369,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/88/f3/2427775f80cd5e19a0a71ba8e5ab7645a01a852f43a5fd0ffc24f66338e0/types_python_dateutil-2.9.0.20260408.tar.gz", hash = "sha256:8b056ec01568674235f64ecbcef928972a5fac412f5aab09c516dfa2acfbb582", size = 16981, upload-time = "2026-04-08T04:28:10.995Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/c6/eeba37bfee282a6a97f889faef9352d6172c6a5088eb9a4daf570d9d748d/types_python_dateutil-2.9.0.20260408-py3-none-any.whl", hash = "sha256:473139d514a71c9d1fbd8bb328974bedcb1cc3dba57aad04ffa4157f483c216f", size = 18437, upload-time = "2026-04-08T04:28:10.095Z" },
-]
-
-[[package]]
-name = "types-requests"
-version = "2.33.0.20260408"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/69/6a/749dc53a54a3f35842c1f8197b3ca6b54af6d7458a1bfc75f6629b6da666/types_requests-2.33.0.20260408.tar.gz", hash = "sha256:95b9a86376807a216b2fb412b47617b202091c3ea7c078f47cc358d5528ccb7b", size = 23882, upload-time = "2026-04-08T04:34:49.33Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/90/b8/78fd6c037de4788c040fdd323b3369804400351b7827473920f6c1d03c10/types_requests-2.33.0.20260408-py3-none-any.whl", hash = "sha256:81f31d5ea4acb39f03be7bc8bed569ba6d5a9c5d97e89f45ac43d819b68ca50f", size = 20739, upload-time = "2026-04-08T04:34:48.325Z" },
 ]
 
 [[package]]

@@ -558,6 +558,32 @@ def test_check_permissions_raises_on_missing_keys(tmp_path: Path) -> None:
         assert "expected screen_recording and microphone" in str(excinfo.value)
 
 
+def test_check_permissions_raises_actionable_error_on_timeout(tmp_path: Path) -> None:
+    # AC-7: a wedged helper surfaces a typed error, not a raw TimeoutExpired.
+    from audio_capture import AudioCaptureStartTimeout, check_permissions
+
+    fake_binary = tmp_path / "capture_audio"
+    fake_binary.write_text("#!/bin/sh\nsleep 10\n")
+    fake_binary.chmod(0o755)
+
+    with (
+        mock.patch(
+            "audio_capture.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=["capture_audio", "--check-permissions"], timeout=3
+            ),
+        ),
+        mock.patch(
+            "audio_capture._resolve_binary_path",
+            return_value=contextlib.nullcontext(fake_binary),
+        ),
+    ):
+        with pytest.raises(AudioCaptureStartTimeout) as excinfo:
+            check_permissions()
+
+    assert "did not respond" in str(excinfo.value)
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only wheel build")
 def test_wheel_bundles_executable_helper(tmp_path: Path) -> None:
@@ -599,3 +625,73 @@ def test_wheel_bundles_executable_helper(tmp_path: Path) -> None:
         assert unix_mode & 0o111, (
             f"helper binary in wheel lacks any execute bit: mode={oct(unix_mode)}"
         )
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only wheel build")
+def test_wheel_is_platform_tagged_arm64(tmp_path: Path) -> None:
+    """The wheel must be tagged for arm64 macOS, never py3-none-any.
+
+    A py3-none-any wheel that bundles the arm64 Mach-O helper would be offered
+    by pip on every platform and fail only at runtime. This is the regression
+    guard the original mistag slipped past.
+    """
+    import re
+    import zipfile
+
+    repo_root = Path(__file__).resolve().parent.parent
+    bundle_binary = (
+        repo_root
+        / "audio_capture"
+        / "CaptureAudio.app"
+        / "Contents"
+        / "MacOS"
+        / "capture_audio"
+    )
+    if not bundle_binary.exists():
+        pytest.skip("Swift helper not built; run `python -m audio_capture.build`")
+
+    result = subprocess.run(
+        ["uv", "build", "--wheel", "-o", str(tmp_path)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"uv build failed:\n{result.stdout}\n{result.stderr}")
+
+    wheels = list(tmp_path.glob("*.whl"))
+    assert len(wheels) == 1, f"expected one wheel, found {wheels}"
+    wheel_name = wheels[0].name
+
+    assert "py3-none-any" not in wheel_name, (
+        f"wheel is mistagged pure-Python: {wheel_name}"
+    )
+    assert "macosx" in wheel_name, (
+        f"wheel filename lacks the macosx platform tag: {wheel_name}"
+    )
+    assert "arm64" in wheel_name, (
+        f"wheel filename lacks the arm64 platform tag: {wheel_name}"
+    )
+
+    with zipfile.ZipFile(wheels[0]) as zf:
+        wheel_metadata = next(
+            (
+                zf.read(name).decode()
+                for name in zf.namelist()
+                if name.endswith(".dist-info/WHEEL")
+            ),
+            None,
+        )
+    assert wheel_metadata is not None, "wheel has no .dist-info/WHEEL metadata"
+    assert "Root-Is-Purelib: false" in wheel_metadata, (
+        f"WHEEL still marks the package pure-Python:\n{wheel_metadata}"
+    )
+    tag_line = next(
+        (line for line in wheel_metadata.splitlines() if line.startswith("Tag:")),
+        None,
+    )
+    assert tag_line is not None, f"WHEEL has no Tag line:\n{wheel_metadata}"
+    assert re.search(r"macosx_\d+_\d+_arm64", tag_line), (
+        f"WHEEL tag is not arm64 macOS: {tag_line!r}"
+    )

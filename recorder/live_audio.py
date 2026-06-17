@@ -10,7 +10,6 @@ import time
 import wave
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -27,12 +26,6 @@ from recorder.audio_mixer import (
 )
 from recorder.live_types import AudioFrame
 
-if TYPE_CHECKING:
-    # Imported only for type hints. `recorder.device_manager` pulls in
-    # PyAudio at import time, which would defeat this module's
-    # platform-neutral import goal on hosts where PyAudio is unavailable.
-    from recorder.device_manager import DeviceManager
-
 logger = logging.getLogger(__name__)
 
 _LIVE_SAMPLE_RATE = 16000
@@ -44,7 +37,6 @@ class LiveAudioStream:
     def __init__(
         self,
         settings: ChirpSettings,
-        device_manager: DeviceManager | None = None,
         frame_queue: queue.Queue[AudioFrame] | None = None,
         stop_event: threading.Event | None = None,
         level_queue: queue.Queue[float] | None = None,
@@ -57,6 +49,8 @@ class LiveAudioStream:
         self.stop_event = stop_event or threading.Event()
         self.level_queue: queue.Queue[float] = level_queue or queue.Queue()
         self.frame_ms = frame_ms
+        self._dropped_frames = 0
+        self._dropped_frames_lock = threading.Lock()
         # `channels` constructor arg is retained for backward compatibility;
         # AudioCapture always produces mono mixed output.
         self.channels = _LIVE_CHANNELS
@@ -85,6 +79,11 @@ class LiveAudioStream:
     @property
     def mic_device_name(self) -> str | None:
         return self._mic_device_name
+
+    @property
+    def dropped_frames(self) -> int:
+        with self._dropped_frames_lock:
+            return self._dropped_frames
 
     @property
     def sample_rate(self) -> int:
@@ -222,10 +221,14 @@ class LiveAudioStream:
         try:
             self.frame_queue.put_nowait(frame)
         except queue.Full:
-            pass
+            # The WAV is written above; a full frame_queue only degrades the
+            # live transcript, never the saved recording.
+            with self._dropped_frames_lock:
+                self._dropped_frames += 1
         try:
             self.level_queue.put_nowait(peak)
         except queue.Full:
+            # Level meter is cosmetic; a dropped peak is not user-visible loss.
             pass
 
     def stop(self) -> None:

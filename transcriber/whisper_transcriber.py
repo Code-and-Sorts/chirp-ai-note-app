@@ -8,6 +8,7 @@ from typing import Any
 
 from faster_whisper import WhisperModel
 
+from chirp.exceptions import WhisperModelLoadError
 from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
 from utils.file_utils import META_FILENAME, get_file_size_mb
@@ -23,18 +24,28 @@ class WhisperTranscriber:
     def _load_model(self):
         device = self._get_optimal_device()
         compute_type = self._get_compute_type()
+        model_name = self.settings.models.whisper
 
-        self.model = WhisperModel(
-            self.settings.models.whisper,
-            device=device,
-            compute_type=compute_type,
-            cpu_threads=self._get_cpu_threads(),
-        )
+        try:
+            self.model = WhisperModel(
+                model_name,
+                device=device,
+                compute_type=compute_type,
+                cpu_threads=self._get_cpu_threads(),
+            )
+        except Exception as exc:
+            raise WhisperModelLoadError(
+                f"Could not download or load the Whisper model {model_name!r}. "
+                "Check your network connection and free disk space, then retry. "
+                "If the problem persists, set a valid model name in your config "
+                f"(models.whisper). Underlying error: {exc}"
+            ) from exc
 
     def _get_optimal_device(self) -> str:
-        system = platform.system()
-
-        if system == "Darwin":
+        # chirp targets macOS only (epic-audio-capture decision 1), where
+        # faster-whisper runs on CPU. The non-Darwin branch is an unexercised
+        # portability hint, not a GPU-acceleration promise.
+        if platform.system() == "Darwin":
             return "cpu"
         try:
             import torch
@@ -44,11 +55,8 @@ class WhisperTranscriber:
             return "cpu"
 
     def _get_compute_type(self) -> str:
-        device = self._get_optimal_device()
-
-        if device == "cpu":
-            return "int8"
-        return "float16"
+        # int8 on CPU (the macOS path); float16 only on the unexercised CUDA branch.
+        return "int8" if self._get_optimal_device() == "cpu" else "float16"
 
     def _get_cpu_threads(self) -> int:
         import os
@@ -325,6 +333,10 @@ class WhisperTranscriber:
                 return title.strip()
         return DEFAULT_MEETING_NAME
 
+    def close(self) -> None:
+        """Release the loaded CTranslate2 model. Idempotent."""
+        if getattr(self, "model", None) is not None:
+            self.model = None
+
     def __del__(self):
-        if hasattr(self, "model") and self.model:
-            del self.model
+        self.close()

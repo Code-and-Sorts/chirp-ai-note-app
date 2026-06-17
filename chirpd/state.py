@@ -14,13 +14,20 @@ from typing import Any
 import psutil
 
 from chirpd.backend import LLMBackend, ModelRole
-from llm.exceptions import LLMError
+from llm.exceptions import LLMError, LLMModelCapacityExceeded
 from llm.protocol import OP_MODEL_LOAD, OP_MODEL_UNLOAD, package_version
 from llm.registry import Registry, RegistryEntry, resolve_alias
 
 _logger = logging.getLogger("chirpd.state")
 
 DEFAULT_IDLE_TIMEOUT_S: float = 300.0
+# Generous per-role resident cap: a typical session holds one chat model and
+# one pinned embed model. A new load that would exceed a role's cap evicts the
+# LRU non-in-flight model of that role; if every resident model of that role is
+# locked (in-flight), the load fails with a typed, actionable error rather than
+# risking OOM.
+DEFAULT_MAX_RESIDENT_CHAT: int = 1
+DEFAULT_MAX_RESIDENT_EMBED: int = 1
 
 
 @dataclass
@@ -44,18 +51,33 @@ class DaemonState:
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         *,
         registry_reader: Callable[[], Registry] | None = None,
+        max_resident_chat: int = DEFAULT_MAX_RESIDENT_CHAT,
+        max_resident_embed: int = DEFAULT_MAX_RESIDENT_EMBED,
     ) -> None:
         self._backend = backend
         self._registry = registry
         self._registry_reader = registry_reader
         self._idle_timeout_s = idle_timeout_s
+        self._max_resident: dict[ModelRole, int] = {
+            "chat": max_resident_chat,
+            "embed": max_resident_embed,
+        }
         self._models: dict[str, LoadedModel] = {}
         self._registry_locks: dict[str, asyncio.Lock] = {}
+        # Serializes cap-check + eviction + the multi-GB backend load across
+        # DISTINCT aliases so two concurrent loads can't both pass a cap check and
+        # then both load (the OOM the cap exists to prevent). Loading two large
+        # models at once is itself the memory risk, so serializing the load — not
+        # just the check — is the correct, deadlock-free choice (acquired only
+        # AFTER the per-alias lock; eviction takes the victim's per-alias lock,
+        # never the gate, so there is no lock cycle).
+        self._load_gate = asyncio.Lock()
         self._cancellation_events: dict[str, asyncio.Event] = {}
         self._start_monotonic = time.monotonic()
         self._daemon_version = package_version()
         self._proc = psutil.Process(os.getpid())
         self._last_request_at: datetime | None = None
+        self._last_eviction: dict[str, Any] | None = None
 
     @property
     def registry(self) -> Registry:
@@ -140,19 +162,33 @@ class DaemonState:
                     self.schedule_idle_unload(existing, keep_alive=None)
                 return existing
 
-            handle = await self._backend.load(entry.hf_repo, entry.role)
-            now = datetime.now(UTC)
-            model = LoadedModel(
-                alias=alias,
-                role=entry.role,
-                handle=handle,
-                last_used=now,
-                loaded_at=now,
-                lock=lock,
-            )
-            self._models[alias] = model
-            if model.role == "chat":
-                self.schedule_idle_unload(model, keep_alive=None)
+            # Hold the state-wide gate across cap-check → eviction → backend load
+            # → insertion so a concurrent distinct-alias loader observes this load
+            # (its eviction or its inserted model) and cannot independently pass
+            # the same cap check. Re-check residency under the gate in case it was
+            # filled while we waited.
+            async with self._load_gate:
+                existing = self._models.get(alias)
+                if existing is not None:
+                    existing.last_used = datetime.now(UTC)
+                    if existing.role == "chat":
+                        self.schedule_idle_unload(existing, keep_alive=None)
+                    return existing
+
+                await self._enforce_resident_cap(entry.role, incoming_alias=alias)
+                handle = await self._backend.load(entry.hf_repo, entry.role)
+                now = datetime.now(UTC)
+                model = LoadedModel(
+                    alias=alias,
+                    role=entry.role,
+                    handle=handle,
+                    last_used=now,
+                    loaded_at=now,
+                    lock=lock,
+                )
+                self._models[alias] = model
+                if model.role == "chat":
+                    self.schedule_idle_unload(model, keep_alive=None)
             _logger.info(
                 "model loaded",
                 extra={"model": alias, "op": OP_MODEL_LOAD},
@@ -176,6 +212,64 @@ class DaemonState:
             "model unloaded",
             extra={"model": alias, "op": OP_MODEL_UNLOAD},
         )
+
+    async def _enforce_resident_cap(
+        self, role: ModelRole, *, incoming_alias: str
+    ) -> None:
+        """Evict the LRU non-in-flight model of ``role`` if a load would exceed the cap.
+
+        Deliberate pressure/cap action — never a plain idle timer, so the embed
+        pin (FR6) is respected: an embed model is only evicted to make room, and
+        only when it is not in flight. A model holding its ``LoadedModel.lock``
+        (mid-generation / mid-embed) is never evicted. When every resident model
+        of ``role`` is locked, the load fails with a typed, actionable error.
+        """
+        cap = self._max_resident.get(role)
+        if cap is None or cap <= 0:
+            return
+        resident = [
+            model
+            for alias, model in self._models.items()
+            if model.role == role and alias != incoming_alias
+        ]
+        if len(resident) < cap:
+            return
+
+        evictable = sorted(
+            (model for model in resident if not model.lock.locked()),
+            key=lambda model: model.last_used,
+        )
+        overflow = len(resident) - cap + 1
+        if len(evictable) < overflow:
+            raise LLMModelCapacityExceeded(
+                f"cannot load another {role!r} model: the resident set is full "
+                f"({len(resident)}/{cap}) and every resident {role!r} model is "
+                "in flight; retry after an in-flight request completes",
+                details={
+                    "role": role,
+                    "resident": len(resident),
+                    "cap": cap,
+                    "in_flight": len(resident) - len(evictable),
+                },
+            )
+
+        for victim in evictable[:overflow]:
+            self._last_eviction = {
+                "alias": victim.alias,
+                "role": victim.role,
+                "reason": "resident_cap",
+                "to_load": incoming_alias,
+                "at": datetime.now(UTC).isoformat(),
+            }
+            _logger.info(
+                "evicting model under resident cap",
+                extra={
+                    "model": victim.alias,
+                    "op": OP_MODEL_UNLOAD,
+                    "reason": "resident_cap",
+                },
+            )
+            await self.unload(victim.alias)
 
     def list_models(self) -> list[dict[str, Any]]:
         registry = self._refresh_registry()
@@ -232,6 +326,9 @@ class DaemonState:
                     "idle_countdown_seconds": countdown,
                 }
             )
+        resident_counts = {"chat": 0, "embed": 0}
+        for model in self._models.values():
+            resident_counts[model.role] = resident_counts.get(model.role, 0) + 1
         return {
             "pid": self._proc.pid,
             "uptime_seconds": self.uptime_seconds(),
@@ -243,17 +340,38 @@ class DaemonState:
                 if self._last_request_at is not None
                 else None
             ),
+            "resident_counts": resident_counts,
+            "resident_caps": dict(self._max_resident),
+            "last_eviction": self._last_eviction,
             "models": loaded_payload,
         }
 
     def touch(self, model: LoadedModel) -> None:
         model.last_used = datetime.now(UTC)
 
-    def register_cancellation(self, request_id: str, event: asyncio.Event) -> None:
-        self._cancellation_events[request_id] = event
+    def register_cancellation(self, request_id: str, event: asyncio.Event) -> bool:
+        """Register ``event`` under ``request_id`` unless one is already in flight.
 
-    def clear_cancellation(self, request_id: str) -> None:
-        self._cancellation_events.pop(request_id, None)
+        Returns ``True`` when the slot was free and the event was stored,
+        ``False`` when ``request_id`` already maps to a live event. Refusing the
+        overwrite keeps a duplicate/reused id from clobbering the prior
+        request's ``should_stop`` (which would leave it uncancellable and let a
+        cancel cross-fire onto the wrong request).
+        """
+        if request_id in self._cancellation_events:
+            return False
+        self._cancellation_events[request_id] = event
+        return True
+
+    def clear_cancellation(self, request_id: str, event: asyncio.Event) -> None:
+        """Pop ``request_id`` only if it still maps to ``event``.
+
+        Identity-guarded so a rejected duplicate's ``finally`` (or a same-id
+        request that registered after this one cleared) cannot evict another
+        request's live cancellation event.
+        """
+        if self._cancellation_events.get(request_id) is event:
+            del self._cancellation_events[request_id]
 
     def get_cancellation(self, request_id: str) -> asyncio.Event | None:
         return self._cancellation_events.get(request_id)
@@ -286,6 +404,13 @@ class DaemonState:
             await asyncio.sleep(delay)
         except asyncio.CancelledError:
             return
+        # A generation longer than the idle timeout holds model.lock past the
+        # sleep. Never unload a model out from under an in-flight request:
+        # reschedule instead so the model stays resident and the dispatcher's
+        # post-completion reschedule then governs the real idle countdown.
+        if model.lock.locked():
+            self.schedule_idle_unload(model, keep_alive=None)
+            return
         # Belt-and-braces: reschedules always cancel the prior task first, so a
         # task that survives the sleep should mean its delay elapsed without
         # activity. This guard catches any future scheduling slip.
@@ -306,7 +431,7 @@ class DaemonState:
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            _logger.debug("idle-unload task for %s cancelled", model.alias)
 
 
 def _alias_for_default(registry: Registry, role: ModelRole) -> str:

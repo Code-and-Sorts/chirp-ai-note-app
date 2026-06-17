@@ -230,8 +230,10 @@ class TestAskMarkdownToggle:
         self._stub_pipeline(monkeypatch, answer="answer")
         result = CliRunner().invoke(app, ["ask", "-q", "what?", "--no-markdown"])
         assert result.exit_code == 0
-        assert "sources: note #1" in result.stdout
-        assert "Sources:" not in result.stdout
+        # Sources footer → stderr (AC-1); the answer is data on stdout.
+        assert "sources: note #1" in result.stderr
+        assert "Sources:" not in result.output
+        assert "answer" in result.stdout
 
     def test_no_sources_flag_omits_footer(self, monkeypatch):
         from typer.testing import CliRunner
@@ -243,4 +245,22 @@ class TestAskMarkdownToggle:
             app, ["ask", "-q", "what?", "--no-markdown", "--no-sources"]
         )
         assert result.exit_code == 0
-        assert "sources:" not in result.stdout
+        assert "sources:" not in result.output
+
+    def test_json_dry_run_emits_parseable_json(self, monkeypatch):
+        import json as _json
+
+        from typer.testing import CliRunner
+
+        from notes_chat.cli import app
+
+        # dry-run + --json still emits valid JSON on stdout, so a jq consumer
+        # never gets empty input.
+        self._stub_pipeline(monkeypatch, answer="unused")
+        result = CliRunner().invoke(app, ["ask", "-q", "what?", "--json", "--dry-run"])
+        assert result.exit_code == 0
+        payload = _json.loads(result.stdout)
+        assert payload["dry_run"] is True
+        assert payload["question"] == "what?"
+        assert payload["context"] == "ctx"
+        assert payload["retrieved_chunks"] == 1

@@ -10,7 +10,6 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from threading import Timer
-from typing import TYPE_CHECKING
 
 import numpy as np
 import tomli_w
@@ -31,12 +30,6 @@ from utils.file_utils import (
 )
 from utils.time_utils import get_recording_duration
 
-if TYPE_CHECKING:
-    # Imported only for type hints. `recorder.device_manager` pulls in
-    # PyAudio at import time, which would defeat this module's
-    # platform-neutral import goal on hosts where PyAudio is unavailable.
-    from recorder.device_manager import DeviceManager
-
 logger = logging.getLogger(__name__)
 
 OUTPUT_SAMPLE_RATE = 16000
@@ -45,9 +38,8 @@ OUTPUT_SAMPLE_WIDTH_BYTES = 2
 
 
 class AudioRecorder:
-    def __init__(self, settings: ChirpSettings, device_manager: DeviceManager):
+    def __init__(self, settings: ChirpSettings):
         self.settings = settings
-        self.device_manager = device_manager
         self._is_recording_event = threading.Event()
         self._frame_count: int = 0
         self.recording_thread: Timer | None = None
@@ -186,7 +178,7 @@ class AudioRecorder:
             except KeyboardInterrupt:
                 self._is_recording_event.clear()
         except KeyboardInterrupt:
-            pass
+            logger.debug("recording interrupted by user; stopping capture")
         except Exception:
             shutil.rmtree(note_dir, ignore_errors=True)
             raise

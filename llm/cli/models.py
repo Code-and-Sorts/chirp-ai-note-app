@@ -1,11 +1,10 @@
 """``chirp models`` Typer subcommands.
 
-This module is the eventual home of all six ``chirp models`` subcommands.
-Story 4.3 adds ``add`` and 4.4 adds ``list``; story 4.5 fills in the update /
-delete / refresh surface — ``show``, ``default``, ``remove``, and ``pull`` —
-each pulling on the same plumbing the model-registry epic introduces:
-HuggingFace validation/download/cache lookup (:mod:`llm.hf`), atomic registry
-writes (:mod:`llm.registry`), and daemon warm (:class:`llm.client.LLMClient`).
+This module implements all six ``chirp models`` subcommands — ``add``,
+``list``, ``show``, ``default``, ``remove``, and ``pull`` — wired into the
+top-level CLI (``chirp/cli.py``). They share the same plumbing: HuggingFace
+validation/download/cache lookup (:mod:`llm.hf`), atomic registry writes
+(:mod:`llm.registry`), and daemon warm (:class:`llm.client.LLMClient`).
 
 ``add``'s execution order is fixed (epic §3 decision 8): validate → resolve
 role → resolve alias → download → read registry → mutate → write → warm. Any
@@ -29,6 +28,7 @@ from typing import Any, Literal, NoReturn
 import typer
 from rich.table import Table
 
+from chirp import glyphs
 from chirpd.paths import MODELS_TOML_PATH
 from llm import hf
 from llm.cli._console import console, stdout_console
@@ -222,8 +222,8 @@ def _render_list_table(rows: list[ListRow], daemon_reachable: bool) -> None:
         table.add_row(
             row.alias,
             row.role,
-            "★" if row.is_default else "",
-            "●" if daemon_reachable and row.loaded else "—",
+            glyphs.DEFAULT_MARKER if row.is_default else "",
+            glyphs.ACTIVE_MARKER if daemon_reachable and row.loaded else glyphs.PENDING,
             row.hf_repo,
         )
     stdout_console.print(table)

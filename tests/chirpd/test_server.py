@@ -20,7 +20,9 @@ from llm.protocol import (
     MAX_LINE_BYTES,
     OP_HEALTH,
     OP_HELLO,
+    PROTOCOL_VERSION,
     new_request_id,
+    package_version,
 )
 
 SendFn = Callable[[asyncio.StreamWriter, dict[str, Any]], Awaitable[None]]
@@ -37,11 +39,17 @@ async def _hello_with_matching_version(
     request_id = new_request_id()
     await send_envelope(
         writer,
-        {"id": request_id, "op": OP_HELLO, "client_version": dispatcher.daemon_version},
+        {
+            "id": request_id,
+            "op": OP_HELLO,
+            "client_version": dispatcher.daemon_version,
+            "protocol_version": dispatcher.protocol_version,
+        },
     )
     response = await read_envelope(reader)
     assert response["event"] == EVENT_READY
     assert response["daemon_version"] == dispatcher.daemon_version
+    assert response["protocol_version"] == dispatcher.protocol_version
     assert response["id"] == request_id
     return response
 
@@ -56,6 +64,65 @@ async def test_hello_with_matching_version_returns_ready(
     await _hello_with_matching_version(
         reader, writer, dispatcher, send_envelope, read_envelope
     )
+
+
+async def test_package_version_skew_handshakes_ready(
+    client_connection: tuple[asyncio.StreamReader, asyncio.StreamWriter],
+    dispatcher: Dispatcher,
+    send_envelope: SendFn,
+    read_envelope: ReadFn,
+) -> None:
+    """A cosmetic package bump with an unchanged protocol must NOT evict the model."""
+    reader, writer = client_connection
+    request_id = new_request_id()
+    skewed_package = package_version() + "-cosmetic"
+    await send_envelope(
+        writer,
+        {
+            "id": request_id,
+            "op": OP_HELLO,
+            "client_version": skewed_package,
+            "protocol_version": PROTOCOL_VERSION,
+        },
+    )
+    response = await read_envelope(reader)
+    assert response["event"] == EVENT_READY
+    assert response["id"] == request_id
+
+
+async def test_protocol_version_mismatch_returns_mismatch_and_daemon_exits(
+    running_server: asyncio.Task[None],
+    socket_path: Path,
+    dispatcher: Dispatcher,
+    send_envelope: SendFn,
+    read_envelope: ReadFn,
+) -> None:
+    """A bumped PROTOCOL_VERSION still triggers the exit-and-respawn path."""
+    reader, writer = await asyncio.open_unix_connection(str(socket_path))
+    try:
+        await send_envelope(
+            writer,
+            {
+                "id": new_request_id(),
+                "op": OP_HELLO,
+                "client_version": package_version(),
+                "protocol_version": PROTOCOL_VERSION + 1,
+            },
+        )
+        response = await read_envelope(reader)
+        assert response["event"] == EVENT_VERSION_MISMATCH
+        assert response["protocol_version"] == dispatcher.protocol_version
+    finally:
+        if not writer.is_closing():
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                # best-effort teardown
+                pass
+
+    await asyncio.wait_for(running_server, timeout=1.0)
+    assert running_server.done()
 
 
 async def test_health_op_returns_ready_then_done(
@@ -95,7 +162,12 @@ async def test_hello_with_mismatched_version_returns_version_mismatch_and_daemon
     try:
         await send_envelope(
             writer,
-            {"id": new_request_id(), "op": OP_HELLO, "client_version": "0.0.0-bogus"},
+            {
+                "id": new_request_id(),
+                "op": OP_HELLO,
+                "client_version": "0.0.0-bogus",
+                "protocol_version": PROTOCOL_VERSION + 99,
+            },
         )
         response = await read_envelope(reader)
         assert response["event"] == EVENT_VERSION_MISMATCH
@@ -106,6 +178,7 @@ async def test_hello_with_mismatched_version_returns_version_mismatch_and_daemon
             try:
                 await writer.wait_closed()
             except (ConnectionResetError, BrokenPipeError, OSError):
+                # best-effort teardown
                 pass
 
     await asyncio.wait_for(running_server, timeout=1.0)
@@ -145,6 +218,40 @@ async def test_socket_mode_is_0600(
 ) -> None:
     mode = socket_path.stat().st_mode
     assert stat.S_IMODE(mode) == 0o600
+
+
+async def test_override_socket_parent_created_0700_and_socket_0600() -> None:
+    """AC-9: an override socket gets a 0700 parent and a 0600 socket."""
+    import shutil
+    import tempfile
+
+    from chirpd.server import serve
+
+    # Short /tmp base keeps the AF_UNIX path under the ~104-byte cap.
+    base = Path(tempfile.mkdtemp(prefix="cd9-", dir="/tmp"))
+    parent = base / "p"
+    override_socket = parent / "s"
+    assert not parent.exists()
+
+    dispatcher = Dispatcher()
+    task = asyncio.create_task(serve(override_socket, dispatcher))
+    try:
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while not override_socket.exists():
+            if asyncio.get_running_loop().time() > deadline:
+                raise RuntimeError("override socket never appeared")
+            await asyncio.sleep(0.02)
+
+        assert stat.S_IMODE(parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(override_socket.stat().st_mode) == 0o600
+    finally:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=1.0)
+        except (asyncio.CancelledError, TimeoutError):
+            # best-effort teardown
+            pass
+        shutil.rmtree(base, ignore_errors=True)
 
 
 async def test_oversized_line_rejected(
@@ -245,11 +352,13 @@ async def test_handle_connection_safety_net_swallows_unexpected_exceptions(
             try:
                 await writer.wait_closed()
             except (ConnectionResetError, BrokenPipeError, OSError):
+                # best-effort teardown
                 pass
         task.cancel()
         try:
             await asyncio.wait_for(task, timeout=1.0)
         except (asyncio.CancelledError, TimeoutError):
+            # best-effort teardown
             pass
 
 

@@ -1,7 +1,12 @@
 import json
 from unittest.mock import Mock
 
-from notes_chat.bm25 import BM25Index, _tokenize_document, rebuild_bm25_index
+from notes_chat.bm25 import (
+    BM25Index,
+    _tokenize_document,
+    append_bm25_index,
+    rebuild_bm25_index,
+)
 
 
 class TestBM25:
@@ -149,3 +154,63 @@ class TestBM25:
         assert len(data["corpus"]) == 2
         assert "project" in data["corpus"][0]
         assert "technical" in data["corpus"][1]
+
+
+class TestBM25Append:
+    def test_append_adds_chunks(self, tmp_path):
+        bm25_file = tmp_path / "bm25.json"
+        append_bm25_index(
+            bm25_file,
+            ["alpha_000", "alpha_001"],
+            ["first chunk text", "second chunk text"],
+            stale_id_prefix="alpha_",
+        )
+        with bm25_file.open() as f:
+            data = json.load(f)
+        assert set(data["doc_ids"]) == {"alpha_000", "alpha_001"}
+
+    def test_append_preserves_other_notes(self, tmp_path):
+        bm25_file = tmp_path / "bm25.json"
+        bm25_file.write_text(
+            json.dumps({"doc_ids": ["beta_000"], "corpus": ["beta content here"]})
+        )
+        append_bm25_index(
+            bm25_file, ["alpha_000"], ["alpha content"], stale_id_prefix="alpha_"
+        )
+        with bm25_file.open() as f:
+            data = json.load(f)
+        assert set(data["doc_ids"]) == {"beta_000", "alpha_000"}
+
+    def test_append_purges_ghost_ids_on_shrink(self, tmp_path):
+        """L3: a note shrinking from 3 chunks to 2 must not leave a ghost id."""
+        bm25_file = tmp_path / "bm25.json"
+        append_bm25_index(
+            bm25_file,
+            ["alpha_000", "alpha_001", "alpha_002"],
+            ["chunk a", "chunk b", "chunk c"],
+            stale_id_prefix="alpha_",
+        )
+        append_bm25_index(
+            bm25_file,
+            ["alpha_000", "alpha_001"],
+            ["chunk a edited", "chunk b edited"],
+            stale_id_prefix="alpha_",
+        )
+        with bm25_file.open() as f:
+            data = json.load(f)
+        assert set(data["doc_ids"]) == {"alpha_000", "alpha_001"}
+        assert "alpha_002" not in data["doc_ids"]
+
+    def test_append_without_prefix_keeps_ghosts(self, tmp_path):
+        """Without a stale prefix, old behavior holds (ghost left until rebuild)."""
+        bm25_file = tmp_path / "bm25.json"
+        append_bm25_index(
+            bm25_file,
+            ["alpha_000", "alpha_001", "alpha_002"],
+            ["chunk a", "chunk b", "chunk c"],
+        )
+        append_bm25_index(bm25_file, ["alpha_000"], ["chunk a edited"])
+        with bm25_file.open() as f:
+            data = json.load(f)
+        # Ghosts linger by design without a prefix; a full rebuild purges them.
+        assert "alpha_002" in data["doc_ids"]

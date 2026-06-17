@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from chirpd.paths import (
     APP_SUPPORT_DIR,
     LOCK_PATH,
@@ -10,6 +12,7 @@ from chirpd.paths import (
     MODELS_TOML_PATH,
     RUNTIME_DIR_MODE,
     SOCKET_PATH,
+    lock_path_for_socket,
 )
 
 
@@ -40,3 +43,21 @@ def test_app_support_dir_is_under_macos_application_support() -> None:
 def test_models_toml_path_lives_inside_app_support_dir() -> None:
     assert MODELS_TOML_PATH.parent == APP_SUPPORT_DIR
     assert MODELS_TOML_PATH.name == "models.toml"
+
+
+def test_lock_path_for_default_socket_is_byte_identical_to_lock_path() -> None:
+    # AC-3: no-override path must stay byte-identical so existing installs see no change.
+    assert lock_path_for_socket(SOCKET_PATH) == LOCK_PATH
+
+
+def test_lock_path_for_override_socket_is_distinct_sibling() -> None:
+    override = Path("/tmp/chirpd-test.sock")
+    derived = lock_path_for_socket(override)
+    assert derived != LOCK_PATH
+    assert derived == Path("/tmp/chirpd-test.sock.lock")
+    assert derived.parent == override.parent
+
+
+def test_lock_path_derivation_is_deterministic() -> None:
+    override = Path("/tmp/some/other.sock")
+    assert lock_path_for_socket(override) == lock_path_for_socket(override)

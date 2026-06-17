@@ -7,17 +7,20 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
-from rich.console import Console
 from rich.markdown import Markdown
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from chirp._console import stderr_console, stdout_console
 from config.settings import ChirpSettings
 from llm.client import LLMClient
 from llm.exceptions import LLMError
 from notes_chat.prompting import enhanced_search_and_answer_stream
 
 logger = logging.getLogger(__name__)
-console = Console()
+
+# Diagnostics (banner, hints, errors, spinners) → stderr; the streamed answer
+# body → stdout.
+console = stderr_console
 
 
 class InteractiveChatSession:
@@ -185,7 +188,7 @@ class InteractiveChatSession:
             initial = Markdown("") if self.markdown else Text("")
             new_live = Live(
                 initial,
-                console=console,
+                console=stdout_console,
                 refresh_per_second=10,
                 vertical_overflow="visible",
             )

@@ -115,13 +115,13 @@ class TestRecordTagFlag:
     def test_repeated_tag_flags_reach_recorder(self, tmp_path, monkeypatch):
         from typer.testing import CliRunner
 
-        import chirp.cli
+        from chirp.cli import app
         from config.settings import ChirpSettings
 
         captured: dict = {}
 
         class FakeRecorder:
-            def __init__(self, settings, device_manager):
+            def __init__(self, settings):
                 self.note_dir = tmp_path / "fake-2026-04-27"
                 self.note_dir.mkdir()
                 self.start_time = None
@@ -153,6 +153,12 @@ class TestRecordTagFlag:
                 return str(self.note_dir / "audio.wav")
 
         class FakeDeviceManager:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
             def get_default_input_device(self):
                 return 0
 
@@ -169,7 +175,7 @@ class TestRecordTagFlag:
 
         runner = CliRunner()
         result = runner.invoke(
-            chirp.cli.app,
+            app,
             [
                 "record",
                 "--title",

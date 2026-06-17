@@ -23,9 +23,11 @@ ModelRole = Literal["chat", "embed"]
 class LLMBackend(Protocol):
     """Inference-backend protocol used by ``DaemonState``."""
 
-    async def load(self, repo: str, role: ModelRole) -> Any: ...
+    async def load(self, repo: str, role: ModelRole) -> Any:
+        """Load ``repo`` for ``role`` and return an opaque model handle."""
 
-    async def unload(self, handle: Any) -> None: ...
+    async def unload(self, handle: Any) -> None:
+        """Release the resources held by a previously loaded ``handle``."""
 
     def stream_generate(
         self,
@@ -34,13 +36,15 @@ class LLMBackend(Protocol):
         options: dict[str, Any],
         should_stop: asyncio.Event,
         usage_out: dict[str, int],
-    ) -> AsyncIterator[str]: ...
+    ) -> AsyncIterator[str]:
+        """Yield generated tokens until exhaustion or ``should_stop`` is set."""
 
     async def embed(
         self,
         handle: Any,
         inputs: list[str],
-    ) -> list[list[float]]: ...
+    ) -> list[list[float]]:
+        """Return one embedding vector per input string."""
 
 
 class MLXBackend:
@@ -195,13 +199,19 @@ class MLXBackend:
 
         def _produce() -> None:
             try:
+                stopped_early = False
                 for piece in mlx_stream_generate(model, tokenizer, prompt, **options):
                     if should_stop.is_set() or worker_stop.is_set():
+                        stopped_early = True
                         break
                     text = _extract_token_text(piece)
                     if text is None:
                         continue
                     loop.call_soon_threadsafe(queue.put_nowait, (SENTINEL_TOKEN, text))
+                if not stopped_early:
+                    # Mark complete on natural exhaustion so the dispatcher emits
+                    # done, not cancel.
+                    usage_out["completed"] = 1
                 loop.call_soon_threadsafe(queue.put_nowait, (SENTINEL_DONE, None))
             except Exception as exc:  # noqa: BLE001 — surface to consumer
                 loop.call_soon_threadsafe(queue.put_nowait, (SENTINEL_ERROR, exc))
@@ -366,6 +376,9 @@ class FakeBackend:
             if scheduled_raise is not None and emitted >= self.stream_raises_after:
                 raise scheduled_raise
             yield token
+        # Mark complete on natural exhaustion so a cancel that raced in at the
+        # end is graceful (done), not MODEL_CANCELLED.
+        usage_out["completed"] = 1
 
     async def embed(
         self,

@@ -281,3 +281,25 @@ class TestDeviceManager:
 
                 assert result == 3
                 mock_default.assert_called_once()
+
+    def test_context_manager_terminates_once_on_exit(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio") as mock_pyaudio:
+            mock_audio = Mock()
+            mock_pyaudio.return_value = mock_audio
+
+            with DeviceManager() as device_manager:
+                assert device_manager.audio is mock_audio
+
+            mock_audio.terminate.assert_called_once()
+
+    def test_close_is_idempotent(self):
+        with patch("recorder.device_manager.pyaudio.PyAudio") as mock_pyaudio:
+            mock_audio = Mock()
+            mock_pyaudio.return_value = mock_audio
+
+            device_manager = DeviceManager()
+            device_manager.close()
+            device_manager.close()
+
+            mock_audio.terminate.assert_called_once()
+            assert device_manager.audio is None

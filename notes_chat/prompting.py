@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Generator
 from typing import Any
 
@@ -8,6 +9,11 @@ from llm.exceptions import LLMError
 from llm.protocol import new_request_id
 
 logger = logging.getLogger(__name__)
+
+# Bounds prompt size and shrinks the surface for prompt-injection through the
+# question (which is fenced, not interpolated raw).
+MAX_QUESTION_CHARS = 2000
+_QUOTE_FENCE_RUN = re.compile(r'"{3,}')
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based ONLY on the provided meeting notes and transcripts.
 
@@ -41,9 +47,23 @@ Question: {question}
 Response:"""
 
 
+def _bound_question(question: str) -> str:
+    """Length-bound and delimit the user question for prompt interpolation.
+
+    The question is fenced inside an explicit delimiter and truncated to
+    ``MAX_QUESTION_CHARS`` so prompt-shaped text in the question can't smuggle
+    instructions or blow up the prompt. Grounding guardrails live in
+    ``SYSTEM_PROMPT`` and are left intact.
+    """
+    # Collapse runs of 3+ double-quotes so the question can't close the
+    # triple-quote fence below and smuggle instructions past the delimiter.
+    bounded = _QUOTE_FENCE_RUN.sub('""', question.strip()[:MAX_QUESTION_CHARS])
+    return f'"""\n{bounded}\n"""'
+
+
 def build_chat_messages(question: str, context: str) -> list[dict[str, str]]:
     """Assemble the chat-message list for the ask flow's grounded-answer prompt."""
-    prompt = SYSTEM_PROMPT.format(context=context, question=question)
+    prompt = SYSTEM_PROMPT.format(context=context, question=_bound_question(question))
     return [{"role": "user", "content": prompt}]
 
 
@@ -81,11 +101,12 @@ def stream_answer_tokens(
 
 
 def _conversational_prompt(question: str) -> str:
-    return CONVERSATIONAL_PROMPT.format(question=question)
+    return CONVERSATIONAL_PROMPT.format(question=_bound_question(question))
 
 
 def _grounded_answer_prompt(question: str, context: str) -> str:
-    return f"""Answer: "{question}"
+    return f"""Answer the following question, delimited by triple quotes:
+{_bound_question(question)}
 
 Context: {context}
 

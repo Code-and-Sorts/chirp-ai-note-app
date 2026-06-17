@@ -61,6 +61,11 @@ def _installed_version() -> str:
         return "dev"
 
 
+def installed_version() -> str:
+    """Public alias for the installed version, shared with ``chirp --version``."""
+    return _installed_version()
+
+
 def _prompt_line() -> Text:
     line = Text()
     line.append("$", style="cyan bold")
@@ -212,3 +217,20 @@ def run_about(
             lines[beak_idx] = _logo_line(beak_row, beak_open=open_state)
             live.update(Group(*lines))
             sleep(CHIRP_INTERVAL * scale)
+
+
+def render_about_plain(console: Console, settings) -> None:
+    """Print the static info panel (version, notes, models, root) without animation.
+
+    Same content as the final frame of :func:`run_about` (the ``_info_lines``
+    block) but with no spinner / Live loop, so ``chirp about --plain`` is safe to
+    pipe and scrape on a non-TTY.
+    """
+    notes_root = settings.directories.notes_root
+    notes_count = _count_notes(notes_root)
+    chat_model = settings.models.llm
+    embed_model = settings.notes_chat.emb_model
+    version = _installed_version()
+
+    for line in _info_lines(version, notes_count, chat_model, embed_model, notes_root):
+        console.print(line)

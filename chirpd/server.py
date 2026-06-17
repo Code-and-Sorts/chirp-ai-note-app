@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Any, Final
 
+from chirpd import paths
 from chirpd.dispatcher import Dispatcher
 from llm import error_codes
 from llm.exceptions import LLMMalformedResponse
@@ -32,6 +34,7 @@ _LINE_READ_LIMIT: Final[int] = MAX_LINE_BYTES + 1
 
 async def serve(socket_path: Path, dispatcher: Dispatcher) -> None:
     """Start a unix-domain NDJSON server at ``socket_path`` and serve forever."""
+    _ensure_socket_parent(socket_path)
     _unlink_stale_socket(socket_path)
     shutdown_event = asyncio.Event()
 
@@ -40,9 +43,8 @@ async def serve(socket_path: Path, dispatcher: Dispatcher) -> None:
     ) -> None:
         await _handle_connection(reader, writer, dispatcher, shutdown_event)
 
-    server = await asyncio.start_unix_server(
-        handle, path=str(socket_path), limit=_LINE_READ_LIMIT
-    )
+    server = await _bind_with_restricted_umask(handle, socket_path)
+    # Pin the mode to exactly 0600 (NFR-S2/SC-9) regardless of the caller's umask.
     socket_path.chmod(0o600)
     _logger.info("chirpd listening", extra={"op": "serve"})
 
@@ -54,7 +56,7 @@ async def serve(socket_path: Path, dispatcher: Dispatcher) -> None:
             return_when=asyncio.FIRST_COMPLETED,
         )
     except asyncio.CancelledError:  # pragma: no cover — cancel path covered via _run
-        pass
+        _logger.debug("serve() cancelled while awaiting shutdown")
     finally:
         shutdown_waiter.cancel()
         if not serve_forever_task.done():
@@ -62,8 +64,8 @@ async def serve(socket_path: Path, dispatcher: Dispatcher) -> None:
         for task in (serve_forever_task, shutdown_waiter):
             try:
                 await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+            except (asyncio.CancelledError, Exception) as exc:  # noqa: BLE001
+                _logger.debug("serve() teardown task raised: %s", exc)
         await _close_server(server)
         _unlink_stale_socket(socket_path)
 
@@ -72,8 +74,37 @@ async def _close_server(server: asyncio.base_events.Server) -> None:
     server.close()
     try:
         await server.wait_closed()
-    except Exception:  # noqa: BLE001 — best-effort teardown
-        pass
+    except Exception as exc:  # noqa: BLE001 — best-effort teardown
+        _logger.debug("server.wait_closed() raised during teardown: %s", exc)
+
+
+def _ensure_socket_parent(socket_path: Path) -> None:
+    # A CHIRP_DAEMON_SOCKET override may point at a parent that doesn't exist or
+    # isn't owner-only; create and tighten it to 0700 so the socket is never
+    # reachable through a world-traversable directory. Unconditional so the
+    # default path needs no special casing and a loosened dir is re-tightened.
+    parent = socket_path.parent
+    parent.mkdir(parents=True, exist_ok=True, mode=paths.RUNTIME_DIR_MODE)
+    try:
+        parent.chmod(paths.RUNTIME_DIR_MODE)
+    except OSError as exc:  # pragma: no cover — best-effort on an unowned parent
+        _logger.debug("could not tighten socket parent %s permissions: %s", parent, exc)
+
+
+async def _bind_with_restricted_umask(
+    handle: Any, socket_path: Path
+) -> asyncio.base_events.Server:
+    # Bind under a 0177 umask so the inode is owner-only from the first instant,
+    # closing the bind→chmod(0600) window. os.umask is process-global and not
+    # thread-safe, but chirpd binds exactly once at startup on the single event
+    # loop before any work runs, so this save/restore cannot race.
+    previous_umask = os.umask(0o177)
+    try:
+        return await asyncio.start_unix_server(
+            handle, path=str(socket_path), limit=_LINE_READ_LIMIT
+        )
+    finally:
+        os.umask(previous_umask)
 
 
 def _unlink_stale_socket(socket_path: Path) -> None:
@@ -84,7 +115,7 @@ def _unlink_stale_socket(socket_path: Path) -> None:
         if socket_path.is_socket():
             socket_path.unlink()
     except FileNotFoundError:
-        pass
+        _logger.debug("stale socket %s already removed", socket_path)
 
 
 async def _handle_connection(
@@ -186,22 +217,27 @@ async def _handle_hello(
     shutdown_event: asyncio.Event,
 ) -> bool:
     request_id = envelope.get("id")
-    client_version = envelope.get("client_version")
+    client_protocol_version = envelope.get("protocol_version")
+    daemon_protocol_version = dispatcher.protocol_version
     daemon_version = dispatcher.daemon_version
 
-    if client_version == daemon_version:
+    # Gate on the wire-format PROTOCOL_VERSION, not the package version, so a
+    # cosmetic package bump keeps the warm daemon (and its multi-GB model)
+    # resident. daemon_version is still reported for human-facing diagnostics.
+    if client_protocol_version == daemon_protocol_version:
         await _write_event(
             writer,
             {
                 "id": request_id,
                 "event": EVENT_READY,
                 "daemon_version": daemon_version,
+                "protocol_version": daemon_protocol_version,
             },
         )
         return True
 
     _logger.info(
-        "version mismatch; daemon will exit",
+        "protocol version mismatch; daemon will exit",
         extra={
             "req_id": str(request_id) if request_id is not None else "",
             "op": OP_HELLO,
@@ -214,6 +250,7 @@ async def _handle_hello(
             "id": request_id,
             "event": EVENT_VERSION_MISMATCH,
             "daemon_version": daemon_version,
+            "protocol_version": daemon_protocol_version,
         },
     )
     shutdown_event.set()
@@ -224,8 +261,8 @@ async def _write_event(writer: asyncio.StreamWriter, envelope: dict[str, Any]) -
     try:
         writer.write(encode_event(envelope))
         await writer.drain()
-    except (ConnectionResetError, BrokenPipeError):  # pragma: no cover
-        pass
+    except (ConnectionResetError, BrokenPipeError) as exc:  # pragma: no cover
+        _logger.debug("could not write event; peer closed connection: %s", exc)
 
 
 async def _safe_close(writer: asyncio.StreamWriter) -> None:
@@ -233,5 +270,5 @@ async def _safe_close(writer: asyncio.StreamWriter) -> None:
         if not writer.is_closing():
             writer.close()
         await writer.wait_closed()
-    except (ConnectionResetError, BrokenPipeError, OSError):  # pragma: no cover
-        pass
+    except (ConnectionResetError, BrokenPipeError, OSError) as exc:  # pragma: no cover
+        _logger.debug("could not close writer cleanly: %s", exc)

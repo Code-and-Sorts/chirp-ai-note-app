@@ -291,3 +291,80 @@ def test_force_transcription_on_stop():
         transcriber.join(timeout=2)
 
     assert any(s.text == "forced" for s in transcriber.segments)
+
+
+def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path):
+    # AC-3: export_transcript reads through the lock-guarded `segments`
+    # property, so a worker mutating _segments concurrently can never trigger
+    # "RuntimeError: list changed size during iteration" or a torn write.
+    settings = Mock()
+    chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
+    event_queue: queue.Queue[DashboardEvent] = queue.Queue()
+    stop_event = threading.Event()
+
+    with patch("recorder.live_transcriber.WhisperTranscriber") as mock_cls:
+        mock_cls.return_value.transcribe_file.return_value = {
+            "segments": [],
+            "metadata": {},
+        }
+        transcriber = LiveTranscriber(
+            settings=settings,
+            chunk_queue=chunk_queue,
+            event_queue=event_queue,
+            stop_event=stop_event,
+            sample_rate=16000,
+        )
+
+    errors: list[BaseException] = []
+    mutate_stop = threading.Event()
+
+    def mutate() -> None:
+        index = 0
+        while not mutate_stop.is_set():
+            with transcriber._lock:  # type: ignore[attr-defined]
+                transcriber._segments.append(  # type: ignore[attr-defined]
+                    TranscriptSegment(
+                        text=f"seg-{index}", start=index, end=index + 1, words=1
+                    )
+                )
+            index += 1
+
+    def export() -> None:
+        try:
+            for _ in range(200):
+                transcriber.export_transcript(tmp_path / "transcript.txt")
+        except Exception as exc:  # noqa: BLE001 - capturing any race failure
+            errors.append(exc)
+
+    mutator = threading.Thread(target=mutate, daemon=True)
+    exporter = threading.Thread(target=export, daemon=True)
+    mutator.start()
+    exporter.start()
+    exporter.join(timeout=5)
+    mutate_stop.set()
+    mutator.join(timeout=5)
+
+    assert not errors, f"export raced with mutation: {errors!r}"
+
+
+def test_close_tears_down_underlying_whisper_transcriber():
+    # AC-5: LiveTranscriber.close() releases the wrapped WhisperTranscriber.
+    settings = Mock()
+    chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
+    event_queue: queue.Queue[DashboardEvent] = queue.Queue()
+    stop_event = threading.Event()
+
+    with patch("recorder.live_transcriber.WhisperTranscriber") as mock_cls:
+        mock_instance = mock_cls.return_value
+        transcriber = LiveTranscriber(
+            settings=settings,
+            chunk_queue=chunk_queue,
+            event_queue=event_queue,
+            stop_event=stop_event,
+            sample_rate=16000,
+        )
+
+        transcriber.close()
+        transcriber.close()
+
+    assert mock_instance.close.call_count == 2

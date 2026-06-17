@@ -13,6 +13,57 @@ from notes_chat.time_ranges import parse_time_range
 
 logger = logging.getLogger(__name__)
 
+# RRF smoothing constant. 60 is the canonical value from the original RRF paper
+# (and .docs/hybrid-retrieval.md); it damps low-rank items without starving
+# either source.
+RRF_K = 60
+
+
+def _as_naive(value: datetime) -> datetime:
+    """Drop tzinfo (converting to local wall-clock) so date strings sort lexically.
+
+    Stored chunk dates are naive local (see ``index.py`` / ``_resolve_created_at``).
+    Chroma compares the ``date`` metadata filter as a plain string, so the
+    where-clause bounds must have the same naive shape or the comparison is wrong.
+    """
+    if value.tzinfo is None:
+        return value
+    return value.astimezone().replace(tzinfo=None)
+
+
+# Process-local freshness fingerprints keyed by index_dir, skipping a wasted
+# per-query build_index on an unchanged corpus. Folds each <slug>/notes.md's
+# (mtime, size) so an IN-PLACE edit (which leaves notes_root's dir mtime
+# untouched) invalidates it too; costs one stat() per note.
+_FRESHNESS_CACHE: dict[str, int] = {}
+
+
+def _notes_tree_signature(config: ChirpSettings) -> int | None:
+    notes_root = config.directories.notes_root
+    if not notes_root.exists():
+        return None
+    try:
+        components: list[tuple[str, float, int]] = []
+        for note_file in sorted(notes_root.glob("*/notes.md")):
+            stat = note_file.stat()
+            components.append((str(note_file), stat.st_mtime, stat.st_size))
+    except OSError:
+        return None
+    return hash(tuple(components))
+
+
+def _index_is_fresh(config: ChirpSettings) -> bool:
+    signature = _notes_tree_signature(config)
+    if signature is None:
+        return False
+    return _FRESHNESS_CACHE.get(str(config.notes_chat.index_dir)) == signature
+
+
+def _record_index_freshness(config: ChirpSettings) -> None:
+    signature = _notes_tree_signature(config)
+    if signature is not None:
+        _FRESHNESS_CACHE[str(config.notes_chat.index_dir)] = signature
+
 
 def retrieve_context(
     config: ChirpSettings, question: str, when_filter: str | None = None
@@ -29,12 +80,14 @@ def retrieve_context(
                 "suggestion": suggestion,
             }
 
-        index_result = index_manager.build_index(force=False)
-        if not index_result["success"]:
-            return {
-                "success": False,
-                "error": f"Failed to update index: {index_result.get('error')}",
-            }
+        if not _index_is_fresh(config):
+            index_result = index_manager.build_index(force=False)
+            if not index_result["success"]:
+                return {
+                    "success": False,
+                    "error": f"Failed to update index: {index_result.get('error')}",
+                }
+            _record_index_freshness(config)
 
         time_range = None
         if when_filter:
@@ -46,7 +99,10 @@ def retrieve_context(
             index_manager, question, config.notes_chat.k, time_range
         )
         bm25_results = _search_bm25(
-            index_manager.bm25_file, question, config.notes_chat.k
+            index_manager.bm25_file,
+            question,
+            config.notes_chat.k,
+            index_manager=index_manager,
         )
 
         if not chroma_results and not bm25_results:
@@ -91,8 +147,8 @@ def _search_chroma(
     try:
         where_clause = None
         if time_range:
-            start_iso = time_range.start.isoformat()
-            end_iso = time_range.end_exclusive.isoformat()
+            start_iso = _as_naive(time_range.start).isoformat()
+            end_iso = _as_naive(time_range.end_exclusive).isoformat()
             where_clause = {
                 "$and": [{"date": {"$gte": start_iso}}, {"date": {"$lt": end_iso}}]
             }
@@ -139,52 +195,117 @@ def _search_chroma(
 
 
 def _search_bm25(
-    bm25_file: Path, query: str, k: int
+    bm25_file: Path,
+    query: str,
+    k: int,
+    index_manager: IndexManager | None = None,
 ) -> list[tuple[str, float, dict[str, Any]]]:
-    """Search BM25 index."""
+    """Search BM25 index, hydrating each hit with its Chroma metadata + content.
+
+    A bare ``{"source": "bm25"}`` payload carries no ``metadata`` and no
+    ``content``, which breaks two things: (1) ``_merge_and_dedupe`` would key the
+    hit by bare chunk_id instead of ``path::content_hash``, so a chunk found by
+    BOTH retrievers fails to dedupe and its RRF contributions are never summed;
+    (2) ``_build_context`` drops contentless chunks, so the lexical half of
+    "hybrid" could never surface a BM25-only hit. Hydrating from Chroma
+    (``collection.get(ids=...)``) gives both sources the same shape.
+    """
     try:
         bm25_index = BM25Index(bm25_file)
         bm25_results = bm25_index.search(query, k)
+        if not bm25_results:
+            return []
 
-        return [
-            (chunk_id, score, {"source": "bm25"}) for chunk_id, score in bm25_results
-        ]
+        if index_manager is None:
+            return [
+                (chunk_id, score, {"source": "bm25"})
+                for chunk_id, score in bm25_results
+            ]
+
+        hydrated = _hydrate_chunks(index_manager, [cid for cid, _ in bm25_results])
+        results: list[tuple[str, float, dict[str, Any]]] = []
+        for chunk_id, score in bm25_results:
+            data = hydrated.get(chunk_id)
+            if data is None:
+                # Stale BM25 id with no Chroma record: keep it so a lexical-only
+                # match isn't dropped, but without content it can't enter context.
+                data = {"source": "bm25"}
+            results.append((chunk_id, score, data))
+        return results
 
     except Exception as e:  # noqa: BLE001 - BM25 can raise many types on corrupt index
         logger.debug("BM25 search failed: %s", e, exc_info=True)
         return []
 
 
+def _hydrate_chunks(
+    index_manager: IndexManager, chunk_ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Map chunk_id → ``{"content", "metadata", "source": "bm25"}`` from Chroma."""
+    try:
+        records = index_manager.collection.get(ids=chunk_ids)
+    except Exception as e:  # noqa: BLE001 - chromadb raises various internal exceptions
+        logger.debug("BM25 hydrate failed: %s", e, exc_info=True)
+        return {}
+
+    ids = records.get("ids") or []
+    documents = records.get("documents") or []
+    metadatas = records.get("metadatas") or []
+
+    hydrated: dict[str, dict[str, Any]] = {}
+    for i, chunk_id in enumerate(ids):
+        document = documents[i] if i < len(documents) else ""
+        metadata = metadatas[i] if i < len(metadatas) else {}
+        hydrated[chunk_id] = {
+            "content": document,
+            "metadata": metadata,
+            "source": "bm25",
+        }
+    return hydrated
+
+
+def _signature(chunk_id: str, data: dict[str, Any]) -> str:
+    """Dedupe key: ``(path, content_hash)`` when present, else the chunk id."""
+    metadata = data.get("metadata")
+    if metadata:
+        path = metadata.get("path", "")
+        content_hash = metadata.get("content_hash", "")
+        return f"{path}::{content_hash}"
+    return chunk_id
+
+
 def _merge_and_dedupe(
     chroma_results: list[tuple[str, float, dict[str, Any]]],
     bm25_results: list[tuple[str, float, dict[str, Any]]],
 ) -> list[tuple[str, float, dict[str, Any]]]:
-    """Merge Chroma and BM25 results, deduplicating by (path, content_hash)."""
-    seen_signatures: set[str] = set()
-    merged = []
+    """Fuse Chroma and BM25 results with Reciprocal Rank Fusion.
 
-    all_results = []
+    Each input list is already rank-ordered. A chunk's fused score is
+    ``Σ 1/(RRF_K + rank_i)`` across the lists it appears in (rank is 0-based),
+    so its contribution is its *rank* in each source, not the source-specific
+    raw magnitude — this keeps an unbounded BM25 score from starving semantic
+    hits. Results are deduped by ``(path, content_hash)``, keeping the
+    best-ranked representative, and ordered by fused score. The fused score
+    replaces the raw score for ordering only.
+    """
+    fused: dict[str, float] = {}
+    best: dict[str, tuple[str, dict[str, Any]]] = {}
+    best_rank: dict[str, int] = {}
 
-    for chunk_id, score, data in chroma_results:
-        data["source"] = "chroma"
-        all_results.append((chunk_id, score, data))
+    for source, results in (("chroma", chroma_results), ("bm25", bm25_results)):
+        for rank, (chunk_id, _raw_score, data) in enumerate(results):
+            data["source"] = data.get("source", source)
+            signature = _signature(chunk_id, data)
+            fused[signature] = fused.get(signature, 0.0) + 1.0 / (RRF_K + rank)
+            if signature not in best_rank or rank < best_rank[signature]:
+                best_rank[signature] = rank
+                best[signature] = (chunk_id, data)
 
-    all_results.extend(bm25_results)
-
-    all_results.sort(key=lambda x: x[1], reverse=True)
-
-    for chunk_id, score, data in all_results:
-        if "metadata" in data:
-            path = data["metadata"].get("path", "")
-            content_hash = data["metadata"].get("content_hash", "")
-            signature = f"{path}::{content_hash}"
-        else:
-            signature = chunk_id
-
-        if signature not in seen_signatures:
-            seen_signatures.add(signature)
-            merged.append((chunk_id, score, data))
-
+    merged = [
+        (best[signature][0], score, best[signature][1])
+        for signature, score in fused.items()
+    ]
+    merged.sort(key=lambda item: item[1], reverse=True)
     return merged
 
 
@@ -345,8 +466,8 @@ def _create_chunk_header(data: dict[str, Any]) -> str:
             try:
                 date_obj = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
                 date_str = date_obj.strftime("%Y-%m-%d")
-            except:
-                pass
+            except (ValueError, AttributeError) as exc:
+                logger.debug("could not normalize source date %r: %s", date_str, exc)
 
         path = metadata.get("path", "Unknown")
         filename = Path(path).name if path != "Unknown" else "Unknown"
@@ -369,7 +490,7 @@ def _generate_suggestion(config: ChirpSettings, time_range: Any | None) -> str:
                 manifest = json.load(f)
                 if not manifest:
                     return "No files in search index. Run 'chirp index' to build the index."
-        except:
+        except Exception:  # noqa: BLE001 - corrupt manifest: any read/parse error maps to the same actionable hint
             return "Index appears corrupted. Run 'chirp index --force' to rebuild."
 
         if not config.directories.notes_root.exists():

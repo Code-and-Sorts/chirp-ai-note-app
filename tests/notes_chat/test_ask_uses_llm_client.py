@@ -66,6 +66,7 @@ class _DaemonHarness:
             try:
                 loop.run_until_complete(self._serve_task)
             except asyncio.CancelledError:
+                # best-effort teardown
                 pass
             finally:
                 loop.close()
@@ -103,10 +104,12 @@ def socket_path() -> Iterator[Path]:
         if path.exists():
             path.unlink()
     except OSError:
+        # best-effort cleanup
         pass
     try:
         tmp.rmdir()
     except OSError:
+        # best-effort cleanup
         pass
 
 
@@ -148,7 +151,6 @@ def test_ask_no_markdown_streams_tokens_through_daemon(
     assert result.exit_code == 0, result.output
     assert "hello from the daemon" in result.output
     assert "sources: note #1" in result.output
-    # The daemon's chat op was invoked.
     assert daemon.backend.last_prompt is not None
     assert "note body about the budget" in daemon.backend.last_prompt
 

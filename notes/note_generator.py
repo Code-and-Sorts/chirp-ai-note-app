@@ -17,6 +17,12 @@ from utils.popup_manager import PopupManager
 
 logger = logging.getLogger(__name__)
 
+# Bounds the prompt INPUT, not just num_predict (the OUTPUT): an unbounded
+# transcript was silently truncated mid-generation, so window it and warn.
+MAX_TRANSCRIPT_CHARS = 24000
+
+MAX_PARSE_ATTEMPTS = 2
+
 SYSTEM_PROMPT = """You are Chirp, the user's meeting note co-pilot.
 Your sole purpose is to transform raw meeting transcripts into structured meeting notes.
 Always produce notes in a consistent format. Never invent content.
@@ -226,10 +232,17 @@ class NoteGenerator:
             transcript_text, provided_title
         )
         if not structured_notes:
+            # Never write or auto-index unparsable output — a junk note would
+            # later poison `ask` (AC-12).
+            self.console.print(
+                f"[red]Could not generate structured notes for {record.slug}; "
+                "skipping (not written, not indexed).[/red]"
+            )
             return {
                 "success": False,
+                "degraded": True,
                 "slug": record.slug,
-                "error": "Failed to generate structured notes",
+                "error": "Could not parse structured notes from the model output",
             }
 
         meeting_title = (
@@ -329,6 +342,16 @@ class NoteGenerator:
             return value.isoformat()
         return str(value)
 
+    def _window_transcript(self, transcript_text: str) -> str:
+        """Cap the transcript to ``MAX_TRANSCRIPT_CHARS``, warning on truncation."""
+        if len(transcript_text) <= MAX_TRANSCRIPT_CHARS:
+            return transcript_text
+        self.console.print(
+            f"[yellow]Transcript is {len(transcript_text)} chars; truncating to "
+            f"{MAX_TRANSCRIPT_CHARS} for note generation.[/yellow]"
+        )
+        return transcript_text[:MAX_TRANSCRIPT_CHARS]
+
     def _generate_structured_notes(
         self, transcript_text: str, provided_title: str | None = None
     ) -> dict[str, Any] | None:
@@ -339,21 +362,38 @@ class NoteGenerator:
                 f"MEETING_TITLE tag: {provided_title}"
             )
 
+        windowed_transcript = self._window_transcript(transcript_text)
         prompt = f"""{SYSTEM_PROMPT}
 
 {title_instruction}
 
 Transcript:
-{transcript_text}
+{windowed_transcript}
 
 Return ONLY the XML document, no additional text before or after."""
 
-        try:
-            response = self._call_llm(prompt)
-            return self._parse_xml_response(response)
-        except Exception as exc:  # noqa: BLE001 - topic extraction is best-effort; many failure modes
-            logger.debug("Topic extraction failed: %s", exc)
-            return None
+        # Returns None on persistent parse failure so the caller skips writing
+        # and indexing a junk note (AC-12).
+        for attempt in range(1, MAX_PARSE_ATTEMPTS + 1):
+            try:
+                response = self._call_llm(prompt)
+            except Exception as exc:  # noqa: BLE001 - generation is best-effort; many failure modes
+                logger.debug("Note generation call failed: %s", exc)
+                return None
+
+            parsed = self._parse_xml_response(response)
+            if parsed is not None:
+                return parsed
+
+            if attempt < MAX_PARSE_ATTEMPTS:
+                self.console.print(
+                    "[yellow]Could not parse structured notes; retrying once…[/yellow]"
+                )
+
+        logger.debug(
+            "Structured-note parsing failed after %d attempts", MAX_PARSE_ATTEMPTS
+        )
+        return None
 
     def _call_llm(self, prompt: str) -> str:
         # Single user message so the chat template wraps SYSTEM_PROMPT + prompt
@@ -394,7 +434,9 @@ Return ONLY the XML document, no additional text before or after."""
                 xml_start = response.find("<MEETING_NOTES>")
 
             if xml_start == -1:
-                return self._parse_fallback_response(response)
+                # No XML: signal parse failure so the caller retries/degrades
+                # rather than persisting a junk note (AC-12).
+                return None
 
             xml_content = response[xml_start:]
             xml_end = xml_content.find("</MEETING_NOTES>")
@@ -456,34 +498,24 @@ Return ONLY the XML document, no additional text before or after."""
             }
 
         except ET.ParseError:
-            return self._parse_fallback_response(response)
+            # Malformed XML: let the caller retry/degrade, never write it (AC-12).
+            return None
         except (AttributeError, KeyError, TypeError, ValueError):
             return None
-
-    def _parse_fallback_response(self, response: str) -> dict[str, Any]:
-        return {
-            "meeting_title": DEFAULT_MEETING_NAME,
-            "executive_summary": response[:200] + "..."
-            if len(response) > 200
-            else response,
-            "agenda": [],
-            "action_items": [],
-            "next_steps": [],
-            "decisions": [],
-            "open_questions": [],
-            "discussion_highlights": [
-                "Unable to parse structured notes from AI response"
-            ],
-        }
 
     def _auto_index_note(self, notes_path: Path):
         if not self.settings.notes_chat.auto_index:
             return
 
+        from chirp.exceptions import EmbedModelChanged
+
         try:
             from notes_chat.index import IndexManager
 
             index_manager = IndexManager(self.settings)
+            # Guard the auto-index back door too: catch an embed-model change
+            # before appending mismatched vectors corrupts the index.
+            index_manager._ensure_embed_fingerprint()
             success = index_manager._add_to_index(notes_path)
 
             if success:
@@ -495,11 +527,21 @@ Return ONLY the XML document, no additional text before or after."""
                     manifest[file_path] = current_files[file_path]
                     index_manager._save_manifest(manifest)
 
-                index_manager._rebuild_bm25()
+                # Append only this note's chunks, not the whole corpus, so a
+                # burst of saves stays O(note) per save.
+                index_manager.append_bm25_for_file(file_path)
+                # Stamp a fresh auto-index-only corpus so a later model change
+                # is detectable.
+                index_manager._stamp_fingerprint_if_missing()
 
                 self.console.print(
                     f"[dim green]✓ Auto-indexed {notes_path.name}[/dim green]"
                 )
+        except EmbedModelChanged as exc:
+            logger.debug("Auto-indexing skipped for %s: %s", notes_path.name, exc)
+            self.console.print(
+                f"[yellow]Auto-indexing skipped for {notes_path.name}: {exc}[/yellow]"
+            )
         except Exception as exc:  # noqa: BLE001 - defensive auto-index; IndexManager can raise many types
             logger.debug("Auto-indexing failed for %s: %s", notes_path.name, exc)
             self.console.print(

@@ -19,8 +19,11 @@ from typing import Any, Final, Literal, TypeVar
 from chirpd.paths import SOCKET_PATH
 from config.settings import (
     CHIRP_DAEMON_SOCKET_ENV,
+    DEFAULT_FIRST_EVENT_TIMEOUT_SECONDS,
+    DEFAULT_INFERENCE_TIMEOUT_SECONDS,
     get_daemon_socket_override,
     get_settings,
+    resolve_inference_timeout_seconds,
 )
 from llm.exceptions import (
     CODE_TO_EXCEPTION,
@@ -28,7 +31,9 @@ from llm.exceptions import (
     LLMDaemonSpawnFailed,
     LLMDaemonUnreachable,
     LLMError,
+    LLMInferenceTimeout,
     LLMMalformedResponse,
+    LLMProtocolError,
     LLMVersionMismatch,
 )
 from llm.protocol import (
@@ -48,6 +53,7 @@ from llm.protocol import (
     OP_MODEL_LOAD,
     OP_MODEL_STATUS,
     OP_MODEL_UNLOAD,
+    PROTOCOL_VERSION,
     decode_line,
     encode_request,
     new_request_id,
@@ -78,6 +84,24 @@ class _HandshakeVersionMismatch(Exception):
     def __init__(self, daemon_version: Any) -> None:
         super().__init__("daemon version mismatch on handshake")
         self.daemon_version = daemon_version
+
+
+_FIRST_EVENT_BUDGET_MULTIPLIER: Final[float] = (
+    DEFAULT_FIRST_EVENT_TIMEOUT_SECONDS / DEFAULT_INFERENCE_TIMEOUT_SECONDS
+)
+
+
+def _first_event_budget(inference_timeout_s: float) -> float:
+    """Budget for the first event: a multiple of the per-event budget.
+
+    The first read after a request spans a possible cold model load (CHIRPD-CORE
+    SC-3 budgets ~10 s) plus first-token latency, so it needs more than a
+    subsequent inter-token read. Scaling the per-event budget (×2 by default →
+    60 s/120 s) keeps it proportional, so a ``CHIRP_INFERENCE_TIMEOUT`` override
+    is honored on the first read too (e.g. 0.2 → 0.4), not pinned to a fixed
+    floor.
+    """
+    return inference_timeout_s * _FIRST_EVENT_BUDGET_MULTIPLIER
 
 
 def resolve_socket_path() -> Path:
@@ -131,10 +155,24 @@ class LLMClient:
         socket_path: Path | None = None,
         spawn_timeout_s: float = DEFAULT_SPAWN_TIMEOUT_S,
         retry_on_version_mismatch: bool = True,
+        inference_timeout_s: float | None = None,
+        first_event_timeout_s: float | None = None,
     ) -> None:
         self.socket_path: Path = socket_path or resolve_socket_path()
         self.spawn_timeout_s = spawn_timeout_s
         self.retry_on_version_mismatch = retry_on_version_mismatch
+        # Resolve the per-event read budget once (env → config → default). The
+        # first event gets a larger budget for cold load + first token.
+        self._inference_timeout_s = (
+            inference_timeout_s
+            if inference_timeout_s is not None
+            else resolve_inference_timeout_seconds()
+        )
+        self._first_event_timeout_s = (
+            first_event_timeout_s
+            if first_event_timeout_s is not None
+            else _first_event_budget(self._inference_timeout_s)
+        )
         self._client_version = package_version()
         # Latch (never reset) so a caller can inspect, after a sequence of ops on
         # one client, whether the daemon was cold-started or version-respawned
@@ -544,6 +582,7 @@ class LLMClient:
             "id": new_request_id(),
             "op": OP_HELLO,
             "client_version": self._client_version,
+            "protocol_version": PROTOCOL_VERSION,
         }
         try:
             writer.write(encode_request(hello_envelope))
@@ -555,7 +594,9 @@ class LLMClient:
             raise LLMConnectionLost(
                 f"connection broken while sending hello: {err}",
             ) from err
-        return await _read_event(reader)
+        # Bound the handshake read so a daemon that accepts but never answers
+        # hello can't hang the client forever.
+        return await _read_event(reader, self._first_event_timeout_s)
 
     async def _run_request_on_connection(
         self,
@@ -574,8 +615,10 @@ class LLMClient:
                 f"connection broken while sending request: {err}",
             ) from err
 
+        read_timeout = self._first_event_timeout_s
         while True:
-            event = await _read_event(reader)
+            event = await _read_event(reader, read_timeout)
+            read_timeout = self._inference_timeout_s
             event_name = event.get("event")
             if event_name == EVENT_ERROR:
                 raise _exception_for_error_event(event)
@@ -586,9 +629,16 @@ class LLMClient:
                 return
 
 
-async def _read_event(reader: asyncio.StreamReader) -> dict[str, Any]:
+async def _read_event(reader: asyncio.StreamReader, timeout_s: float) -> dict[str, Any]:
     try:
-        line = await reader.readuntil(b"\n")
+        line = await asyncio.wait_for(reader.readuntil(b"\n"), timeout_s)
+    except TimeoutError as err:
+        raise LLMInferenceTimeout(
+            f"daemon emitted no event within {timeout_s:g}s; it may be wedged on "
+            "a model load or a stalled generation — check `chirp daemon status` "
+            "and `chirp daemon restart`",
+            details={"timeout_seconds": timeout_s},
+        ) from err
     except asyncio.IncompleteReadError as err:
         raise LLMConnectionLost(
             "daemon closed connection before sending a complete event",
@@ -617,8 +667,10 @@ def _exception_for_error_event(event: dict[str, Any]) -> LLMError:
     details = event.get("details") or {}
     exc_cls = CODE_TO_EXCEPTION.get(code) if isinstance(code, str) else None
     if exc_cls is None:
-        return LLMMalformedResponse(
-            f"daemon emitted error event with unknown code {code!r}",
+        # An unknown code usually means version skew (daemon emits a code this
+        # client predates); surface the daemon's real message, not "unknown code".
+        return LLMProtocolError(
+            f"daemon error [{code}]: {message}",
             details={"code": code, "message": message, "raw_details": details},
         )
     return exc_cls(message, details=details)

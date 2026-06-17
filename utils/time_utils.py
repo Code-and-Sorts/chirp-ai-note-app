@@ -1,5 +1,8 @@
+import logging
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def get_timestamp() -> str:
@@ -35,8 +38,8 @@ def parse_timestamp_from_filename(filename: str) -> datetime | None:
         timestamp_part = filename.split("_")[0] + "_" + filename.split("_")[1]
         if len(timestamp_part) == 15:  # YYYYMMDD_HHMMSS
             return datetime.strptime(timestamp_part, "%Y%m%d_%H%M%S")
-    except (IndexError, ValueError):
-        pass
+    except (IndexError, ValueError) as exc:
+        logger.debug("could not parse timestamp from filename %r: %s", filename, exc)
     return None
 
 

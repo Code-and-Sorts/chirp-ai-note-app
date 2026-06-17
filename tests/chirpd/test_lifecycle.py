@@ -50,6 +50,34 @@ def test_flock_blocks_second_acquirer(tmp_path: Path) -> None:
             assert second is False
 
 
+def test_different_socket_locks_acquire_concurrently(tmp_path: Path) -> None:
+    """AC-3: two daemons on different sockets get independent locks."""
+    from chirpd.paths import lock_path_for_socket
+
+    primary_socket = tmp_path / "primary.sock"
+    secondary_socket = tmp_path / "secondary.sock"
+    primary_lock = lock_path_for_socket(primary_socket)
+    secondary_lock = lock_path_for_socket(secondary_socket)
+    assert primary_lock != secondary_lock
+
+    with single_instance_lock(primary_lock) as primary:
+        assert primary
+        with single_instance_lock(secondary_lock) as secondary:
+            assert secondary, "a distinct socket must yield a distinct, free lock"
+
+
+def test_same_socket_locks_mutually_exclude(tmp_path: Path) -> None:
+    """AC-3: two daemons on the same socket still contend (loser exits)."""
+    from chirpd.paths import lock_path_for_socket
+
+    socket_path = tmp_path / "shared.sock"
+    derived = lock_path_for_socket(socket_path)
+    with single_instance_lock(derived) as first:
+        assert first
+        with single_instance_lock(derived) as second:
+            assert second is False
+
+
 def test_lock_releases_on_exit_so_reacquire_succeeds(tmp_path: Path) -> None:
     lock_path = tmp_path / "chirpd.lock"
     with single_instance_lock(lock_path) as first:
@@ -135,6 +163,36 @@ def test_main_returns_zero_when_lock_already_held(
     assert chirpd_main.main() == 0
 
 
+def test_main_passes_lock_derived_from_resolved_socket(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC-3: an override socket isolates the lock so a second daemon can run."""
+    import contextlib
+
+    from chirpd.paths import lock_path_for_socket
+
+    override = tmp_path / "override.sock"
+    monkeypatch.setenv("CHIRP_DAEMON_SOCKET", str(override))
+    monkeypatch.setattr("chirpd.__main__.platform.machine", lambda: "arm64")
+    monkeypatch.setattr("chirpd.__main__.configure_logging", lambda **_: None)
+    monkeypatch.setattr("chirpd.__main__.ensure_runtime_dirs", lambda: None)
+
+    captured: dict[str, Path | None] = {}
+
+    @contextlib.contextmanager
+    def _capturing_lock(lock_path: Path | None = None):
+        captured["lock_path"] = lock_path
+        yield False
+
+    monkeypatch.setattr("chirpd.__main__.single_instance_lock", _capturing_lock)
+
+    assert chirpd_main.main() == 0
+    assert captured["lock_path"] == lock_path_for_socket(override)
+    assert captured["lock_path"] != chirpd_main.lock_path_for_socket(
+        chirpd_main.DEFAULT_SOCKET_PATH
+    )
+
+
 def test_main_runs_serve_until_cancelled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -162,6 +220,7 @@ def test_main_runs_serve_until_cancelled(
         try:
             tmp_dir.rmdir()
         except OSError:
+            # best-effort cleanup
             pass
 
 
@@ -183,10 +242,12 @@ async def test_run_returns_when_serve_task_cancelled(
     try:
         await asyncio.wait_for(run_task, timeout=1.0)
     except asyncio.CancelledError:
+        # best-effort teardown
         pass
     try:
         if socket_path.exists():
             socket_path.unlink()
         tmp_dir.rmdir()
     except OSError:
+        # best-effort cleanup
         pass

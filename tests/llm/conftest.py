@@ -37,10 +37,12 @@ def temp_socket_path() -> Iterator[Path]:
             if path.exists():
                 path.unlink()
         except OSError:
+            # best-effort cleanup
             pass
         try:
             tmp_dir.rmdir()
         except OSError:
+            # best-effort cleanup
             pass
 
 
@@ -59,6 +61,7 @@ async def in_process_daemon(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (TimeoutError, asyncio.CancelledError):
+            # best-effort teardown
             pass
 
 
@@ -99,6 +102,7 @@ class FakeDaemon:
                     try:
                         await writer.wait_closed()
                     except (ConnectionResetError, BrokenPipeError, OSError):
+                        # best-effort teardown
                         pass
 
         self._server = await asyncio.start_unix_server(
@@ -112,6 +116,7 @@ class FakeDaemon:
             if self.socket_path.exists():
                 self.socket_path.unlink()
         except OSError:
+            # best-effort cleanup
             pass
 
     async def stop(self) -> None:
@@ -121,6 +126,7 @@ class FakeDaemon:
         try:
             await self._server.wait_closed()
         except Exception:  # noqa: BLE001
+            # best-effort teardown
             pass
 
 

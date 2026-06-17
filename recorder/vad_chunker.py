@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import collections
+import logging
 import queue
 import threading
 from collections.abc import Callable
 
 from recorder.live_types import AudioFrame, SpeechChunk
+
+logger = logging.getLogger(__name__)
 
 SILERO_FRAME_SAMPLES_16K = 512
 SILERO_FRAME_MS = 32
@@ -55,6 +58,13 @@ class VADChunker(threading.Thread):
         self._frame_count = 0
         self._speech_frame_count = 0
         self._chunk_count = 0
+        self._dropped_chunks = 0
+        self._dropped_chunks_lock = threading.Lock()
+
+    @property
+    def dropped_chunks(self) -> int:
+        with self._dropped_chunks_lock:
+            return self._dropped_chunks
 
     def run(self):
         while not self.stop_event.is_set():
@@ -151,7 +161,15 @@ class VADChunker(threading.Thread):
                 },
             )
         except queue.Full:
-            pass
+            # Transcriber can't keep up: this chunk is lost from the live
+            # transcript only (the saved WAV upstream stays complete). Count and
+            # surface the loss instead of dropping silently.
+            with self._dropped_chunks_lock:
+                self._dropped_chunks += 1
+                dropped = self._dropped_chunks
+            # Best-effort: the dashboard event can itself be queue-dropped, so
+            # dropped_chunks is the authoritative total for the final summary.
+            self._publish_event("dropped", {"dropped_chunks": dropped})
 
     def _publish_event(self, event_type: str, payload: dict):
         if self.event_queue is None:
@@ -161,8 +179,10 @@ class VADChunker(threading.Thread):
         event = DashboardEvent(type=event_type, payload=payload)
         try:
             self.event_queue.put_nowait(event)
-        except queue.Full:
-            pass
+        except queue.Full as exc:
+            logger.debug(
+                "dropped dashboard %s event; event queue full: %s", event_type, exc
+            )
 
 
 class _SileroVADWrapper:

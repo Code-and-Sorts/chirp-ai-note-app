@@ -15,7 +15,7 @@ Chirp is a Typer-based CLI in `chirp/cli.py`. Runtime domains live in sibling pa
 **Naming:** Public CLI commands are `record`, `transcribe`, `notes`, `ask`, `search`, `init`, and `about`. Hidden maintenance commands such as `config`, `devices`, `index`, and `daemon` exist, but they are not the primary user workflow.
 **Types:** Add type hints where practical; mypy checks `chirp`, `config`, `notes`, `notes_chat`, `recorder`, `transcriber`, and `utils`.
 **Errors:** Prefer domain exceptions from `chirp.exceptions` and user-facing messages that explain the next recovery step.
-**Comments:** Keep them rare; prefer clearer names and smaller helpers over explanatory comments.
+**Comments:** Default to **zero**. A comment is justified only for a *why* the code can't express (workaround, subtle invariant, footgun, spec/security reason) — ideally with a reference. NEVER add comments that restate the code (`# loop over notes`), narrate steps (`# Step 1:`, `# Now build …`), re-describe a well-named symbol, or head sections. Test before adding: "would a competent engineer be misled without it?" — if not, cut it. Fix the code instead: a clearer name, a smaller helper, or a named constant beats a comment. Terse tooling markers (`# noqa`, `# type: ignore`, `# pragma: no cover`) are fine.
 
 ## Testing Guidelines
 Write `pytest` tests under `tests/` with `test_*.py` names and behavior-focused test functions. Reuse fixtures to isolate chirpd / `llm.client`, audio devices, and filesystem state. Mark slow or integration coverage explicitly with `@pytest.mark.slow` and `@pytest.mark.integration`. When changing CLI output or flows, update the closest focused tests first, then run the smallest relevant test slice before broader checks.

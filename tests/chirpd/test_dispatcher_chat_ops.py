@@ -25,6 +25,7 @@ from llm.protocol import (
     OP_CANCEL,
     OP_CHAT,
     OP_HELLO,
+    PROTOCOL_VERSION,
     new_request_id,
     package_version,
 )
@@ -40,10 +41,12 @@ def chat_socket_path() -> Iterator[Path]:
         if path.exists():
             path.unlink()
     except OSError:
+        # best-effort cleanup
         pass
     try:
         tmp_dir.rmdir()
     except OSError:
+        # best-effort cleanup
         pass
 
 
@@ -85,6 +88,7 @@ async def chat_server(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # best-effort teardown
             pass
 
 
@@ -93,6 +97,7 @@ async def _do_hello(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) 
         "id": new_request_id(),
         "op": OP_HELLO,
         "client_version": package_version(),
+        "protocol_version": PROTOCOL_VERSION,
     }
     writer.write(json.dumps(envelope).encode("utf-8") + b"\n")
     await writer.drain()
@@ -136,6 +141,7 @@ async def _close(writer: asyncio.StreamWriter) -> None:
         try:
             await writer.wait_closed()
         except (ConnectionResetError, BrokenPipeError, OSError):
+            # best-effort teardown
             pass
 
 
@@ -394,7 +400,7 @@ async def test_cancel_unknown_target_emits_error(
     finally:
         await _close(writer)
     assert events[-1]["event"] == EVENT_ERROR
-    assert events[-1]["code"] == error_codes.MODEL_NOT_FOUND
+    assert events[-1]["code"] == error_codes.REQUEST_NOT_FOUND
 
 
 async def test_chat_idle_unload_scheduled_after_completion(
@@ -513,3 +519,177 @@ async def test_cancel_missing_target_id_emits_protocol_malformed(
         await _close(writer)
     assert events[-1]["event"] == EVENT_ERROR
     assert events[-1]["code"] == error_codes.PROTOCOL_MALFORMED
+
+
+async def test_duplicate_in_flight_request_id_is_rejected(
+    chat_server: tuple[FakeBackend, DaemonState, Dispatcher],
+    chat_socket_path: Path,
+) -> None:
+    backend, state, _ = chat_server
+    backend.chat_tokens = [f"t{i}" for i in range(100)]
+    backend.generation_delay_s = 0.05
+
+    shared_id = "r-aaaaaaaaaaaa"
+
+    reader_a, writer_a = await _connect(chat_socket_path)
+    await _send(writer_a, _chat_envelope(request_id=shared_id))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while state.get_cancellation(shared_id) is None:
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("first request never registered")
+        await asyncio.sleep(0.01)
+    original_event = state.get_cancellation(shared_id)
+
+    reader_b, writer_b = await _connect(chat_socket_path)
+    try:
+        await _send(writer_b, _chat_envelope(request_id=shared_id))
+        b_events = await _read_events_until_done(reader_b)
+    finally:
+        await _close(writer_b)
+    assert b_events[-1]["event"] == EVENT_ERROR
+    assert b_events[-1]["code"] == error_codes.PROTOCOL_REQUEST_CONFLICT
+
+    # The rejected duplicate's finally must not evict A's live cancellation event.
+    assert state.get_cancellation(shared_id) is original_event
+
+    reader_c, writer_c = await _connect(chat_socket_path)
+    try:
+        await _send(
+            writer_c,
+            {"id": new_request_id(), "op": OP_CANCEL, "target_id": shared_id},
+        )
+        await _read_events_until_done(reader_c)
+    finally:
+        await _close(writer_c)
+
+    a_events = await _read_events_until_done(reader_a)
+    await _close(writer_a)
+    assert a_events[-1]["event"] == EVENT_ERROR
+    assert a_events[-1]["code"] == error_codes.MODEL_CANCELLED
+
+
+class _LateCancelBackend(FakeBackend):
+    """Reproduces AC-7 finding #5: a cancel races in as the LAST token streams.
+
+    After the final token, it sets ``should_stop`` itself (simulating a cancel
+    that lands during the final delta write) and then runs the generator to
+    natural exhaustion, marking ``usage_out["completed"]``. So at loop exit
+    ``should_stop`` IS set even though the full answer streamed — the exact
+    ambiguity the fix resolves: a naive ``should_stop.is_set()`` check would emit
+    a spurious MODEL_CANCELLED tail, while the ``completed`` signal keeps it
+    graceful (done). The cancel is real, so the test is not a tautology.
+    """
+
+    def __init__(self, tokens: list[str]) -> None:
+        super().__init__(chat_tokens=tokens)
+        self.cancel_fired = False
+
+    async def stream_generate(self, handle, messages, options, should_stop, usage_out):
+        self.last_messages = list(messages)
+        self.last_options = dict(options)
+        self.last_prompt = "<assistant>"
+        usage_out["prompt_tokens"] = 1
+        for index, token in enumerate(self.chat_tokens):
+            yield token
+            if index == len(self.chat_tokens) - 1:
+                self.cancel_fired = True
+                should_stop.set()
+        usage_out["completed"] = 1
+
+
+async def test_late_cancel_after_full_stream_is_graceful(
+    chat_socket_path: Path,
+    chat_registry: Registry,
+) -> None:
+    backend = _LateCancelBackend(["all", " ", "done"])
+    state = DaemonState(backend=backend, registry=chat_registry, idle_timeout_s=60.0)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(chat_socket_path, dispatcher))
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while not chat_socket_path.exists():
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError("socket never appeared")
+        await asyncio.sleep(0.02)
+
+    request_id = new_request_id()
+    try:
+        reader, writer = await _connect(chat_socket_path)
+        try:
+            await _send(writer, _chat_envelope(request_id=request_id))
+            events = await _read_events_until_done(reader)
+        finally:
+            await _close(writer)
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            # best-effort teardown
+            pass
+
+    # The cancel really fired, so the graceful-done assertion isn't a tautology.
+    assert backend.cancel_fired
+    deltas = [e["text"] for e in events if e["event"] == EVENT_DELTA]
+    assert deltas == ["all", " ", "done"]
+    assert events[-1]["event"] == EVENT_DONE
+    assert not any(e["event"] == EVENT_ERROR for e in events)
+
+
+async def test_idle_unload_race_keeps_model_resident_after_long_generation() -> None:
+    """AC-6 end-to-end: a generation longer than idle_timeout_s leaves the model."""
+    socket_dir = Path(tempfile.mkdtemp(prefix="cd6-", dir="/tmp"))
+    socket_path = socket_dir / "s"
+    registry = Registry(
+        schema_version=1,
+        default_chat="gemma",
+        models={
+            "gemma": RegistryEntry(
+                hf_repo="mlx-community/gemma-4-4b-it-4bit", role="chat"
+            )
+        },
+    )
+    backend = FakeBackend(chat_tokens=["a", "b", "c"], generation_delay_s=0.05)
+    # Idle timer (0.1s) is shorter than the generation (3 × 0.05 = 0.15s).
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.1)
+    dispatcher = Dispatcher(state=state)
+    task = asyncio.create_task(serve(socket_path, dispatcher))
+    try:
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while not socket_path.exists():
+            if asyncio.get_running_loop().time() > deadline:
+                raise RuntimeError("socket never appeared")
+            await asyncio.sleep(0.02)
+
+        reader, writer = await _connect(socket_path)
+        try:
+            await _send(writer, _chat_envelope())
+            events = await _read_events_until_done(reader)
+        finally:
+            await _close(writer)
+        assert events[-1]["event"] == EVENT_DONE
+
+        loaded = state.get("gemma")
+        assert loaded is not None, "long generation must not evict its own model"
+
+        reader2, writer2 = await _connect(socket_path)
+        try:
+            await _send(writer2, _chat_envelope())
+            events2 = await _read_events_until_done(reader2)
+        finally:
+            await _close(writer2)
+        assert EVENT_LOADING not in [e["event"] for e in events2]
+    finally:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.CancelledError, TimeoutError):
+            # best-effort teardown
+            pass
+        try:
+            if socket_path.exists():
+                socket_path.unlink()
+            socket_dir.rmdir()
+        except OSError:
+            # best-effort cleanup
+            pass

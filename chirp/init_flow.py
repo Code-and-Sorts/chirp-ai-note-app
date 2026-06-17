@@ -40,9 +40,10 @@ from rich.console import Console
 from rich.text import Text
 
 import audio_capture
+from chirp import exit_codes, glyphs
 from config.settings import ChirpSettings, _stringify_paths
 
-EXIT_NOT_APPLE_SILICON = 7
+EXIT_NOT_APPLE_SILICON = exit_codes.NOT_APPLE_SILICON
 
 # Single source of truth for the recommended first model — story 7.2's
 # migration plan and the README sweep (7.5) reference these constants.
@@ -268,11 +269,11 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
 
 def _print_status(console: Console, status: DependencyStatus) -> None:
     if status.installed:
-        icon = "[green]✓[/green]"
+        icon = f"[green]{glyphs.SUCCESS}[/green]"
     elif status.required:
-        icon = "[red]✗[/red]"
+        icon = f"[red]{glyphs.FAILURE}[/red]"
     else:
-        icon = "[yellow]—[/yellow]"
+        icon = f"[yellow]{glyphs.PENDING}[/yellow]"
     label = status.name.ljust(22)
     console.print(f" {icon} {label} [dim]· {status.detail}[/dim]")
 

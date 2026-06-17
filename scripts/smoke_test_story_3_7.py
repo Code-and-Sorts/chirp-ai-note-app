@@ -122,8 +122,10 @@ def _kill_existing_chirpd() -> int:
         try:
             path.unlink()
         except FileNotFoundError:
+            # best-effort cleanup
             pass
         except OSError:
+            # best-effort cleanup
             pass
     return len(pids) + len(stragglers)
 

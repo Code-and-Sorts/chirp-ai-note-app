@@ -1,10 +1,12 @@
+import json
 import logging
 import sys
 
 import typer
-from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from chirp import exit_codes
+from chirp._console import stderr_console, stdout_console
 from llm.exceptions import (
     LLMCancelled,
     LLMDaemonSpawnFailed,
@@ -17,7 +19,8 @@ from notes_chat.config import get_notes_config
 
 logger = logging.getLogger(__name__)
 
-console = Console()
+# Diagnostics/progress/errors → stderr; answer body and JSON → stdout.
+console = stderr_console
 app = typer.Typer()
 
 
@@ -31,6 +34,9 @@ def index(
 
     if force:
         console.print("[yellow]--force specified, rebuilding entire index[/yellow]")
+        from notes_chat.cache import clear_cache
+
+        clear_cache()
 
     try:
         from notes_chat.index import build_index
@@ -61,12 +67,12 @@ def index(
             console.print(
                 f"[red]Index build failed: {result.get('error', 'Unknown error')}[/red]"
             )
-            raise typer.Exit(1)
+            raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
     except Exception as e:  # noqa: BLE001 - top-level CLI handler for index build
         logger.debug("Index build failed: %s", e, exc_info=True)
         console.print(f"[red]Index build failed: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
 
 @app.command()
@@ -97,6 +103,11 @@ def ask(
         "--markdown/--no-markdown",
         help="Render answers as markdown (code blocks, bullets, bold).",
     ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the answer and sources as JSON to stdout (one-shot only).",
+    ),
 ):
     """Ask questions about your meeting notes. Run without a question for interactive chat."""
     config = get_notes_config()
@@ -116,7 +127,8 @@ def ask(
         from notes_chat.prompting import generate_answer, stream_answer_tokens
         from notes_chat.retrieval import retrieve_context
 
-        console.print(f"[dim]searching for: {question}[/dim]")
+        if not json_output:
+            console.print(f"[dim]searching for: {question}[/dim]")
 
         context_result = retrieve_context(config, question, when_filter=when)
 
@@ -126,16 +138,27 @@ def ask(
                 console.print("[yellow]No relevant documents found.[/yellow]")
                 if context_result.get("suggestion"):
                     console.print(f"[dim]try: {context_result['suggestion']}[/dim]")
-                raise typer.Exit(2)
+                raise typer.Exit(exit_codes.USAGE_ERROR)
             console.print(f"[red]Context retrieval failed: {error}[/red]")
             if context_result.get("suggestion"):
                 console.print(f"[dim]{context_result['suggestion']}[/dim]")
-            raise typer.Exit(1)
+            raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
         context = context_result["context"]
         retrieved_ids = context_result["retrieved_ids"]
 
         if dry_run:
+            if json_output:
+                payload = {
+                    "dry_run": True,
+                    "question": question,
+                    "context": context,
+                    "retrieved_chunks": len(retrieved_ids),
+                }
+                sys.stdout.write(
+                    json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+                )
+                return
             console.print("[yellow]dry run — showing context and prompt:[/yellow]")
             console.print(f"[dim]Context length: {len(context)} characters[/dim]")
             console.print(f"[dim]Retrieved chunks: {len(retrieved_ids)}[/dim]")
@@ -145,28 +168,32 @@ def ask(
 
         cached_answer = get_cached_answer(question, retrieved_ids)
         if cached_answer:
-            console.print("[dim]using cached answer[/dim]")
-            console.print("\n[magenta bold]chirp ›[/magenta bold]")
-            if markdown:
-                from rich.markdown import Markdown
-
-                console.print(Markdown(cached_answer))
-            else:
-                console.print(cached_answer)
             answer = cached_answer
-        elif markdown:
+            if not json_output:
+                console.print("[dim]using cached answer[/dim]")
+                console.print("\n[magenta bold]chirp ›[/magenta bold]")
+                if markdown:
+                    from rich.markdown import Markdown
+
+                    stdout_console.print(Markdown(cached_answer))
+                else:
+                    stdout_console.print(cached_answer)
+        elif json_output or markdown:
+            # Under --json the answer is collected, not streamed, so the raw
+            # JSON can be emitted at the end.
             answer_result = generate_answer(config, question, context)
             if not answer_result.get("success"):
                 console.print(
                     f"[red]Answer generation failed: {answer_result.get('error', 'Unknown error')}[/red]"
                 )
-                raise typer.Exit(1)
+                raise typer.Exit(exit_codes.RUNTIME_ERROR)
             answer = answer_result["answer"]
             cache_answer(question, retrieved_ids, answer)
-            console.print("\n[magenta bold]chirp ›[/magenta bold]")
-            from rich.markdown import Markdown
+            if not json_output:
+                console.print("\n[magenta bold]chirp ›[/magenta bold]")
+                from rich.markdown import Markdown
 
-            console.print(Markdown(answer))
+                stdout_console.print(Markdown(answer))
         else:
             console.print("\n[magenta bold]chirp ›[/magenta bold]")
             tokens: list[str] = []
@@ -179,11 +206,24 @@ def ask(
             answer = "".join(tokens).strip()
             if not answer:
                 console.print("[red]Answer generation failed: empty response[/red]")
-                raise typer.Exit(1)
+                raise typer.Exit(exit_codes.RUNTIME_ERROR)
             cache_answer(question, retrieved_ids, answer)
 
-        if sources and context_result.get("sources"):
-            joined = ", ".join(context_result["sources"])
+        answer_sources = (
+            list(context_result["sources"]) if context_result.get("sources") else []
+        )
+
+        if json_output:
+            payload = {
+                "question": question,
+                "answer": answer,
+                "sources": answer_sources if sources else [],
+            }
+            sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+            return
+
+        if sources and answer_sources:
+            joined = ", ".join(answer_sources)
             console.print(f"\n[dim]sources: {joined}[/dim]")
 
     except typer.Exit:
@@ -193,26 +233,26 @@ def ask(
             f"[red]chirpd is not running and could not be started: {exc.message}[/red]"
         )
         console.print("[dim]run `chirp daemon status` for diagnostics[/dim]")
-        raise typer.Exit(3) from exc
+        raise typer.Exit(exit_codes.DAEMON_UNREACHABLE) from exc
     except LLMModelNotFound as exc:
         console.print(f"[red]{exc.message}[/red]")
         console.print(
             "[dim]run `chirp models add <hf-repo>` to register a chat model[/dim]"
         )
-        raise typer.Exit(5) from exc
+        raise typer.Exit(exit_codes.MODEL_NOT_FOUND) from exc
     except LLMModelLoadFailed as exc:
         console.print(f"[red]{exc.message}[/red]")
-        raise typer.Exit(4) from exc
+        raise typer.Exit(exit_codes.MODEL_LOAD_FAILED) from exc
     except LLMCancelled:
         console.print("[yellow]Interrupted.[/yellow]")
-        raise typer.Exit(1) from None
+        raise typer.Exit(exit_codes.RUNTIME_ERROR) from None
     except LLMError as exc:
         console.print(f"[red]{exc.message}[/red]")
-        raise typer.Exit(1) from exc
+        raise typer.Exit(exit_codes.RUNTIME_ERROR) from exc
     except Exception as e:  # noqa: BLE001 - top-level CLI handler for ask command
         logger.debug("Query failed: %s", e, exc_info=True)
         console.print(f"[red]Query failed: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
 
 if __name__ == "__main__":

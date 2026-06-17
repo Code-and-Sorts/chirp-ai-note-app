@@ -71,7 +71,10 @@ def test_read_registry_rejects_unknown_schema_version(tmp_path: Path) -> None:
     path = _write(tmp_path / "models.toml", body)
     with pytest.raises(LLMModelNotFound) as exc_info:
         read_registry(path)
-    assert "re-init" in exc_info.value.message
+    # AC-10: point at the real entry point, not the nonexistent `models init`.
+    assert "chirp models add" in exc_info.value.message
+    assert "models init" not in exc_info.value.message
+    assert "EPIC-MODEL-REGISTRY" not in exc_info.value.message
     assert exc_info.value.details["schema_version"] == 99
 
 

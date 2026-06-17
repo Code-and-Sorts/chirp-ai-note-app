@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
-import llm
 from llm import error_codes
 from llm.exceptions import (
     CODE_TO_EXCEPTION,
@@ -14,11 +15,15 @@ from llm.exceptions import (
     LLMDaemonUnreachable,
     LLMError,
     LLMGenerationFailed,
+    LLMInferenceTimeout,
     LLMMalformedResponse,
+    LLMModelCapacityExceeded,
     LLMModelError,
     LLMModelLoadFailed,
     LLMModelNotFound,
     LLMProtocolError,
+    LLMRequestConflict,
+    LLMRequestNotFound,
     LLMTransportError,
     LLMVersionMismatch,
 )
@@ -26,16 +31,20 @@ from llm.exceptions import (
 _CONCRETE_WIRE_CLASSES = [
     LLMVersionMismatch,
     LLMMalformedResponse,
+    LLMRequestConflict,
+    LLMRequestNotFound,
     LLMModelNotFound,
     LLMModelLoadFailed,
     LLMGenerationFailed,
     LLMCancelled,
+    LLMModelCapacityExceeded,
 ]
 
 _CONCRETE_CLIENT_ONLY_CLASSES = [
     LLMDaemonUnreachable,
     LLMConnectionLost,
     LLMDaemonSpawnFailed,
+    LLMInferenceTimeout,
 ]
 
 _ALL_CONCRETE = _CONCRETE_WIRE_CLASSES + _CONCRETE_CLIENT_ONLY_CLASSES
@@ -66,12 +75,16 @@ def test_transport_subtree() -> None:
     assert issubclass(LLMDaemonUnreachable, LLMTransportError)
     assert issubclass(LLMConnectionLost, LLMTransportError)
     assert issubclass(LLMDaemonSpawnFailed, LLMTransportError)
+    # AC-1: inference timeout is client-local, so it lives in the transport subtree.
+    assert issubclass(LLMInferenceTimeout, LLMTransportError)
 
 
 def test_protocol_subtree() -> None:
     assert issubclass(LLMProtocolError, LLMError)
     assert issubclass(LLMVersionMismatch, LLMProtocolError)
     assert issubclass(LLMMalformedResponse, LLMProtocolError)
+    assert issubclass(LLMRequestConflict, LLMProtocolError)
+    assert issubclass(LLMRequestNotFound, LLMProtocolError)
 
 
 def test_model_subtree() -> None:
@@ -80,6 +93,13 @@ def test_model_subtree() -> None:
     assert issubclass(LLMModelLoadFailed, LLMModelError)
     assert issubclass(LLMGenerationFailed, LLMModelError)
     assert issubclass(LLMCancelled, LLMModelError)
+    assert issubclass(LLMModelCapacityExceeded, LLMModelError)
+
+
+def test_inference_timeout_has_no_wire_code() -> None:
+    # It never travels the wire, so it carries no code and is not in the table.
+    assert LLMInferenceTimeout.code is None
+    assert LLMInferenceTimeout not in CODE_TO_EXCEPTION.values()
 
 
 @pytest.mark.parametrize("cls", _CONCRETE_WIRE_CLASSES)
@@ -119,11 +139,16 @@ def test_re_exports_from_llm_package() -> None:
         "LLMDaemonUnreachable",
         "LLMConnectionLost",
         "LLMDaemonSpawnFailed",
+        "LLMInferenceTimeout",
         "LLMVersionMismatch",
         "LLMMalformedResponse",
+        "LLMRequestConflict",
+        "LLMRequestNotFound",
         "LLMModelNotFound",
         "LLMModelLoadFailed",
         "LLMGenerationFailed",
         "LLMCancelled",
+        "LLMModelCapacityExceeded",
     ):
-        assert hasattr(llm, name), f"llm package should re-export {name}"
+        llm_package = importlib.import_module("llm")
+        assert hasattr(llm_package, name), f"llm package should re-export {name}"

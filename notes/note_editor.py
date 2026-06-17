@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import curses
+import logging
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -10,6 +11,8 @@ from rich.console import Console
 from rich.markdown import Heading, Markdown
 from rich.segment import Segment
 from rich.style import Style
+
+logger = logging.getLogger(__name__)
 
 _HAS_ITALIC = hasattr(curses, "A_ITALIC")
 _ITALIC_ATTR = getattr(curses, "A_ITALIC", 0)
@@ -24,7 +27,7 @@ class EditorResult:
 class PlainHeading(Heading):
     """Render h1 headings without Rich's default border."""
 
-    def __rich_console__(self, console: Console, options):  # type: ignore[override]
+    def __rich_console__(self, console: Console, options):
         text = self.text
         text.justify = "left"
         yield text
@@ -41,6 +44,29 @@ class PlainMarkdown(Markdown):
 class DisplayLine:
     segments: list[Segment]
     source_line: int
+
+
+KEYBINDING_HINT = "i insert · Esc normal · :wq save · :q! quit · ? :help"
+
+HELP_LINES = (
+    "  chirp note editor — help",
+    "",
+    "  modes",
+    "    i           enter insert mode",
+    "    Esc         return to normal/view mode",
+    "",
+    "  commands (normal mode, type with :)",
+    "    :wq         save and quit",
+    "    :q!         quit without saving",
+    "    :help       show this help",
+    "",
+    "  keys",
+    "    ?           show this help (normal/view mode)",
+    "    arrows/hjkl move the cursor",
+    "    PgUp/PgDn   scroll a page",
+    "",
+    "  press any key to close this help",
+)
 
 
 class ManualNoteEditor:
@@ -77,6 +103,7 @@ class ManualNoteEditor:
         self.dirty = False
         self.readonly = readonly
         self._readonly_notified = False
+        self.show_help = False
 
         self._has_colors = False
         self._color_pairs: dict[tuple[int, int], int] = {}
@@ -114,6 +141,10 @@ class ManualNoteEditor:
             except curses.error:
                 continue
 
+            if self.show_help:
+                self.show_help = False
+                continue
+
             if self.command_active:
                 if self._handle_command_input(key):
                     break
@@ -138,9 +169,16 @@ class ManualNoteEditor:
 
     def _render(self, stdscr: curses.window) -> None:
         height, width = stdscr.getmaxyx()
-        text_height = max(1, height - 1)
+        # Reserve the last row for the status line and the one above for the hint
+        # so neither overwrites the text body.
+        hint_row = max(0, height - 2)
+        text_height = max(1, height - 2)
         text_width = max(1, width - 1)
         self._last_text_height = text_height
+
+        if self.show_help:
+            self._render_help_overlay(stdscr, height, width)
+            return
 
         if self.mode == "view":
             self._ensure_view_cache(text_width)
@@ -156,13 +194,15 @@ class ManualNoteEditor:
         else:
             self._render_insert_mode(stdscr, text_height, text_width)
 
+        self._render_keybinding_hint(stdscr, hint_row, width)
+
         status = self._status_line(width)
         status_attr = self._status_pairs.get(self.mode, curses.A_REVERSE)
         try:
             stdscr.addstr(height - 1, 0, " " * max(1, width - 1), status_attr)
             stdscr.addstr(height - 1, 0, status, status_attr)
-        except curses.error:
-            pass
+        except curses.error as exc:
+            logger.debug("could not draw status line: %s", exc)
 
         if self.mode == "view":
             cursor_screen_y = 0
@@ -175,9 +215,38 @@ class ManualNoteEditor:
 
         try:
             stdscr.move(cursor_screen_y, cursor_screen_x)
-        except curses.error:
-            pass
+        except curses.error as exc:
+            logger.debug(
+                "could not move cursor to (%d, %d): %s",
+                cursor_screen_y,
+                cursor_screen_x,
+                exc,
+            )
 
+        stdscr.refresh()
+
+    def _render_keybinding_hint(
+        self, stdscr: curses.window, hint_row: int, width: int
+    ) -> None:
+        attr = curses.A_DIM if hasattr(curses, "A_DIM") else curses.A_NORMAL
+        hint = KEYBINDING_HINT[: max(1, width - 1)]
+        try:
+            stdscr.addstr(hint_row, 0, " " * max(1, width - 1))
+            stdscr.addstr(hint_row, 0, hint, attr)
+        except curses.error as exc:
+            logger.debug("could not draw keybinding hint: %s", exc)
+
+    def _render_help_overlay(
+        self, stdscr: curses.window, height: int, width: int
+    ) -> None:
+        stdscr.erase()
+        for row, line in enumerate(HELP_LINES):
+            if row >= height:
+                break
+            try:
+                stdscr.addstr(row, 0, line[: max(1, width - 1)])
+            except curses.error:
+                continue
         stdscr.refresh()
 
     def _render_insert_mode(
@@ -199,8 +268,8 @@ class ManualNoteEditor:
             display_line = line[:text_width]
             try:
                 stdscr.addstr(idx, 0, display_line, attr)
-            except curses.error:
-                pass
+            except curses.error as exc:
+                logger.debug("could not draw insert-mode line %d: %s", idx, exc)
 
     def _render_view_mode(
         self, stdscr: curses.window, text_height: int, text_width: int
@@ -240,8 +309,10 @@ class ManualNoteEditor:
             attr = self._style_to_attr(segment.style, "view")
             try:
                 stdscr.addstr(screen_row, col, snippet, attr)
-            except curses.error:
-                pass
+            except curses.error as exc:
+                logger.debug(
+                    "could not draw segment at row %d col %d: %s", screen_row, col, exc
+                )
             col += len(snippet)
 
     def _status_line(self, width: int) -> str:
@@ -302,6 +373,10 @@ class ManualNoteEditor:
             self.command_active = True
             self.command_buffer = ":"
             self.message = ""
+            return False
+
+        if key == "?":
+            self.show_help = True
             return False
 
         return self._handle_navigation(key)
@@ -394,7 +469,12 @@ class ManualNoteEditor:
             self.dirty = False
             return True
 
-        self.message = f"Unknown command: {command}" if command else ""
+        if command == "help":
+            self.show_help = True
+            self.command_buffer = ""
+            return False
+
+        self.message = f"Unknown command: {command} — type :help" if command else ""
         self.command_buffer = ""
         return False
 
@@ -548,8 +628,8 @@ class ManualNoteEditor:
         curses.start_color()
         try:
             curses.use_default_colors()
-        except curses.error:
-            pass
+        except curses.error as exc:
+            logger.debug("could not use terminal default colors: %s", exc)
 
         insert_attr = self._register_color_pair(
             self._default_fg["insert"], self._default_bg["insert"]
@@ -633,8 +713,12 @@ class ManualNoteEditor:
         if not self._view_cache_dirty and self._view_cache_width == text_width:
             return
 
-        console = Console(
-            width=text_width, color_system="standard", force_terminal=True
+        # force_terminal=True keeps render_lines width-correct offscreen but must
+        # not override NO_COLOR, so drop the color system when color is disabled.
+        console = (
+            Console(width=text_width, color_system=None, force_terminal=True)
+            if self._no_color_active()
+            else Console(width=text_width, color_system="standard", force_terminal=True)
         )
         options = console.options.update(width=text_width)
 
@@ -726,13 +810,26 @@ class ManualNoteEditor:
         top_display = self._display_lines[top_index]
         self.top_line = top_display.source_line
 
+    def _no_color_active(self) -> bool:
+        """Whether color is disabled via NO_COLOR or the --no-color/--plain flag."""
+        import os
+
+        if os.environ.get("NO_COLOR"):
+            return True
+        try:
+            from chirp._console import stdout_console
+
+            return bool(stdout_console.no_color)
+        except Exception:  # noqa: BLE001 - color detection must never break the editor
+            return False
+
     def _notify_readonly(self) -> None:
         if not self._readonly_notified:
             self.message = "Read-only note: edits disabled"
             self._readonly_notified = True
             try:
                 curses.beep()
-            except curses.error:
-                pass
+            except curses.error as exc:
+                logger.debug("could not emit terminal beep: %s", exc)
         else:
             self.message = "Read-only note"

@@ -22,6 +22,7 @@ from llm.protocol import (
     OP_CHAT,
     OP_EMBED,
     OP_HELLO,
+    PROTOCOL_VERSION,
     new_request_id,
     package_version,
 )
@@ -37,10 +38,12 @@ def embed_socket_path() -> Iterator[Path]:
         if path.exists():
             path.unlink()
     except OSError:
+        # best-effort cleanup
         pass
     try:
         tmp_dir.rmdir()
     except OSError:
+        # best-effort cleanup
         pass
 
 
@@ -81,6 +84,7 @@ async def embed_server(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
+            # best-effort teardown
             pass
 
 
@@ -89,6 +93,7 @@ async def _do_hello(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) 
         "id": new_request_id(),
         "op": OP_HELLO,
         "client_version": package_version(),
+        "protocol_version": PROTOCOL_VERSION,
     }
     writer.write(json.dumps(envelope).encode("utf-8") + b"\n")
     await writer.drain()
@@ -130,6 +135,7 @@ async def _close(writer: asyncio.StreamWriter) -> None:
         try:
             await writer.wait_closed()
         except (ConnectionResetError, BrokenPipeError, OSError):
+            # best-effort teardown
             pass
 
 

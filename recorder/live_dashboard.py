@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import select
@@ -25,6 +26,8 @@ from rich.table import Table
 from rich.text import Text
 
 from recorder.live_types import DashboardEvent, TranscriptSegment
+
+logger = logging.getLogger(__name__)
 
 
 class LiveDashboard:
@@ -56,6 +59,7 @@ class LiveDashboard:
         self._vad_speech_frames = 0
         self._vad_triggered = False
         self._vad_chunks_emitted = 0
+        self._dropped_chunks = 0
         self._scroll_offset = 0
         self._auto_scroll = True
         self._stdin_fd: int | None = None
@@ -85,8 +89,8 @@ class LiveDashboard:
                     termios.tcsetattr(
                         self._stdin_fd, termios.TCSADRAIN, self._old_settings
                     )
-                except (termios.error, OSError):
-                    pass
+                except (termios.error, OSError) as exc:
+                    logger.debug("could not restore terminal attributes: %s", exc)
 
     def _handle_scroll_up(self):
         with self._lock:
@@ -212,6 +216,11 @@ class LiveDashboard:
         elif event.type == "chunk_emitted":
             with self._lock:
                 self._vad_chunks_emitted = int(event.payload.get("chunk_id", 0))
+        elif event.type == "dropped":
+            with self._lock:
+                self._dropped_chunks = int(
+                    event.payload.get("dropped_chunks", self._dropped_chunks)
+                )
 
     def _render_layout(self) -> Layout:
         layout = Layout()
@@ -255,7 +264,6 @@ class LiveDashboard:
 
         if auto_scroll:
             visible_segments = segments[-max_lines:]
-            start_idx = max(0, len(segments) - max_lines)
         else:
             end_idx = len(segments) - scroll_offset
             start_idx = max(0, end_idx - max_lines)
@@ -286,11 +294,19 @@ class LiveDashboard:
         language = self._language or "Detecting…"
         speech_state = "Speaking" if self._vad_triggered else "Silent"
 
+        with self._lock:
+            dropped_chunks = self._dropped_chunks
+
         table.add_row("Status ", speech_state)
         table.add_row("Duration ", self._format_elapsed(elapsed))
         table.add_row("Language ", language)
         table.add_row("Words ", str(self._total_words))
         table.add_row("Audio ", level_bar)
+        if dropped_chunks > 0:
+            table.add_row(
+                "Dropped ",
+                Text(f"{dropped_chunks} (transcript only)", style="bold yellow"),
+            )
 
         return Panel(table, title="Status", border_style="magenta", box=box.ROUNDED)
 
