@@ -3,7 +3,7 @@ import json
 import logging
 import time
 
-from notes_chat.config import get_notes_config
+from notes_chat.config import PROMPT_VERSION, get_notes_config
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +108,6 @@ def _generate_cache_key(question: str, retrieved_ids: list[str]) -> str:
     embed model, and a prompt-version token are folded in so a model switch or a
     prompt edit produces a different key (no stale hit from the old model/prompt).
     """
-    from notes_chat.prompting import PROMPT_VERSION
-
     sorted_ids = sorted(retrieved_ids)
     chat_model, embed_model = _resolved_models()
 

@@ -10,11 +10,6 @@ from llm.protocol import new_request_id
 
 logger = logging.getLogger(__name__)
 
-# Bump whenever SYSTEM_PROMPT or _grounded_answer_prompt changes so the answer
-# cache (notes_chat/cache.py) treats answers produced by an older prompt as
-# stale and recomputes them.
-PROMPT_VERSION = "2"
-
 # Hard cap on the user question length before it is delimited into a prompt.
 # Bounds prompt size and shrinks the surface for prompt-shaped text smuggling
 # instructions through the question (the question is fenced, not interpolated raw).
