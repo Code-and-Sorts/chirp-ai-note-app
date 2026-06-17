@@ -77,10 +77,14 @@ class TestVersion:
         assert short.stdout.strip() == long_.stdout.strip()
 
     def test_help_lists_version(self):
+        import re
+
         import chirp.cli
 
         result = CliRunner().invoke(chirp.cli.app, ["--help"])
-        assert "--version" in result.stdout
+        # Rich splits "--version" across ANSI color codes when color is on (CI).
+        help_without_color = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+        assert "--version" in help_without_color
 
     def test_about_plain_renders_static_panel(self, tmp_path, monkeypatch):
         runner, app = _runner(tmp_path, monkeypatch)
