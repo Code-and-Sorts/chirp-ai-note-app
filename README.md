@@ -12,7 +12,7 @@ Chirp is a local-first CLI for recording meetings, transcribing audio, generatin
 
 - Record audio into a new note workspace
 - Stream live transcription in a Rich dashboard while recording
-- Transcribe recordings with faster-whisper
+- Transcribe recordings with mlx-whisper (Metal-accelerated on Apple Silicon)
 - Generate structured notes with a local MLX model (via the bundled chirpd daemon)
 - Browse, edit, and delete saved notes from the terminal
 - Ask questions or run keyword search across your note history

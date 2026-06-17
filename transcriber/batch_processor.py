@@ -186,9 +186,6 @@ class BatchProcessor:
         force: bool = False,
         console: Console | None = None,
     ) -> dict[str, int]:
-        # TODO: pipeline across notes if profiling justifies it. Strict-sequential
-        #       for now — Whisper (CPU int8) and chirpd/MLX (Metal) contend for
-        #       different resources, so concurrency buys little here.
         console = console or Console()
         records = self._select_queue(n=n, force=force)
 

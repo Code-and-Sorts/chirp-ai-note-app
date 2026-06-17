@@ -1,10 +1,29 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pytest
 
 from config.settings import ChirpSettings
-from transcriber.whisper_transcriber import WhisperTranscriber
+from transcriber.whisper_transcriber import (
+    WhisperTranscriber,
+    _resolve_model_repo,
+)
+
+MLX_IMPORT = "transcriber.whisper_transcriber._import_mlx_whisper"
+
+
+def _make_mlx_module(*, segments=None, language="en", audio_len=80000):
+    """Build a stand-in for the lazily-imported mlx_whisper module."""
+    module = Mock()
+    module.load_models.load_model.return_value = Mock(name="whisper_model")
+    module.audio.load_audio.return_value = np.zeros(audio_len, dtype=np.float32)
+    module.transcribe.return_value = {
+        "text": "".join(s.get("text", "") for s in (segments or [])),
+        "language": language,
+        "segments": segments if segments is not None else [],
+    }
+    return module
 
 
 class TestWhisperTranscriber:
@@ -30,205 +49,87 @@ class TestWhisperTranscriber:
         return settings
 
     @pytest.fixture
-    def mock_whisper_model(self):
-        mock_model = Mock()
-        mock_segment = Mock()
-        mock_segment.start = 0.0
-        mock_segment.end = 5.0
-        mock_segment.text = " This is a test transcription."
-        mock_segment.avg_logprob = -0.5
-        mock_segment.no_speech_prob = 0.1
-        mock_segment.words = None
+    def mlx_module(self):
+        return _make_mlx_module(
+            segments=[
+                {
+                    "start": 0.0,
+                    "end": 5.0,
+                    "text": " This is a test transcription.",
+                    "avg_logprob": -0.5,
+                    "no_speech_prob": 0.1,
+                }
+            ]
+        )
 
-        mock_info = Mock()
-        mock_info.language = "en"
-        mock_info.language_probability = 0.95
-        mock_info.duration = 5.0
+    @pytest.fixture
+    def transcriber(self, mock_settings, mlx_module):
+        with patch(MLX_IMPORT, return_value=mlx_module):
+            instance = WhisperTranscriber(mock_settings)
+            # Default to "no VAD regions" so transcribe tests never touch silero.
+            with patch.object(instance, "_detect_speech", return_value=[]):
+                yield instance
 
-        mock_model.transcribe.return_value = ([mock_segment], mock_info)
-        return mock_model
+    def test_initialization_loads_model(self, mock_settings, mlx_module):
+        with patch(MLX_IMPORT, return_value=mlx_module):
+            transcriber = WhisperTranscriber(mock_settings)
 
-    def test_initialization_loads_model(self, mock_settings):
+        assert transcriber.model is mlx_module.load_models.load_model.return_value
+        assert transcriber.settings is mock_settings
+        assert transcriber.model_repo == "mlx-community/whisper-small"
+
+    def test_resolve_model_repo_maps_friendly_names(self):
+        assert (
+            _resolve_model_repo("large-v3-turbo")
+            == "mlx-community/whisper-large-v3-turbo"
+        )
+
+    def test_resolve_model_repo_passes_through_org_repo(self):
+        assert _resolve_model_repo("my-org/custom-whisper") == "my-org/custom-whisper"
+
+    def test_get_optimal_device_apple_silicon(self, mock_settings, mlx_module):
+        with patch(MLX_IMPORT, return_value=mlx_module):
+            transcriber = WhisperTranscriber(mock_settings)
         with patch(
-            "transcriber.whisper_transcriber.WhisperModel"
-        ) as mock_whisper_model_class:
-            mock_model = Mock()
-            mock_whisper_model_class.return_value = mock_model
+            "transcriber.whisper_transcriber.platform.system", return_value="Darwin"
+        ):
+            assert transcriber._get_optimal_device() == "mlx"
 
-            with (
-                patch.object(
-                    WhisperTranscriber, "_get_optimal_device", return_value="cpu"
-                ),
-                patch.object(
-                    WhisperTranscriber, "_get_compute_type", return_value="int8"
-                ),
-                patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
-            ):
-                transcriber = WhisperTranscriber(mock_settings)
-
-                assert transcriber.model == mock_model
-                assert transcriber.settings == mock_settings
-
-    @patch("platform.system")
-    @patch("platform.processor")
-    def test_get_optimal_device_apple_silicon(
-        self, mock_processor, mock_system, mock_settings
-    ):
-        mock_system.return_value = "Darwin"
-        mock_processor.return_value = "Apple M1"
-
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
+    def test_get_optimal_device_non_darwin(self, mock_settings, mlx_module):
+        with patch(MLX_IMPORT, return_value=mlx_module):
             transcriber = WhisperTranscriber(mock_settings)
-            device = transcriber._get_optimal_device()
+        with patch(
+            "transcriber.whisper_transcriber.platform.system", return_value="Linux"
+        ):
+            assert transcriber._get_optimal_device() == "cpu"
 
-            assert device == "cpu"
+    def test_get_compute_type_is_float16(self, transcriber):
+        assert transcriber._get_compute_type() == "float16"
 
-    def test_get_optimal_device_with_cuda(self, mock_settings):
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            with patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4):
-                with patch.object(
-                    WhisperTranscriber, "_get_compute_type", return_value="float16"
-                ):
-                    transcriber = WhisperTranscriber(mock_settings)
+    def test_transcribe_file_file_not_found(self, transcriber):
+        with pytest.raises(FileNotFoundError, match="Audio file not found"):
+            transcriber.transcribe_file(Path("/non/existent/file.wav"))
 
-                    with patch("platform.system", return_value="Linux"):
-                        with patch("platform.processor", return_value="Intel"):
-                            mock_torch = Mock()
-                            mock_torch.cuda.is_available.return_value = True
+    def test_transcribe_file_no_model_loaded(self, transcriber):
+        transcriber.model = None
+        with patch("pathlib.Path.exists", return_value=True):
+            with pytest.raises(RuntimeError, match="Whisper model not loaded"):
+                transcriber.transcribe_file(Path("test.wav"))
 
-                            with patch.dict("sys.modules", {"torch": mock_torch}):
-                                device = transcriber._get_optimal_device()
-                                assert device == "cuda"
+    def test_transcribe_file_handles_transcription_error(self, transcriber, mlx_module):
+        mlx_module.transcribe.side_effect = Exception("Transcription failed")
+        with patch("pathlib.Path.exists", return_value=True):
+            result = transcriber.transcribe_file(Path("test.wav"))
 
-    def test_get_optimal_device_fallback_cpu(self, mock_settings):
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            with patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4):
-                with patch.object(
-                    WhisperTranscriber, "_get_compute_type", return_value="int8"
-                ):
-                    transcriber = WhisperTranscriber(mock_settings)
-
-                    mock_torch = Mock()
-                    mock_torch.cuda.is_available.return_value = False
-                    with patch("platform.system", return_value="Linux"):
-                        with patch("platform.processor", return_value="Intel"):
-                            with patch.dict("sys.modules", {"torch": mock_torch}):
-                                device = transcriber._get_optimal_device()
-                                assert device == "cpu"
-
-    @patch("platform.system")
-    @patch("platform.processor")
-    @patch("os.cpu_count")
-    def test_get_compute_type_apple_silicon(
-        self, mock_cpu_count, mock_processor, mock_system, mock_settings
-    ):
-        mock_cpu_count.return_value = 8
-        mock_system.return_value = "Darwin"
-        mock_processor.return_value = "Apple M2"
-
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            with patch.object(
-                WhisperTranscriber, "_get_optimal_device", return_value="cpu"
-            ):
-                transcriber = WhisperTranscriber(mock_settings)
-                compute_type = transcriber._get_compute_type()
-
-                assert compute_type == "int8"
-
-    @patch("os.cpu_count")
-    def test_get_compute_type_cuda_device(self, mock_cpu_count, mock_settings):
-        mock_cpu_count.return_value = 8
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            with patch.object(
-                WhisperTranscriber, "_get_optimal_device", return_value="cuda"
-            ):
-                transcriber = WhisperTranscriber(mock_settings)
-                compute_type = transcriber._get_compute_type()
-
-                assert compute_type == "float16"
-
-    @patch("os.cpu_count")
-    def test_get_cpu_threads_normal_case(self, mock_cpu_count, mock_settings):
-        mock_cpu_count.return_value = 8
-
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-            threads = transcriber._get_cpu_threads()
-
-            assert threads == 6
-
-    @patch("os.cpu_count")
-    def test_get_cpu_threads_none_fallback(self, mock_cpu_count, mock_settings):
-        mock_cpu_count.return_value = None
-
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-            threads = transcriber._get_cpu_threads()
-
-            assert threads == 1
-
-    @patch("os.cpu_count")
-    @patch("platform.processor")
-    @patch("platform.system")
-    def test_transcribe_file_file_not_found(
-        self, mock_system, mock_processor, mock_cpu_count, mock_settings
-    ):
-        mock_system.return_value = "Darwin"
-        mock_processor.return_value = "Apple M1"
-        mock_cpu_count.return_value = 8
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-            non_existent_file = Path("/non/existent/file.wav")
-
-            with pytest.raises(FileNotFoundError, match="Audio file not found"):
-                transcriber.transcribe_file(non_existent_file)
-
-    @patch("os.cpu_count")
-    @patch("platform.processor")
-    @patch("platform.system")
-    def test_transcribe_file_no_model_loaded(
-        self, mock_system, mock_processor, mock_cpu_count, mock_settings
-    ):
-        mock_system.return_value = "Darwin"
-        mock_processor.return_value = "Apple M1"
-        mock_cpu_count.return_value = 8
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-            transcriber.model = None
-
-            test_file = Path("test.wav")
-            with patch("pathlib.Path.exists", return_value=True):
-                with pytest.raises(RuntimeError, match="Whisper model not loaded"):
-                    transcriber.transcribe_file(test_file)
-
-    @patch("os.cpu_count")
-    @patch("platform.processor")
-    @patch("platform.system")
-    def test_transcribe_file_handles_transcription_error(
-        self, mock_system, mock_processor, mock_cpu_count, mock_settings
-    ):
-        mock_system.return_value = "Darwin"
-        mock_processor.return_value = "Apple M1"
-        mock_cpu_count.return_value = 8
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-            mock_model = Mock()
-            mock_model.transcribe.side_effect = Exception("Transcription failed")
-            transcriber.model = mock_model
-
-            test_file = Path("test.wav")
-            with patch("pathlib.Path.exists", return_value=True):
-                result = transcriber.transcribe_file(test_file)
-
-                assert result["success"] is False
-                assert result["filename"] == "test.wav"
-                assert result["full_text"] == ""
-                assert result["segments"] == []
-                assert result["error"] == "Transcription failed"
-                assert "transcription_time" in result["metadata"]
+        assert result["success"] is False
+        assert result["filename"] == "test.wav"
+        assert result["full_text"] == ""
+        assert result["segments"] == []
+        assert result["error"] == "Transcription failed"
+        assert "transcription_time" in result["metadata"]
 
     def test_transcribe_file_includes_enhanced_metadata(
-        self, tmp_path, mock_settings, mock_whisper_model
+        self, tmp_path, mock_settings, mlx_module
     ):
         import tomli_w
 
@@ -236,278 +137,204 @@ class TestWhisperTranscriber:
         note_dir.mkdir()
         audio_path = note_dir / "audio.wav"
         audio_path.write_bytes(b"fake audio data")
-
-        metadata_content = {
-            "title": "Strategy Sync",
-            "date": "2025-01-01T12:00:00",
-        }
         with (note_dir / "meta.toml").open("wb") as fh:
-            tomli_w.dump(metadata_content, fh)
+            tomli_w.dump({"title": "Strategy Sync", "date": "2025-01-01T12:00:00"}, fh)
 
-        with patch("transcriber.whisper_transcriber.WhisperModel") as mock_model_cls:
-            mock_model_cls.return_value = mock_whisper_model
-            with (
-                patch.object(
-                    WhisperTranscriber, "_get_optimal_device", return_value="cpu"
-                ),
-                patch.object(
-                    WhisperTranscriber, "_get_compute_type", return_value="int8"
-                ),
-                patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
-            ):
-                transcriber = WhisperTranscriber(mock_settings)
-
-        result = transcriber.transcribe_file(audio_path)
+        with patch(MLX_IMPORT, return_value=mlx_module):
+            transcriber = WhisperTranscriber(mock_settings)
+            with patch.object(transcriber, "_detect_speech", return_value=[]):
+                result = transcriber.transcribe_file(audio_path)
 
         metadata = result["metadata"]
-
         assert metadata["meeting_name"] == "Strategy Sync"
         assert metadata["title"] == "Strategy Sync"
         assert metadata["duration"] == pytest.approx(5.0)
+        assert metadata["language"] == "en"
+        assert metadata["device"] == transcriber._get_optimal_device()
+        assert metadata["compute_type"] == "float16"
+        assert metadata["model_repo"] == "mlx-community/whisper-small"
         assert metadata["segment_count"] == 1
-        assert metadata["word_count"] == len(
-            ["This", "is", "a", "test", "transcription."]
-        )
+        assert metadata["word_count"] == 5
         assert metadata["recording_datetime"].startswith("2025-01-01T12:00:00")
         assert result["full_text"] == "This is a test transcription."
 
-    @patch("os.cpu_count")
-    @patch("platform.processor")
-    @patch("platform.system")
-    def test_transcribe_batch_processes_multiple_files(
-        self, mock_system, mock_processor, mock_cpu_count, mock_settings
-    ):
-        mock_system.return_value = "Darwin"
-        mock_processor.return_value = "Apple M1"
-        mock_cpu_count.return_value = 8
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
+    def test_transcribe_file_maps_word_timestamps(self, tmp_path, mock_settings):
+        audio_path = tmp_path / "20250101_120000_test.wav"
+        audio_path.write_bytes(b"fake audio data")
+        module = _make_mlx_module(
+            segments=[
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": " Hello world",
+                    "avg_logprob": -0.2,
+                    "no_speech_prob": 0.05,
+                    "words": [
+                        {
+                            "word": " Hello",
+                            "start": 0.0,
+                            "end": 0.5,
+                            "probability": 0.9,
+                        },
+                        {
+                            "word": " world",
+                            "start": 0.5,
+                            "end": 1.0,
+                            "probability": 0.8,
+                        },
+                    ],
+                }
+            ]
+        )
+
+        with patch(MLX_IMPORT, return_value=module):
             transcriber = WhisperTranscriber(mock_settings)
+            with patch.object(transcriber, "_detect_speech", return_value=[]):
+                result = transcriber.transcribe_file(audio_path)
 
-            test_files = [Path("file1.wav"), Path("file2.wav")]
+        words = result["segments"][0]["words"]
+        assert [w["word"] for w in words] == [" Hello", " world"]
+        assert words[0]["probability"] == 0.9
 
-            with patch.object(transcriber, "transcribe_file") as mock_transcribe:
-                mock_transcribe.return_value = {"success": True, "filename": "test.wav"}
+    def test_transcribe_batch_processes_multiple_files(self, transcriber):
+        test_files = [Path("file1.wav"), Path("file2.wav")]
+        with patch.object(transcriber, "transcribe_file") as mock_transcribe:
+            mock_transcribe.return_value = {"success": True, "filename": "test.wav"}
+            results = transcriber.transcribe_batch(test_files)
 
-                results = transcriber.transcribe_batch(test_files)
+        assert len(results) == 2
+        assert mock_transcribe.call_count == 2
 
-                assert len(results) == 2
-                assert mock_transcribe.call_count == 2
+    def test_transcribe_batch_handles_individual_file_errors(self, transcriber):
+        test_files = [Path("file1.wav"), Path("file2.wav")]
+        with patch.object(transcriber, "transcribe_file") as mock_transcribe:
+            mock_transcribe.side_effect = [
+                {"success": True, "filename": "file1.wav"},
+                Exception("File processing failed"),
+            ]
+            results = transcriber.transcribe_batch(test_files)
 
-    @patch("os.cpu_count")
-    @patch("platform.processor")
-    @patch("platform.system")
-    def test_transcribe_batch_handles_individual_file_errors(
-        self, mock_system, mock_processor, mock_cpu_count, mock_settings
-    ):
-        mock_system.return_value = "Darwin"
-        mock_processor.return_value = "Apple M1"
-        mock_cpu_count.return_value = 8
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
+        assert len(results) == 2
+        assert results[0]["success"] is True
+        assert results[1]["success"] is False
+        assert results[1]["error"] == "File processing failed"
+        assert results[1]["filename"] == "file2.wav"
 
-            test_files = [Path("file1.wav"), Path("file2.wav")]
+    def test_get_model_info_returns_configuration(self, transcriber):
+        info = transcriber.get_model_info()
+        assert info["model_name"] == "small"
+        assert info["model_repo"] == "mlx-community/whisper-small"
+        assert info["device"] == transcriber._get_optimal_device()
+        assert info["compute_type"] == "float16"
+        assert info["loaded"] is True
 
-            with patch.object(transcriber, "transcribe_file") as mock_transcribe:
-                mock_transcribe.side_effect = [
-                    {"success": True, "filename": "file1.wav"},
-                    Exception("File processing failed"),
-                ]
+    def test_get_model_info_when_model_not_loaded(self, transcriber):
+        transcriber.model = None
+        assert transcriber.get_model_info()["loaded"] is False
 
-                results = transcriber.transcribe_batch(test_files)
-
-                assert len(results) == 2
-                assert results[0]["success"] is True
-                assert results[1]["success"] is False
-                assert results[1]["error"] == "File processing failed"
-                assert results[1]["filename"] == "file2.wav"
-
-    def test_get_model_info_returns_configuration(self, mock_settings):
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            with patch.object(
-                WhisperTranscriber, "_get_optimal_device", return_value="cpu"
-            ):
-                with patch.object(
-                    WhisperTranscriber, "_get_compute_type", return_value="int8"
-                ):
-                    with patch.object(
-                        WhisperTranscriber, "_get_cpu_threads", return_value=4
-                    ):
-                        transcriber = WhisperTranscriber(mock_settings)
-
-                        info = transcriber.get_model_info()
-
-                        assert info["model_name"] == "small"
-                        assert info["device"] == "cpu"
-                        assert info["compute_type"] == "int8"
-                        assert info["cpu_threads"] == 4
-                        assert info["loaded"] is True
-
-    @patch("os.cpu_count")
-    @patch("platform.processor")
-    @patch("platform.system")
-    def test_get_model_info_when_model_not_loaded(
-        self, mock_system, mock_processor, mock_cpu_count, mock_settings
-    ):
-        mock_system.return_value = "Darwin"
-        mock_processor.return_value = "Apple M1"
-        mock_cpu_count.return_value = 8
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-            transcriber.model = None
-
-            info = transcriber.get_model_info()
-
-            assert info["loaded"] is False
-
-    def test_read_audio_metadata_file_exists(self, tmp_path, mock_settings):
+    def test_read_audio_metadata_file_exists(self, tmp_path, transcriber):
         import tomli_w
 
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
+        note_dir = tmp_path / "test-2025-09-17"
+        note_dir.mkdir()
+        audio_path = note_dir / "audio.wav"
+        audio_path.write_bytes(b"")
+        test_metadata = {"title": "Test Meeting Title", "date": "2025-09-17T14:30:00"}
+        with (note_dir / "meta.toml").open("wb") as fh:
+            tomli_w.dump(test_metadata, fh)
+
+        result = transcriber._read_audio_metadata(audio_path)
+        assert result == test_metadata
+
+    def test_read_audio_metadata_file_not_exists(self, transcriber):
+        with patch.object(Path, "exists", return_value=False):
+            assert transcriber._read_audio_metadata(Path("test_audio.wav")) is None
+
+    def test_vad_disabled_passes_whole_file(self, tmp_path, mock_settings, mlx_module):
+        mock_settings.audio.vad_enabled = False
+        audio_path = tmp_path / "20250101_120000_test.wav"
+        audio_path.write_bytes(b"fake audio data")
+
+        with patch(MLX_IMPORT, return_value=mlx_module):
             transcriber = WhisperTranscriber(mock_settings)
+            transcriber.transcribe_file(audio_path)
 
-            note_dir = tmp_path / "test-2025-09-17"
-            note_dir.mkdir()
-            audio_path = note_dir / "audio.wav"
-            audio_path.write_bytes(b"")
-            test_metadata = {
-                "title": "Test Meeting Title",
-                "date": "2025-09-17T14:30:00",
-            }
-            with (note_dir / "meta.toml").open("wb") as fh:
-                tomli_w.dump(test_metadata, fh)
+        assert mlx_module.transcribe.call_args.kwargs["clip_timestamps"] == "0"
 
-            result = transcriber._read_audio_metadata(audio_path)
-
-            assert result == test_metadata
-            assert result["title"] == "Test Meeting Title"
-
-    def test_read_audio_metadata_file_not_exists(self, mock_settings):
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-
-            test_audio_file = Path("test_audio.wav")
-
-            with patch.object(Path, "exists", return_value=False):
-                result = transcriber._read_audio_metadata(test_audio_file)
-
-                assert result is None
-
-    def test_read_audio_metadata_file_corrupted(self, mock_settings):
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-
-            test_audio_file = Path("test_audio.wav")
-
-            with patch("builtins.open", create=True):
-                with patch("json.load", side_effect=Exception("JSON decode error")):
-                    with patch.object(Path, "exists", return_value=True):
-                        result = transcriber._read_audio_metadata(test_audio_file)
-
-                        assert result is None
-
-    def test_metadata_includes_title_when_provided(self, mock_settings):
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-
-            test_metadata = {
-                "title": "Important Meeting",
-                "recorded_at": "2025-09-17T14:30:00",
-            }
-
-            with patch.object(
-                transcriber, "_read_audio_metadata", return_value=test_metadata
-            ):
-                metadata = transcriber._read_audio_metadata(Path("test.wav"))
-                assert metadata["title"] == "Important Meeting"
-
-    def test_metadata_returns_none_when_no_title(self, mock_settings):
-        with patch("transcriber.whisper_transcriber.WhisperModel"):
-            transcriber = WhisperTranscriber(mock_settings)
-
-            with patch.object(transcriber, "_read_audio_metadata", return_value=None):
-                metadata = transcriber._read_audio_metadata(Path("test.wav"))
-                assert metadata is None
-
-    def test_transcribe_passes_vad_parameters(
-        self, mock_settings, mock_whisper_model, tmp_path
+    def test_vad_speech_regions_become_clip_timestamps(
+        self, tmp_path, mock_settings, mlx_module
     ):
         audio_path = tmp_path / "20250101_120000_test.wav"
         audio_path.write_bytes(b"fake audio data")
 
-        with (
-            patch(
-                "transcriber.whisper_transcriber.WhisperModel",
-                return_value=mock_whisper_model,
-            ),
-            patch.object(WhisperTranscriber, "_get_optimal_device", return_value="cpu"),
-            patch.object(WhisperTranscriber, "_get_compute_type", return_value="int8"),
-            patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
-        ):
+        with patch(MLX_IMPORT, return_value=mlx_module):
+            transcriber = WhisperTranscriber(mock_settings)
+            # 1.0s-3.0s of speech at 16 kHz.
+            with patch.object(
+                transcriber,
+                "_detect_speech",
+                return_value=[{"start": 16000, "end": 48000}],
+            ):
+                transcriber.transcribe_file(audio_path)
+
+        assert mlx_module.transcribe.call_args.kwargs["clip_timestamps"] == [1.0, 3.0]
+
+    def test_vad_no_speech_falls_back_to_whole_file(
+        self, tmp_path, mock_settings, mlx_module
+    ):
+        audio_path = tmp_path / "20250101_120000_test.wav"
+        audio_path.write_bytes(b"fake audio data")
+
+        with patch(MLX_IMPORT, return_value=mlx_module):
+            transcriber = WhisperTranscriber(mock_settings)
+            with patch.object(transcriber, "_detect_speech", return_value=[]):
+                transcriber.transcribe_file(audio_path)
+
+        assert mlx_module.transcribe.call_args.kwargs["clip_timestamps"] == "0"
+
+    def test_detect_speech_passes_vad_parameters(self, mock_settings, mlx_module):
+        with patch(MLX_IMPORT, return_value=mlx_module):
             transcriber = WhisperTranscriber(mock_settings)
 
-        transcriber.transcribe_file(audio_path)
+        get_speech_timestamps = Mock(return_value=[{"start": 0, "end": 16000}])
+        with patch.dict(
+            "sys.modules",
+            {
+                "silero_vad": Mock(
+                    get_speech_timestamps=get_speech_timestamps,
+                    load_silero_vad=Mock(return_value=Mock()),
+                ),
+                "torch": Mock(),
+            },
+        ):
+            transcriber._detect_speech(np.zeros(16000, dtype=np.float32))
 
-        mock_whisper_model.transcribe.assert_called_once()
-        call_kwargs = mock_whisper_model.transcribe.call_args[1]
-        assert call_kwargs["vad_filter"] is True
-        assert call_kwargs["vad_parameters"] == {
-            "threshold": 0.5,
-            "min_speech_duration_ms": 250,
-            "min_silence_duration_ms": 1000,
-            "max_speech_duration_s": 30,
-            "speech_pad_ms": 300,
-        }
+        call_kwargs = get_speech_timestamps.call_args.kwargs
+        assert call_kwargs["sampling_rate"] == 16000
+        assert call_kwargs["threshold"] == 0.5
+        assert call_kwargs["min_speech_duration_ms"] == 250
+        assert call_kwargs["speech_pad_ms"] == 300
 
     def test_model_load_failure_raises_typed_actionable_error(self, mock_settings):
         from chirp.exceptions import WhisperModelLoadError
 
-        with (
-            patch(
-                "transcriber.whisper_transcriber.WhisperModel",
-                side_effect=OSError("connection reset"),
-            ),
-            patch.object(WhisperTranscriber, "_get_optimal_device", return_value="cpu"),
-            patch.object(WhisperTranscriber, "_get_compute_type", return_value="int8"),
-            patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
-        ):
+        module = _make_mlx_module()
+        module.load_models.load_model.side_effect = OSError("connection reset")
+        with patch(MLX_IMPORT, return_value=module):
             with pytest.raises(WhisperModelLoadError) as excinfo:
                 WhisperTranscriber(mock_settings)
 
         message = str(excinfo.value)
         assert "Whisper model" in message
-        assert "small" in message
+        assert "mlx-community/whisper-small" in message
         assert isinstance(excinfo.value.__cause__, OSError)
 
-    def test_close_is_idempotent_and_nulls_model(self, mock_settings):
-        with (
-            patch(
-                "transcriber.whisper_transcriber.WhisperModel",
-                return_value=Mock(),
-            ),
-            patch.object(WhisperTranscriber, "_get_optimal_device", return_value="cpu"),
-            patch.object(WhisperTranscriber, "_get_compute_type", return_value="int8"),
-            patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
-        ):
+    def test_close_is_idempotent_and_nulls_model(self, mock_settings, mlx_module):
+        with patch(MLX_IMPORT, return_value=mlx_module):
             transcriber = WhisperTranscriber(mock_settings)
 
         assert transcriber.model is not None
         transcriber.close()
         transcriber.close()
         assert transcriber.model is None
-
-    def test_get_model_info_reports_cpu_int8_on_darwin(self, mock_settings):
-        with (
-            patch(
-                "transcriber.whisper_transcriber.WhisperModel",
-                return_value=Mock(),
-            ),
-            patch(
-                "transcriber.whisper_transcriber.platform.system", return_value="Darwin"
-            ),
-            patch.object(WhisperTranscriber, "_get_cpu_threads", return_value=4),
-        ):
-            transcriber = WhisperTranscriber(mock_settings)
-            info = transcriber.get_model_info()
-
-        assert info["device"] == "cpu"
-        assert info["compute_type"] == "int8"
+        assert transcriber._vad_model is None
