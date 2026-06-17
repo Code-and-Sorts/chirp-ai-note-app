@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 
 def test_cli_import_does_not_load_heavy_dependencies():
-    """Verify that importing chirp.cli does not trigger heavy module imports (pyaudio, faster_whisper, chromadb, torch)."""
-    heavy_modules = {"pyaudio", "faster_whisper", "chromadb", "torch"}
+    """Verify that importing chirp.cli does not trigger heavy module imports (pyaudio, mlx_whisper, chromadb, torch)."""
+    heavy_modules = {"pyaudio", "mlx_whisper", "chromadb", "torch"}
 
     with patch.dict(sys.modules, sys.modules.copy(), clear=True):
         if "chirp.cli" in sys.modules:

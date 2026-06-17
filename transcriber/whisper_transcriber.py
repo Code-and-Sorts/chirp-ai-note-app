@@ -6,65 +6,70 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from faster_whisper import WhisperModel
-
 from chirp.exceptions import WhisperModelLoadError
 from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
 from utils.file_utils import META_FILENAME, get_file_size_mb
 from utils.time_utils import derive_recording_id, parse_timestamp_from_filename
 
+logger = logging.getLogger(__name__)
+
+SAMPLE_RATE = 16000
+
+_MLX_MODEL_REPOS = {
+    "tiny": "mlx-community/whisper-tiny",
+    "base": "mlx-community/whisper-base",
+    "small": "mlx-community/whisper-small",
+    "medium": "mlx-community/whisper-medium",
+    "large-v2": "mlx-community/whisper-large-v2",
+    "large-v3": "mlx-community/whisper-large-v3",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
+
+
+def _resolve_model_repo(name: str) -> str:
+    if "/" in name:
+        return name
+    return _MLX_MODEL_REPOS.get(name, name)
+
+
+def _import_mlx_whisper():
+    # Imported lazily: mlx-whisper only installs on macOS arm64, so a top-level
+    # import would break imports/tests on every other platform.
+    import mlx_whisper
+    import mlx_whisper.audio
+    import mlx_whisper.load_models
+
+    return mlx_whisper
+
 
 class WhisperTranscriber:
     def __init__(self, settings: ChirpSettings):
         self.settings = settings
         self.model = None
+        self._vad_model = None
+        self.model_repo = _resolve_model_repo(settings.models.whisper)
         self._load_model()
 
     def _load_model(self):
-        device = self._get_optimal_device()
-        compute_type = self._get_compute_type()
-        model_name = self.settings.models.whisper
-
+        mlx_whisper = _import_mlx_whisper()
         try:
-            self.model = WhisperModel(
-                model_name,
-                device=device,
-                compute_type=compute_type,
-                cpu_threads=self._get_cpu_threads(),
-            )
+            # Load eagerly so an invalid model name fails fast here rather than
+            # on the first transcribe() call.
+            self.model = mlx_whisper.load_models.load_model(self.model_repo)
         except Exception as exc:
             raise WhisperModelLoadError(
-                f"Could not download or load the Whisper model {model_name!r}. "
+                f"Could not download or load the Whisper model {self.model_repo!r}. "
                 "Check your network connection and free disk space, then retry. "
                 "If the problem persists, set a valid model name in your config "
                 f"(models.whisper). Underlying error: {exc}"
             ) from exc
 
     def _get_optimal_device(self) -> str:
-        # chirp targets macOS only (epic-audio-capture decision 1), where
-        # faster-whisper runs on CPU. The non-Darwin branch is an unexercised
-        # portability hint, not a GPU-acceleration promise.
-        if platform.system() == "Darwin":
-            return "cpu"
-        try:
-            import torch
-
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except ImportError:
-            return "cpu"
+        return "mlx" if platform.system() == "Darwin" else "cpu"
 
     def _get_compute_type(self) -> str:
-        # int8 on CPU (the macOS path); float16 only on the unexercised CUDA branch.
-        return "int8" if self._get_optimal_device() == "cpu" else "float16"
-
-    def _get_cpu_threads(self) -> int:
-        import os
-
-        cpu_count = os.cpu_count()
-        if cpu_count and cpu_count >= 8:
-            return max(4, cpu_count - 2)
-        return max(1, cpu_count // 2) if cpu_count else 1
+        return "float16"
 
     def transcribe_file(
         self,
@@ -79,6 +84,7 @@ class WhisperTranscriber:
         if not self.model:
             raise RuntimeError("Whisper model not loaded")
 
+        mlx_whisper = _import_mlx_whisper()
         start_time = datetime.now()
         audio_metadata = self._read_audio_metadata(audio_file_path)
         recording_datetime = self._get_recording_datetime(
@@ -89,63 +95,61 @@ class WhisperTranscriber:
         device = self._get_optimal_device()
         compute_type = self._get_compute_type()
 
+        # mlx-whisper has no beam search (it raises NotImplementedError), so the
+        # fast/normal split is driven by word timestamps and hallucination
+        # filtering rather than beam_size.
         if fast_mode:
-            beam_size = 1
-            best_of = 1
             word_timestamps = False
             hallucination_silence_threshold = None
         else:
-            beam_size = 5
-            best_of = 5
             word_timestamps = True
             hallucination_silence_threshold = 2.0
 
         try:
-            vad_enabled = self.settings.audio.vad_enabled
-            vad_params = (
-                self.settings.audio.vad_parameters.model_dump() if vad_enabled else None
-            )
+            audio = mlx_whisper.audio.load_audio(str(audio_file_path))
+            duration = len(audio) / SAMPLE_RATE
 
-            segments, info = self.model.transcribe(
-                str(audio_file_path),
-                beam_size=beam_size,
-                best_of=best_of,
+            # mlx-whisper has no built-in VAD. We feed silero-detected speech
+            # regions via clip_timestamps so silence is skipped while segment
+            # timestamps stay in the original recording's timeline.
+            clip_timestamps = self._speech_clip_timestamps(audio)
+
+            result = mlx_whisper.transcribe(
+                audio,
+                path_or_hf_repo=self.model_repo,
                 language=language,
-                condition_on_previous_text=False,
                 temperature=0.0,
+                condition_on_previous_text=False,
                 compression_ratio_threshold=2.4,
-                log_prob_threshold=-1.0,
+                logprob_threshold=-1.0,
                 no_speech_threshold=0.6,
                 initial_prompt=None,
-                vad_filter=vad_enabled,
-                vad_parameters=vad_params,
                 word_timestamps=word_timestamps,
                 hallucination_silence_threshold=hallucination_silence_threshold,
-                repetition_penalty=1.0,
-                no_repeat_ngram_size=0,
+                clip_timestamps=clip_timestamps,
             )
 
             transcript_segments: list[dict[str, Any]] = []
             transcript_text_parts: list[str] = []
 
-            for segment in segments:
-                segment_text = segment.text.strip()
+            for segment in result.get("segments", []):
+                segment_text = (segment.get("text") or "").strip()
                 segment_data = {
-                    "start": segment.start,
-                    "end": segment.end,
+                    "start": segment.get("start"),
+                    "end": segment.get("end"),
                     "text": segment_text,
-                    "avg_logprob": segment.avg_logprob,
-                    "no_speech_prob": segment.no_speech_prob,
+                    "avg_logprob": segment.get("avg_logprob"),
+                    "no_speech_prob": segment.get("no_speech_prob"),
                 }
-                if word_timestamps and hasattr(segment, "words") and segment.words:
+                if word_timestamps and segment.get("words"):
                     segment_data["words"] = [
                         {
-                            "word": word.word,
-                            "start": word.start,
-                            "end": word.end,
-                            "probability": word.probability,
+                            "word": word.get("word"),
+                            "start": word.get("start"),
+                            "end": word.get("end"),
+                            "probability": word.get("probability"),
                         }
-                        for word in segment.words
+                        for word in segment["words"]
                     ]
                 transcript_segments.append(segment_data)
                 if segment_text:
@@ -155,7 +159,7 @@ class WhisperTranscriber:
                     try:
                         on_segment(segment_data)
                     except Exception as exc:  # noqa: BLE001 - arbitrary user callback
-                        logging.getLogger(__name__).warning(
+                        logger.warning(
                             "on_segment callback failed: %s", exc, exc_info=True
                         )
 
@@ -167,9 +171,7 @@ class WhisperTranscriber:
             word_count = len(full_text.split()) if full_text else 0
             character_count = len(full_text)
             recording_completed_at = (
-                recording_datetime + timedelta(seconds=info.duration)
-                if info.duration
-                else None
+                recording_datetime + timedelta(seconds=duration) if duration else None
             )
 
             metadata = {
@@ -187,14 +189,15 @@ class WhisperTranscriber:
                 "recorded_at": recording_datetime.isoformat()
                 if recording_datetime
                 else None,
-                "recording_length_seconds": info.duration,
-                "duration": info.duration,
-                "language": info.language,
-                "language_probability": info.language_probability,
+                "recording_length_seconds": duration,
+                "duration": duration,
+                "language": result.get("language"),
+                "language_probability": None,
                 "transcribed_at": transcribed_at,
                 "transcription_time": processing_time,
                 "transcription_time_seconds": processing_time,
                 "model": self.settings.models.whisper,
+                "model_repo": self.model_repo,
                 "device": device,
                 "compute_type": compute_type,
                 "file_size_mb": get_file_size_mb(audio_file_path),
@@ -241,6 +244,48 @@ class WhisperTranscriber:
                 "error": str(e),
             }
 
+    def _speech_clip_timestamps(self, audio) -> str | list[float]:
+        """Build mlx-whisper clip_timestamps from a silero VAD pass.
+
+        Returns the sentinel ``"0"`` (whole-file) when VAD is disabled or no
+        speech is detected; otherwise a flat ``[start, end, start, end, ...]``
+        list of speech regions in seconds.
+        """
+        if not self.settings.audio.vad_enabled:
+            return "0"
+
+        timestamps = self._detect_speech(audio)
+        if not timestamps:
+            return "0"
+
+        clips: list[float] = []
+        for region in timestamps:
+            clips.append(region["start"] / SAMPLE_RATE)
+            clips.append(region["end"] / SAMPLE_RATE)
+        return clips
+
+    def _detect_speech(self, audio) -> list[dict[str, int]]:
+        import torch
+        from silero_vad import get_speech_timestamps
+
+        model = self._load_vad_model()
+        params = self.settings.audio.vad_parameters.model_dump()
+        audio_tensor = torch.from_numpy(audio)
+        timestamps: list[dict[str, int]] = get_speech_timestamps(
+            audio_tensor,
+            model,
+            sampling_rate=SAMPLE_RATE,
+            **params,
+        )
+        return timestamps
+
+    def _load_vad_model(self):
+        if self._vad_model is None:
+            from silero_vad import load_silero_vad
+
+            self._vad_model = load_silero_vad()
+        return self._vad_model
+
     def transcribe_batch(self, audio_files: list[Path]) -> list[dict[str, Any]]:
         results = []
 
@@ -284,9 +329,9 @@ class WhisperTranscriber:
     def get_model_info(self) -> dict[str, Any]:
         return {
             "model_name": self.settings.models.whisper,
+            "model_repo": self.model_repo,
             "device": self._get_optimal_device(),
             "compute_type": self._get_compute_type(),
-            "cpu_threads": self._get_cpu_threads(),
             "loaded": self.model is not None,
         }
 
@@ -334,9 +379,13 @@ class WhisperTranscriber:
         return DEFAULT_MEETING_NAME
 
     def close(self) -> None:
-        """Release the loaded CTranslate2 model. Idempotent."""
-        if getattr(self, "model", None) is not None:
-            self.model = None
+        """Drop references to the loaded models. Idempotent.
+
+        mlx-whisper keeps its own module-level LRU cache of the converted model;
+        clearing our reference is the contract this class can honor.
+        """
+        self.model = None
+        self._vad_model = None
 
     def __del__(self):
         self.close()
