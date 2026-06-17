@@ -118,7 +118,7 @@ async def test_protocol_version_mismatch_returns_mismatch_and_daemon_exits(
             try:
                 await writer.wait_closed()
             except (ConnectionResetError, BrokenPipeError, OSError):
-                # Best-effort teardown: the writer/peer may already be gone.
+                # best-effort teardown
                 pass
 
     await asyncio.wait_for(running_server, timeout=1.0)
@@ -178,7 +178,7 @@ async def test_hello_with_mismatched_version_returns_version_mismatch_and_daemon
             try:
                 await writer.wait_closed()
             except (ConnectionResetError, BrokenPipeError, OSError):
-                # Best-effort teardown: the writer/peer may already be gone.
+                # best-effort teardown
                 pass
 
     await asyncio.wait_for(running_server, timeout=1.0)
@@ -227,7 +227,7 @@ async def test_override_socket_parent_created_0700_and_socket_0600() -> None:
 
     from chirpd.server import serve
 
-    # A short base dir under /tmp keeps the AF_UNIX path under the ~104-byte cap.
+    # Short /tmp base keeps the AF_UNIX path under the ~104-byte cap.
     base = Path(tempfile.mkdtemp(prefix="cd9-", dir="/tmp"))
     parent = base / "p"
     override_socket = parent / "s"
@@ -249,7 +249,7 @@ async def test_override_socket_parent_created_0700_and_socket_0600() -> None:
         try:
             await asyncio.wait_for(task, timeout=1.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
         shutil.rmtree(base, ignore_errors=True)
 
@@ -352,13 +352,13 @@ async def test_handle_connection_safety_net_swallows_unexpected_exceptions(
             try:
                 await writer.wait_closed()
             except (ConnectionResetError, BrokenPipeError, OSError):
-                # Best-effort teardown: the writer/peer may already be gone.
+                # best-effort teardown
                 pass
         task.cancel()
         try:
             await asyncio.wait_for(task, timeout=1.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 

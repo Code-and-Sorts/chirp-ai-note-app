@@ -280,7 +280,7 @@ class TestSearchChroma:
 
         time_range = parse_time_range("meetings", when_arg="on:2025-01-15")
         assert time_range is not None
-        # The real TimeRange is tz-aware (built from datetime.now(tzlocal())).
+        # The real TimeRange is tz-aware (datetime.now(tzlocal())).
         assert time_range.start.tzinfo is not None
 
         manager = MagicMock()
@@ -300,7 +300,7 @@ class TestSearchChroma:
         gte = where["$and"][0]["date"]["$gte"]
         lt = where["$and"][1]["date"]["$lt"]
 
-        # Stored date shape: naive isoformat, no "+HH:MM"/"Z" tz offset.
+        # Stored date is a naive isoformat: no "+HH:MM"/"Z" offset.
         stored_meta = NoteMeta(
             path=Path("/n/slug/notes.md"),
             title="t",
@@ -324,7 +324,6 @@ class TestSearchChroma:
         for bound in (gte, lt, stored_date):
             assert "+" not in bound
             assert not bound.endswith("Z")
-        # And the bound actually brackets the meeting date.
         assert gte <= "2025-01-15T12:00:00" < lt
 
     def test_returns_empty_on_exception(self):

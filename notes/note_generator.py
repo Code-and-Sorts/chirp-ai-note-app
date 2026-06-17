@@ -17,13 +17,10 @@ from utils.popup_manager import PopupManager
 
 logger = logging.getLogger(__name__)
 
-# Upper bound on transcript characters injected into the generation prompt. Only
-# the model's OUTPUT was bounded before (num_predict), so a long transcript was
-# silently truncated mid-generation. We window the INPUT and warn instead.
+# Bounds the prompt INPUT, not just num_predict (the OUTPUT): an unbounded
+# transcript was silently truncated mid-generation, so window it and warn.
 MAX_TRANSCRIPT_CHARS = 24000
 
-# How many times to retry structured generation when the model's output can't be
-# parsed into the canonical XML before giving up and marking the note degraded.
 MAX_PARSE_ATTEMPTS = 2
 
 SYSTEM_PROMPT = """You are Chirp, the user's meeting note co-pilot.
@@ -235,8 +232,8 @@ class NoteGenerator:
             transcript_text, provided_title
         )
         if not structured_notes:
-            # Degraded result: the model never produced parseable notes. Do NOT
-            # write or auto-index — a junk note would later poison `ask` (AC-12).
+            # Never write or auto-index unparsable output — a junk note would
+            # later poison `ask` (AC-12).
             self.console.print(
                 f"[red]Could not generate structured notes for {record.slug}; "
                 "skipping (not written, not indexed).[/red]"
@@ -375,9 +372,8 @@ Transcript:
 
 Return ONLY the XML document, no additional text before or after."""
 
-        # Retry once on an unparsable response before giving up. A persistent
-        # parse failure returns None so _generate_for_record skips writing and
-        # indexing a junk note (AC-12).
+        # Returns None on persistent parse failure so the caller skips writing
+        # and indexing a junk note (AC-12).
         for attempt in range(1, MAX_PARSE_ATTEMPTS + 1):
             try:
                 response = self._call_llm(prompt)
@@ -438,8 +434,8 @@ Return ONLY the XML document, no additional text before or after."""
                 xml_start = response.find("<MEETING_NOTES>")
 
             if xml_start == -1:
-                # No structured XML at all — signal a parse failure so the caller
-                # can retry/degrade rather than persisting a junk note (AC-12).
+                # No XML: signal parse failure so the caller retries/degrades
+                # rather than persisting a junk note (AC-12).
                 return None
 
             xml_content = response[xml_start:]
@@ -502,8 +498,7 @@ Return ONLY the XML document, no additional text before or after."""
             }
 
         except ET.ParseError:
-            # Malformed XML — let the caller retry/degrade instead of writing a
-            # junk note built from the unparsable response (AC-12).
+            # Malformed XML: let the caller retry/degrade, never write it (AC-12).
             return None
         except (AttributeError, KeyError, TypeError, ValueError):
             return None
@@ -518,9 +513,8 @@ Return ONLY the XML document, no additional text before or after."""
             from notes_chat.index import IndexManager
 
             index_manager = IndexManager(self.settings)
-            # Same embed-fingerprint guard as the explicit build: detect an
-            # embed-model change before appending mismatched vectors, instead of
-            # silently corrupting the index through the auto-index back door.
+            # Guard the auto-index back door too: catch an embed-model change
+            # before appending mismatched vectors corrupts the index.
             index_manager._ensure_embed_fingerprint()
             success = index_manager._add_to_index(notes_path)
 
@@ -533,11 +527,11 @@ Return ONLY the XML document, no additional text before or after."""
                     manifest[file_path] = current_files[file_path]
                     index_manager._save_manifest(manifest)
 
-                # Append only this note's chunks rather than re-tokenizing the
-                # whole corpus, so a burst of saves stays O(note) per save.
+                # Append only this note's chunks, not the whole corpus, so a
+                # burst of saves stays O(note) per save.
                 index_manager.append_bm25_for_file(file_path)
-                # Stamp the fingerprint on a fresh (auto-index-only) corpus so a
-                # later model change is detectable.
+                # Stamp a fresh auto-index-only corpus so a later model change
+                # is detectable.
                 index_manager._stamp_fingerprint_if_missing()
 
                 self.console.print(

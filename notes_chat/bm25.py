@@ -7,12 +7,9 @@ from rank_bm25 import BM25Okapi
 
 logger = logging.getLogger(__name__)
 
-# Process-local cache of the constructed BM25 model keyed by the bm25.json path,
-# invalidated on (mtime, size) change. `chirp ask` constructs a `BM25Index` per
-# query (retrieval.py); without this, every query re-reads the JSON, re-tokenizes
-# the whole corpus, and rebuilds `BM25Okapi` — O(corpus) work that scales badly
-# on a real (~5k note) corpus. A cheap stat fingerprint lets an unchanged index
-# skip all of it.
+# Process-local BM25 model cache keyed by bm25.json path, invalidated on
+# (mtime, size). `chirp ask` builds a BM25Index per query; without this each
+# query re-tokenizes and rebuilds BM25Okapi — O(corpus) on a ~5k-note corpus.
 _MODEL_CACHE: dict[
     str, tuple[tuple[float, int], "BM25Okapi", list[str], list[list[str]]]
 ] = {}
@@ -140,8 +137,8 @@ def rebuild_bm25_index(chroma_collection, bm25_file: Path):
         with bm25_file.open("w") as f:
             json.dump(bm25_data, f, indent=2)
 
-        # Drop the stale cached model so the next query rebuilds from the new file
-        # even if the rewrite landed within the filesystem's mtime resolution.
+        # Drop the cached model: the rewrite may land within the filesystem's
+        # mtime resolution, so the fingerprint alone wouldn't invalidate it.
         _MODEL_CACHE.pop(str(bm25_file), None)
 
     except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes
@@ -189,7 +186,7 @@ def append_bm25_index(
     for doc_id, corpus_entry in zip(existing_ids, existing_corpus, strict=False):
         if doc_id in incoming:
             continue
-        # Drop ghost ids for this note (a chunk that vanished on re-chunk).
+        # Drop ghost ids: a chunk that vanished when this note was re-chunked.
         if stale_id_prefix is not None and doc_id.startswith(stale_id_prefix):
             continue
         merged_ids.append(doc_id)

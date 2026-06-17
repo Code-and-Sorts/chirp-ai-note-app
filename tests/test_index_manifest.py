@@ -183,7 +183,7 @@ Test meeting content
         with (note_dir / "meta.toml").open("wb") as fh:
             tomli_w.dump({"title": "Weekly Standup", "date": "2025-01-15"}, fh)
 
-        # Touch notes.md to "today" so an mtime-derived date would be wrong.
+        # Touch notes.md to today so an mtime-derived date would be wrong.
         today = datetime.now().timestamp()
         os.utime(note_file, (today, today))
 
@@ -192,7 +192,7 @@ Test meeting content
 
         assert meta is not None
         assert meta.date.date() == datetime(2025, 1, 15).date()
-        assert meta.date.tzinfo is None  # naive local (matches where-clause shape)
+        assert meta.date.tzinfo is None
 
     def test_meeting_date_filter_round_trip(self, tmp_path):
         """`on:<meeting-date>` matches the note; `on:<mtime-day>` does not."""
@@ -242,15 +242,11 @@ Test meeting content
         stored = manager.collection.get(include=["metadatas"])
         ids = stored["ids"]
 
-        # Both notes' chunks survive: count == total chunks across both notes,
-        # and the chunk ids carry both slugs (slugs are kebab-case, so they show
-        # up verbatim as the id prefix).
         assert len(ids) >= 2
-        assert len(ids) == len(set(ids))  # all ids unique (no collision)
+        assert len(ids) == len(set(ids))
         assert any(chunk_id.startswith("alpha-sync-2025-01-15_") for chunk_id in ids)
         assert any(chunk_id.startswith("beta-review-2025-02-10_") for chunk_id in ids)
 
-        # And source attribution (path-derived slug) sees both notes.
         slugs_from_paths = {Path(m["path"]).parent.name for m in stored["metadatas"]}
         assert slugs_from_paths == {"alpha-sync-2025-01-15", "beta-review-2025-02-10"}
 
@@ -290,7 +286,7 @@ Test meeting content
         manifest_before = manager._load_manifest()
         assert manifest_before
 
-        # Simulate an interruption mid-rebuild: blow up inside the add loop.
+        # Fault-inject an interruption mid-rebuild: blow up inside the add loop.
         boom = IndexManager(config, llm_client=_FakeEmbedClient())
         original_add = boom._add_to_index
 
@@ -302,14 +298,13 @@ Test meeting content
         try:
             boom.build_index(force=True)
         except KeyboardInterrupt:
-            # Simulated ctrl-c mid-rebuild; the test asserts prior artifacts survive.
+            # simulated ctrl-c mid-rebuild
             pass
 
-        # The previous artifacts survive — the next reader is not broken.
         survivor = IndexManager(config)
         assert survivor.manifest_file.exists()
         assert survivor._load_manifest() == manifest_before
-        assert survivor.collection.get()["ids"]  # vectors still present
+        assert survivor.collection.get()["ids"]
 
     def test_embed_model_change_is_detected(self, tmp_path):
         """A changed embed fingerprint is detected on an incremental build.
@@ -325,8 +320,8 @@ Test meeting content
         manager._resolved_embed_alias = lambda: "bge-small"
         assert manager.build_index(force=True)["success"]
 
-        # The fingerprint now records "bge-small"; a later build resolving a
-        # different alias must detect the change.
+        # Fingerprint records "bge-small"; a later build with a different alias
+        # must detect the change.
         reopened = IndexManager(config, llm_client=_FakeEmbedClient())
         reopened._resolved_embed_alias = lambda: "nomic-embed"
         note_dir = tmp_path / "test-2026-04-20"

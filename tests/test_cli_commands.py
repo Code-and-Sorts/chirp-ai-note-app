@@ -51,7 +51,7 @@ class TestListNotes:
         runner, app = self._runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
-        # Empty-state message is a diagnostic → stderr (AC-1).
+        # Diagnostics go to stderr, data to stdout (AC-1).
         assert "No notes found" in result.stderr
 
     def test_list_notes_shows_title_from_header(self, tmp_path, monkeypatch):
@@ -59,7 +59,6 @@ class TestListNotes:
         runner, app = self._runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
-        # The table is data → stdout (AC-1).
         assert "Team Standup" in result.stdout
 
     def test_list_notes_shows_total_count(self, tmp_path, monkeypatch):
@@ -68,7 +67,6 @@ class TestListNotes:
         runner, app = self._runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
-        # The "N total" preamble is a diagnostic → stderr (AC-1).
         assert "2 total" in result.stderr
 
     def test_list_notes_shows_subcommand_hints(self, tmp_path, monkeypatch):
@@ -76,7 +74,6 @@ class TestListNotes:
         runner, app = self._runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
-        # Hint lines are diagnostics → stderr (AC-1); never on the data stream.
         assert "chirp notes view <id>" in result.stderr
         assert "chirp notes edit <id>" in result.stderr
         assert "chirp notes delete <id>" in result.stderr
@@ -192,7 +189,7 @@ class TestTranscribeCli:
         runner = CliRunner()
         result = runner.invoke(chirp.cli.app, ["transcribe", "--no-stream"])
         assert result.exit_code != 0
-        # Click usage errors land on stderr; result.output is the combined stream.
+        # result.output is the combined stream (Click usage errors hit stderr).
         assert "no such option" in result.output.lower() or result.exit_code == 2
 
 
@@ -430,7 +427,6 @@ class TestNotesDelete:
 
         result = runner.invoke(app, ["notes", "delete", "doomed", "--yes"])
         assert result.exit_code == 0
-        # Status message is a diagnostic → stderr (AC-1).
         assert "deleted" in result.stderr.lower()
         assert not (tmp_path / "doomed-2026-04-20").exists()
         assert "doomed-2026-04-20/notes.md" in captured.get("dropped", "")
@@ -551,7 +547,6 @@ class TestNotesReviewPatches:
 
         result = runner.invoke(app, ["notes"])
         assert result.exit_code == 0
-        # The table (and its em-dash tag cell) is data → stdout.
         assert "—" in result.stdout
 
     def test_empty_note_id_reports_not_found(self, tmp_path, monkeypatch):

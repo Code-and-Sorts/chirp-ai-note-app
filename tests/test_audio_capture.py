@@ -559,8 +559,7 @@ def test_check_permissions_raises_on_missing_keys(tmp_path: Path) -> None:
 
 
 def test_check_permissions_raises_actionable_error_on_timeout(tmp_path: Path) -> None:
-    # AC-7: a wedged helper must surface a typed, actionable error rather than
-    # letting a raw subprocess.TimeoutExpired escape to the callers.
+    # AC-7: a wedged helper surfaces a typed error, not a raw TimeoutExpired.
     from audio_capture import AudioCaptureStartTimeout, check_permissions
 
     fake_binary = tmp_path / "capture_audio"

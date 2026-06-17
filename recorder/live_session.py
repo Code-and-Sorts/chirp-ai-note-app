@@ -76,9 +76,8 @@ class LiveTranscriptionSession:
             debug_dir=self._debug_dir if self.debug else None,
         )
 
-        # Load/validate the Whisper model before opening capture. A download
-        # failure must surface as WhisperModelLoadError before the mic/screen
-        # helper is opened, never abort an already-capturing session.
+        # Load the model before opening capture so a download failure raises
+        # WhisperModelLoadError up front, never aborting a live session.
         self.transcriber = LiveTranscriber(
             settings=self.settings,
             chunk_queue=self.chunk_queue,
@@ -203,10 +202,9 @@ class LiveTranscriptionSession:
         if self.vad_chunker:
             self.vad_chunker.join(timeout=1)
         if self.transcriber:
-            # Join unbounded: the worker's final _maybe_transcribe(force=True)
-            # is a full CPU-int8 Whisper pass that can run for several seconds,
-            # and the exported segments must reflect it. Bounding this join
-            # would let export read a half-written transcript.
+            # Join unbounded: the worker's final force-transcribe is a full
+            # Whisper pass taking several seconds, and the export must reflect
+            # it. A bounded join would let export read a half-written transcript.
             self.transcriber.join()
 
     def stop(self):

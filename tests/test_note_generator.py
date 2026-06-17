@@ -218,7 +218,7 @@ class TestNoteGenerator:
                 result = generator._generate_structured_notes("a transcript")
 
         assert result is None
-        assert mock_llm.call_count == 2  # initial + one retry
+        assert mock_llm.call_count == 2
 
     def test_parse_failure_does_not_write_or_index_junk_note(
         self, mock_settings, tmp_path
@@ -246,8 +246,8 @@ class TestNoteGenerator:
 
         assert result["success"] is False
         assert result.get("degraded") is True
-        assert not (record.dir / "notes.md").exists()  # no junk note on disk
-        mock_index.assert_not_called()  # nothing poisons the index
+        assert not (record.dir / "notes.md").exists()
+        mock_index.assert_not_called()
 
     def test_long_transcript_is_windowed_with_warning(self, mock_settings):
         """A transcript past the cap is windowed (not silently truncated) (AC-11)."""
@@ -273,9 +273,7 @@ class TestNoteGenerator:
 
             sent_prompt = mock_llm.call_args.args[0]
 
-        # The transcript injected into the prompt is bounded by the cap.
         assert len(sent_prompt) < len(long_transcript)
-        # The user was warned about truncation.
         warned = any(
             "truncating" in str(call.args[0]).lower()
             for call in console.print.call_args_list

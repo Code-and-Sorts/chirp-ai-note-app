@@ -179,20 +179,17 @@ class TestBM25Append:
         )
         with bm25_file.open() as f:
             data = json.load(f)
-        # Other notes are untouched; this note is added.
         assert set(data["doc_ids"]) == {"beta_000", "alpha_000"}
 
     def test_append_purges_ghost_ids_on_shrink(self, tmp_path):
         """L3: a note shrinking from 3 chunks to 2 must not leave a ghost id."""
         bm25_file = tmp_path / "bm25.json"
-        # First save: 3 chunks for note "alpha".
         append_bm25_index(
             bm25_file,
             ["alpha_000", "alpha_001", "alpha_002"],
             ["chunk a", "chunk b", "chunk c"],
             stale_id_prefix="alpha_",
         )
-        # Re-save after an edit that produces only 2 chunks.
         append_bm25_index(
             bm25_file,
             ["alpha_000", "alpha_001"],
@@ -201,7 +198,6 @@ class TestBM25Append:
         )
         with bm25_file.open() as f:
             data = json.load(f)
-        # alpha_002 (the vanished chunk) is purged — no ghost.
         assert set(data["doc_ids"]) == {"alpha_000", "alpha_001"}
         assert "alpha_002" not in data["doc_ids"]
 
@@ -216,5 +212,5 @@ class TestBM25Append:
         append_bm25_index(bm25_file, ["alpha_000"], ["chunk a edited"])
         with bm25_file.open() as f:
             data = json.load(f)
-        # alpha_001/alpha_002 linger (self-heals on full rebuild).
+        # Ghosts linger by design without a prefix; a full rebuild purges them.
         assert "alpha_002" in data["doc_ids"]

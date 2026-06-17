@@ -44,9 +44,7 @@ async def serve(socket_path: Path, dispatcher: Dispatcher) -> None:
         await _handle_connection(reader, writer, dispatcher, shutdown_event)
 
     server = await _bind_with_restricted_umask(handle, socket_path)
-    # The umask above already keeps the bind from ever exposing group/other
-    # bits; the explicit chmod pins the mode to exactly 0600 (NFR-S2/SC-9)
-    # regardless of the caller's prior umask.
+    # Pin the mode to exactly 0600 (NFR-S2/SC-9) regardless of the caller's umask.
     socket_path.chmod(0o600)
     _logger.info("chirpd listening", extra={"op": "serve"})
 
@@ -81,13 +79,10 @@ async def _close_server(server: asyncio.base_events.Server) -> None:
 
 
 def _ensure_socket_parent(socket_path: Path) -> None:
-    # A CHIRP_DAEMON_SOCKET override may point at a parent that does not yet
-    # exist (or is not owner-only). Create and tighten it to 0700 so the socket
-    # is never reachable through a world-traversable directory — matching how
-    # ensure_runtime_dirs() treats APP_SUPPORT_DIR for the default path. On the
-    # default path the chmod is a harmless idempotent no-op (the dir is already
-    # 0700); keeping it unconditional means the override path needs no special
-    # casing and a hand-loosened default dir is re-tightened on startup.
+    # A CHIRP_DAEMON_SOCKET override may point at a parent that doesn't exist or
+    # isn't owner-only; create and tighten it to 0700 so the socket is never
+    # reachable through a world-traversable directory. Unconditional so the
+    # default path needs no special casing and a loosened dir is re-tightened.
     parent = socket_path.parent
     parent.mkdir(parents=True, exist_ok=True, mode=paths.RUNTIME_DIR_MODE)
     try:
@@ -99,13 +94,10 @@ def _ensure_socket_parent(socket_path: Path) -> None:
 async def _bind_with_restricted_umask(
     handle: Any, socket_path: Path
 ) -> asyncio.base_events.Server:
-    # Bind under a 0177 umask so the socket inode is created owner-only from the
-    # first instant, closing the sub-millisecond window between bind and the
-    # follow-up chmod(0600) during which a default umask could leave it
-    # group/other-reachable. os.umask is process-global and not thread-safe, but
-    # chirpd binds exactly once at startup on the single event loop before any
-    # work runs (chirpd/__main__.py: serve() is the only umask mutator), so the
-    # save/restore here cannot race another thread's umask.
+    # Bind under a 0177 umask so the inode is owner-only from the first instant,
+    # closing the bind→chmod(0600) window. os.umask is process-global and not
+    # thread-safe, but chirpd binds exactly once at startup on the single event
+    # loop before any work runs, so this save/restore cannot race.
     previous_umask = os.umask(0o177)
     try:
         return await asyncio.start_unix_server(
@@ -229,10 +221,9 @@ async def _handle_hello(
     daemon_protocol_version = dispatcher.protocol_version
     daemon_version = dispatcher.daemon_version
 
-    # The handshake gates on the wire-format PROTOCOL_VERSION, not the package
-    # version: a cosmetic package bump with an unchanged protocol keeps the warm
-    # daemon (and its multi-GB model) resident. ``daemon_version`` is still
-    # reported for human-facing diagnostics in ``chirp daemon status``.
+    # Gate on the wire-format PROTOCOL_VERSION, not the package version, so a
+    # cosmetic package bump keeps the warm daemon (and its multi-GB model)
+    # resident. daemon_version is still reported for human-facing diagnostics.
     if client_protocol_version == daemon_protocol_version:
         await _write_event(
             writer,

@@ -47,9 +47,8 @@ class OrderedCommandsGroup(TyperGroup):
         return ordered
 
     def get_params(self, ctx):
-        # Completion is enabled so the `chirp models` alias completers work, but
-        # the generated --install-completion / --show-completion meta-options are
-        # hidden to keep the top-level surface to the documented 7 commands.
+        # Hide the generated completion meta-options to keep the documented
+        # 7-command surface.
         params = super().get_params(ctx)
         for param in params:
             opts = set(getattr(param, "opts", [])) | set(
@@ -73,16 +72,10 @@ app = typer.Typer(
     cls=OrderedCommandsGroup,
 )
 
-# Diagnostics/prompts/errors go to stderr; data and rendered artifacts go to
-# stdout. ``console`` aliases the stderr console because the overwhelming
-# majority of legacy ``console.print`` sites are diagnostics; the handful of
-# data outputs (note tables, search results) print to ``stdout_console``
-# explicitly.
+# ``console`` aliases stderr: most ``console.print`` sites are diagnostics, and
+# data outputs (note tables, search results) print to ``stdout_console``.
 console = stderr_console
 
-# Shell completion is enabled (so the registered ``chirp models`` alias
-# completers are reachable), but the two generated meta-commands are hidden so
-# they don't bloat the documented 7-command surface.
 _COMPLETION_META_COMMANDS = frozenset(
     {
         "--install-completion",
@@ -100,7 +93,7 @@ def _version_callback(value: bool) -> None:
     if value:
         from chirp.about import installed_version
 
-        # Plain single line on stdout so `chirp --version` pipes cleanly.
+        # Plain stdout line so `chirp --version` pipes cleanly.
         print(f"chirp {installed_version()}")
         raise typer.Exit()
 
@@ -441,9 +434,8 @@ def record(
                     datetime.now() - recorder.start_time
                 ).total_seconds()
             if resize_pending["flag"]:
-                # A resize happened mid-record: drop any cached width so Rich
-                # remeasures the terminal and the waveform reflows cleanly, then
-                # force a refresh against the new size.
+                # Drop Rich's cached width on resize so it remeasures and the
+                # waveform reflows cleanly.
                 resize_pending["flag"] = False
                 if hasattr(console, "_width"):
                     console._width = None

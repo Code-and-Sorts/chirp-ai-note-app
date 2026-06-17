@@ -46,8 +46,7 @@ def test_models_toml_path_lives_inside_app_support_dir() -> None:
 
 
 def test_lock_path_for_default_socket_is_byte_identical_to_lock_path() -> None:
-    # AC-3 hard requirement: the no-override path must equal today's LOCK_PATH
-    # exactly so existing installs and the LaunchAgent see no change.
+    # AC-3: no-override path must stay byte-identical so existing installs see no change.
     assert lock_path_for_socket(SOCKET_PATH) == LOCK_PATH
 
 

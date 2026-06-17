@@ -335,9 +335,6 @@ async def test_load_without_snapshot_reresolves_current_default() -> None:
     assert loaded.alias == "other"
 
 
-# --- AC-4: cancellation registration is conflict-aware and identity-safe ---
-
-
 def test_register_cancellation_refuses_duplicate_in_flight() -> None:
     backend = FakeBackend()
     state = DaemonState(backend=backend, registry=_registry(), idle_timeout_s=60.0)
@@ -346,7 +343,6 @@ def test_register_cancellation_refuses_duplicate_in_flight() -> None:
     second = asyncio.Event()
     assert state.register_cancellation("r-aaaaaaaaaaaa", first) is True
     assert state.register_cancellation("r-aaaaaaaaaaaa", second) is False
-    # The original event is untouched — a cancel still reaches it, not the dup.
     assert state.get_cancellation("r-aaaaaaaaaaaa") is first
 
 
@@ -362,12 +358,8 @@ def test_clear_cancellation_is_identity_safe() -> None:
     state.clear_cancellation("r-bbbbbbbbbbbb", rejected_dup)
     assert state.get_cancellation("r-bbbbbbbbbbbb") is original
 
-    # The owning request clears its own event normally.
     state.clear_cancellation("r-bbbbbbbbbbbb", original)
     assert state.get_cancellation("r-bbbbbbbbbbbb") is None
-
-
-# --- AC-5: resident-cap + LRU eviction, embed-pin respected ---
 
 
 async def test_resident_cap_evicts_lru_non_in_flight_model() -> None:
@@ -393,12 +385,9 @@ async def test_resident_cap_evicts_lru_non_in_flight_model() -> None:
 
 
 async def test_concurrent_distinct_alias_loads_respect_cap() -> None:
-    # H1 regression: two concurrent loads for DIFFERENT aliases (different
-    # requests, nothing serializes them at the per-alias level) must not both
-    # pass the cap check and both load. Without the state-wide load gate both
-    # see len(resident) < cap during their overlapping backend load and end up
-    # resident together — the exact OOM the cap exists to prevent.
-    backend = FakeBackend(load_delay_s=0.05)  # widen the overlap window
+    # H1 regression: without a state-wide load gate, two concurrent distinct-alias
+    # loads both see resident < cap mid-load and end up resident together (OOM).
+    backend = FakeBackend(load_delay_s=0.05)
     registry = _registry(
         gemma=_chat_entry("mlx-community/gemma"),
         other=_chat_entry("mlx-community/other"),
@@ -441,7 +430,6 @@ async def test_resident_cap_never_evicts_in_flight_model() -> None:
     async with in_flight.lock:
         with pytest.raises(LLMModelCapacityExceeded):
             await state.load("other", "chat")
-    # The in-flight model survived; nothing was evicted.
     assert state.get("gemma") is not None
     assert state.get("other") is None
 
@@ -463,7 +451,7 @@ async def test_resident_cap_is_per_role_embed_not_evicted_by_chat() -> None:
 
     await state.load("nomic", "embed")
     await state.load("gemma", "chat")
-    await state.load("other", "chat")  # evicts gemma (chat), not nomic (embed)
+    await state.load("other", "chat")
 
     assert state.get("nomic") is not None, "embed pin survives a chat eviction"
     assert state.get("other") is not None
@@ -493,7 +481,7 @@ async def test_status_reports_resident_counts_caps_and_eviction() -> None:
     )
 
     await state.load("gemma", "chat")
-    await state.load("other", "chat")  # triggers an eviction of gemma
+    await state.load("other", "chat")
 
     status = state.status()
     assert status["resident_caps"]["chat"] == 1
@@ -503,13 +491,9 @@ async def test_status_reports_resident_counts_caps_and_eviction() -> None:
     assert status["last_eviction"]["reason"] == "resident_cap"
 
 
-# --- AC-6: a long generation must not get its model idle-unloaded ---
-
-
 async def test_delayed_unload_skips_and_reschedules_while_lock_held() -> None:
-    # The core AC-6 invariant: a _delayed_unload whose sleep elapses while the
-    # model is mid-generation (lock held) must NOT unload it out from under the
-    # request — it reschedules instead.
+    # AC-6: a _delayed_unload whose sleep elapses mid-generation (lock held) must
+    # reschedule, not unload the model out from under the request.
     backend = FakeBackend()
     registry = _registry(gemma=_chat_entry())
     state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.05)
@@ -517,9 +501,7 @@ async def test_delayed_unload_skips_and_reschedules_while_lock_held() -> None:
     loaded = await state.load("gemma", "chat")
 
     async with loaded.lock:
-        # Let the idle timer fire while we hold the lock (mid-generation).
         await asyncio.sleep(0.2)
         assert state.get("gemma") is not None, "must not unload an in-flight model"
         assert backend.unload_calls == []
-    # After release, the rescheduled timer governs the real idle countdown.
     assert state.get("gemma") is not None

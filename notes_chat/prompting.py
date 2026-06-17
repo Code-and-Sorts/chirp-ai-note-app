@@ -10,9 +10,8 @@ from llm.protocol import new_request_id
 
 logger = logging.getLogger(__name__)
 
-# Hard cap on the user question length before it is delimited into a prompt.
-# Bounds prompt size and shrinks the surface for prompt-shaped text smuggling
-# instructions through the question (the question is fenced, not interpolated raw).
+# Bounds prompt size and shrinks the surface for prompt-injection through the
+# question (which is fenced, not interpolated raw).
 MAX_QUESTION_CHARS = 2000
 _QUOTE_FENCE_RUN = re.compile(r'"{3,}')
 
@@ -56,7 +55,7 @@ def _bound_question(question: str) -> str:
     instructions or blow up the prompt. Grounding guardrails live in
     ``SYSTEM_PROMPT`` and are left intact.
     """
-    # Collapse any run of 3+ double-quotes so the question can't close the
+    # Collapse runs of 3+ double-quotes so the question can't close the
     # triple-quote fence below and smuggle instructions past the delimiter.
     bounded = _QUOTE_FENCE_RUN.sub('""', question.strip()[:MAX_QUESTION_CHARS])
     return f'"""\n{bounded}\n"""'

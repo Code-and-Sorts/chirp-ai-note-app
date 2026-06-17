@@ -13,9 +13,9 @@ from notes_chat.time_ranges import parse_time_range
 
 logger = logging.getLogger(__name__)
 
-# Reciprocal Rank Fusion smoothing constant. 60 is the canonical value from the
-# original RRF paper and what `.docs/hybrid-retrieval.md` names first-class; it
-# damps the contribution of low-rank items without starving either source.
+# RRF smoothing constant. 60 is the canonical value from the original RRF paper
+# (and .docs/hybrid-retrieval.md); it damps low-rank items without starving
+# either source.
 RRF_K = 60
 
 
@@ -31,13 +31,10 @@ def _as_naive(value: datetime) -> datetime:
     return value.astimezone().replace(tzinfo=None)
 
 
-# Process-local freshness fingerprints, keyed by index_dir. A full per-query
-# `build_index(force=False)` reads, chunks, re-embeds, and rewrites the manifest
-# + BM25 lexicon; on an unchanged corpus that work is wasted. The signature folds
-# each `<slug>/notes.md`'s (mtime, size) so it changes on an IN-PLACE edit (which
-# leaves the notes_root dir mtime untouched) as well as on an add/remove — so a
-# long-lived process never serves stale chunks. Computing it costs one `stat()`
-# per note (no reads/embeds), so the short-circuit still skips the heavy work.
+# Process-local freshness fingerprints keyed by index_dir, skipping a wasted
+# per-query build_index on an unchanged corpus. Folds each <slug>/notes.md's
+# (mtime, size) so an IN-PLACE edit (which leaves notes_root's dir mtime
+# untouched) invalidates it too; costs one stat() per note.
 _FRESHNESS_CACHE: dict[str, int] = {}
 
 
@@ -230,9 +227,8 @@ def _search_bm25(
         for chunk_id, score in bm25_results:
             data = hydrated.get(chunk_id)
             if data is None:
-                # Stale BM25 id with no Chroma record — keep it so a lexical-only
-                # match isn't silently dropped, but without content it can't enter
-                # the context (it still de-dupes by id).
+                # Stale BM25 id with no Chroma record: keep it so a lexical-only
+                # match isn't dropped, but without content it can't enter context.
                 data = {"source": "bm25"}
             results.append((chunk_id, score, data))
         return results

@@ -41,12 +41,12 @@ def chat_socket_path() -> Iterator[Path]:
         if path.exists():
             path.unlink()
     except OSError:
-        # Best-effort cleanup: the temp file may already be removed.
+        # best-effort cleanup
         pass
     try:
         tmp_dir.rmdir()
     except OSError:
-        # Best-effort cleanup: the temp directory may be missing or non-empty.
+        # best-effort cleanup
         pass
 
 
@@ -88,7 +88,7 @@ async def chat_server(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -141,7 +141,7 @@ async def _close(writer: asyncio.StreamWriter) -> None:
         try:
             await writer.wait_closed()
         except (ConnectionResetError, BrokenPipeError, OSError):
-            # Best-effort teardown: the writer/peer may already be gone.
+            # best-effort teardown
             pass
 
 
@@ -521,9 +521,6 @@ async def test_cancel_missing_target_id_emits_protocol_malformed(
     assert events[-1]["code"] == error_codes.PROTOCOL_MALFORMED
 
 
-# --- AC-4: duplicate in-flight request id is rejected, never cross-cancels ---
-
-
 async def test_duplicate_in_flight_request_id_is_rejected(
     chat_server: tuple[FakeBackend, DaemonState, Dispatcher],
     chat_socket_path: Path,
@@ -534,10 +531,8 @@ async def test_duplicate_in_flight_request_id_is_rejected(
 
     shared_id = "r-aaaaaaaaaaaa"
 
-    # Connection A: register a slow in-flight chat under shared_id.
     reader_a, writer_a = await _connect(chat_socket_path)
     await _send(writer_a, _chat_envelope(request_id=shared_id))
-    # Wait until A's request is actually in flight (cancellation registered).
     deadline = asyncio.get_running_loop().time() + 2.0
     while state.get_cancellation(shared_id) is None:
         if asyncio.get_running_loop().time() > deadline:
@@ -545,7 +540,6 @@ async def test_duplicate_in_flight_request_id_is_rejected(
         await asyncio.sleep(0.01)
     original_event = state.get_cancellation(shared_id)
 
-    # Connection B: a second chat with the SAME id is rejected with a conflict.
     reader_b, writer_b = await _connect(chat_socket_path)
     try:
         await _send(writer_b, _chat_envelope(request_id=shared_id))
@@ -555,10 +549,9 @@ async def test_duplicate_in_flight_request_id_is_rejected(
     assert b_events[-1]["event"] == EVENT_ERROR
     assert b_events[-1]["code"] == error_codes.PROTOCOL_REQUEST_CONFLICT
 
-    # The duplicate's rejection (and its finally) must NOT evict A's live event.
+    # The rejected duplicate's finally must not evict A's live cancellation event.
     assert state.get_cancellation(shared_id) is original_event
 
-    # A cancel for shared_id still cancels the ORIGINAL request, not the dup.
     reader_c, writer_c = await _connect(chat_socket_path)
     try:
         await _send(
@@ -573,9 +566,6 @@ async def test_duplicate_in_flight_request_id_is_rejected(
     await _close(writer_a)
     assert a_events[-1]["event"] == EVENT_ERROR
     assert a_events[-1]["code"] == error_codes.MODEL_CANCELLED
-
-
-# --- AC-7: a cancel after a fully-streamed answer is graceful, not an error ---
 
 
 class _LateCancelBackend(FakeBackend):
@@ -602,11 +592,8 @@ class _LateCancelBackend(FakeBackend):
         for index, token in enumerate(self.chat_tokens):
             yield token
             if index == len(self.chat_tokens) - 1:
-                # The cancel lands AFTER the last token was delivered but BEFORE
-                # the loop exits — should_stop is set at classification time.
                 self.cancel_fired = True
                 should_stop.set()
-        # Natural exhaustion: the full answer streamed despite the late cancel.
         usage_out["completed"] = 1
 
 
@@ -638,12 +625,11 @@ async def test_late_cancel_after_full_stream_is_graceful(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
-    # The late cancel really fired (the test isn't a tautology)...
+    # The cancel really fired, so the graceful-done assertion isn't a tautology.
     assert backend.cancel_fired
-    # ...yet the fully-streamed answer ends in done, NOT a MODEL_CANCELLED tail.
     deltas = [e["text"] for e in events if e["event"] == EVENT_DELTA]
     assert deltas == ["all", " ", "done"]
     assert events[-1]["event"] == EVENT_DONE
@@ -683,11 +669,9 @@ async def test_idle_unload_race_keeps_model_resident_after_long_generation() -> 
             await _close(writer)
         assert events[-1]["event"] == EVENT_DONE
 
-        # The model survived a generation that outlived the idle timer.
         loaded = state.get("gemma")
         assert loaded is not None, "long generation must not evict its own model"
 
-        # A follow-up request does not re-trigger a loading event (still resident).
         reader2, writer2 = await _connect(socket_path)
         try:
             await _send(writer2, _chat_envelope())
@@ -700,12 +684,12 @@ async def test_idle_unload_race_keeps_model_resident_after_long_generation() -> 
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
         try:
             if socket_path.exists():
                 socket_path.unlink()
             socket_dir.rmdir()
         except OSError:
-            # Best-effort cleanup: the temp directory may be missing or non-empty.
+            # best-effort cleanup
             pass

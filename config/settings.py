@@ -20,13 +20,11 @@ CHIRP_MAX_RESIDENT_CHAT_ENV = "CHIRP_MAX_RESIDENT_CHAT"
 CHIRP_MAX_RESIDENT_EMBED_ENV = "CHIRP_MAX_RESIDENT_EMBED"
 
 DEFAULT_IDLE_TIMEOUT_SECONDS = 300.0
-# Per inter-event read budget (not per whole request): a healthy stream emits a
-# token well within this, so it only fires on a wedged daemon. The first event
-# spans cold model load + first token, so it gets the larger budget below.
+# Per inter-event read budget, not per request, so it only fires on a wedged
+# daemon. The first event spans cold load + first token, hence the larger budget.
 DEFAULT_INFERENCE_TIMEOUT_SECONDS = 60.0
 DEFAULT_FIRST_EVENT_TIMEOUT_SECONDS = 120.0
-# Generous per-role resident cap: a typical session holds one chat + one pinned
-# embed model. Mirrors chirpd.state's defaults so config and state agree.
+# Per-role resident cap; mirrors chirpd.state's defaults so config and state agree.
 DEFAULT_MAX_RESIDENT_CHAT = 1
 DEFAULT_MAX_RESIDENT_EMBED = 1
 
@@ -261,9 +259,8 @@ class ChirpSettings(BaseModel):
 
     @staticmethod
     def _emit_warning(console: Console, message: str) -> None:
-        # markup=False + soft_wrap keep file paths and bracketed section names
-        # intact (Rich would treat ``[monitoring]`` as a style tag and wrap long
-        # paths across lines, breaking the user-facing warning).
+        # markup=False + soft_wrap keep paths and bracketed section names intact:
+        # Rich would treat ``[monitoring]`` as a style tag and wrap long paths.
         console.print(message, style="yellow", markup=False, soft_wrap=True)
 
     @classmethod
@@ -271,9 +268,8 @@ class ChirpSettings(BaseModel):
         cls, config_data: dict[str, Any], config_path: Path, warnings: Console
     ) -> None:
         version = config_data.get("schema_version")
-        # A non-int version is a type error handled by the per-field recovery
-        # path; only warn here on a well-formed but unsupported version number
-        # so a bad type does not double-warn.
+        # Only warn on a well-formed but unsupported version; a non-int is left
+        # to the per-field recovery path so a bad type does not double-warn.
         if isinstance(version, int) and version != SUPPORTED_CONFIG_SCHEMA_VERSION:
             cls._emit_warning(
                 warnings,

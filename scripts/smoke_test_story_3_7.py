@@ -122,10 +122,10 @@ def _kill_existing_chirpd() -> int:
         try:
             path.unlink()
         except FileNotFoundError:
-            # Best-effort cleanup: the socket/lock file is already gone.
+            # best-effort cleanup
             pass
         except OSError:
-            # Best-effort cleanup: the socket/lock file could not be removed.
+            # best-effort cleanup
             pass
     return len(pids) + len(stragglers)
 

@@ -42,10 +42,9 @@ class WhisperTranscriber:
             ) from exc
 
     def _get_optimal_device(self) -> str:
-        # chirp targets macOS only (see epic-audio-capture decision 1), where
-        # faster-whisper runs on CPU. The non-Darwin branch is not exercised on
-        # the supported platform and exists only as a portability hint; it does
-        # not promise GPU acceleration.
+        # chirp targets macOS only (epic-audio-capture decision 1), where
+        # faster-whisper runs on CPU. The non-Darwin branch is an unexercised
+        # portability hint, not a GPU-acceleration promise.
         if platform.system() == "Darwin":
             return "cpu"
         try:
@@ -56,8 +55,7 @@ class WhisperTranscriber:
             return "cpu"
 
     def _get_compute_type(self) -> str:
-        # int8 on CPU (the macOS path); float16 only on the unexercised
-        # non-Darwin CUDA branch above.
+        # int8 on CPU (the macOS path); float16 only on the unexercised CUDA branch.
         return "int8" if self._get_optimal_device() == "cpu" else "float16"
 
     def _get_cpu_threads(self) -> int:

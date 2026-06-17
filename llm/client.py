@@ -161,11 +161,8 @@ class LLMClient:
         self.socket_path: Path = socket_path or resolve_socket_path()
         self.spawn_timeout_s = spawn_timeout_s
         self.retry_on_version_mismatch = retry_on_version_mismatch
-        # Resolve the per-inter-event read budget once (env → config → default)
-        # so the precedence is read at construction, not on every token. The
-        # first event after a request spans cold load + first token, so it gets
-        # a larger budget; a long-but-healthy stream then renews the per-event
-        # bound on each subsequent token and never trips it.
+        # Resolve the per-event read budget once (env → config → default). The
+        # first event gets a larger budget for cold load + first token.
         self._inference_timeout_s = (
             inference_timeout_s
             if inference_timeout_s is not None
@@ -597,8 +594,8 @@ class LLMClient:
             raise LLMConnectionLost(
                 f"connection broken while sending hello: {err}",
             ) from err
-        # Bound the handshake read too: a daemon that accepts the connection but
-        # never answers hello must not hang the client forever.
+        # Bound the handshake read so a daemon that accepts but never answers
+        # hello can't hang the client forever.
         return await _read_event(reader, self._first_event_timeout_s)
 
     async def _run_request_on_connection(
@@ -618,11 +615,6 @@ class LLMClient:
                 f"connection broken while sending request: {err}",
             ) from err
 
-        # The first event after sending spans a possible cold model load plus
-        # first-token latency, so it gets the larger budget; every subsequent
-        # inter-event read uses the per-event budget. The bound renews per read,
-        # so a long-but-healthy stream emitting a token within the budget never
-        # trips — only a wedged daemon that stops emitting does.
         read_timeout = self._first_event_timeout_s
         while True:
             event = await _read_event(reader, read_timeout)
@@ -675,10 +667,8 @@ def _exception_for_error_event(event: dict[str, Any]) -> LLMError:
     details = event.get("details") or {}
     exc_cls = CODE_TO_EXCEPTION.get(code) if isinstance(code, str) else None
     if exc_cls is None:
-        # An unknown code most often means a version skew where the daemon emits
-        # a code this client predates. Surface the daemon's real message rather
-        # than degrading to a bare malformed-response — the operator needs the
-        # legible reason, not "unknown code".
+        # An unknown code usually means version skew (daemon emits a code this
+        # client predates); surface the daemon's real message, not "unknown code".
         return LLMProtocolError(
             f"daemon error [{code}]: {message}",
             details={"code": code, "message": message, "raw_details": details},

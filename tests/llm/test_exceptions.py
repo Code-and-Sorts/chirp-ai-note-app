@@ -75,7 +75,7 @@ def test_transport_subtree() -> None:
     assert issubclass(LLMDaemonUnreachable, LLMTransportError)
     assert issubclass(LLMConnectionLost, LLMTransportError)
     assert issubclass(LLMDaemonSpawnFailed, LLMTransportError)
-    # AC-1: the inference timeout lives in the transport subtree (client-local).
+    # AC-1: inference timeout is client-local, so it lives in the transport subtree.
     assert issubclass(LLMInferenceTimeout, LLMTransportError)
 
 

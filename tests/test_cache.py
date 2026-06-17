@@ -228,7 +228,6 @@ class TestCacheEviction:
 
             with patch("notes_chat.cache.CACHE_TTL_SECONDS", -1):
                 assert get_cached_answer("q", ["c1"]) is None
-            # And the stale file is pruned.
             assert list((tmp_path / "cache").glob("*.json")) == []
 
     def test_size_eviction_settles_at_cap_not_one(self, tmp_path):
@@ -249,8 +248,7 @@ class TestCacheEviction:
                     time.sleep(0.005)
 
             files = list((tmp_path / "cache").glob("*.json"))
-            # Settles exactly at the cap — NOT collapsed to ~1 by the negative
-            # slice, and NOT growing unbounded.
+            # Settles at the cap, not collapsed to ~1 by the negative slice (H2).
             assert len(files) == cap
 
     def test_under_cap_does_not_evict(self, tmp_path):
@@ -263,7 +261,7 @@ class TestCacheEviction:
                     time.sleep(0.005)
 
             files = list((tmp_path / "cache").glob("*.json"))
-            assert len(files) == 5  # all kept; old bug would leave ~2
+            assert len(files) == 5  # old negative-slice bug would leave ~2
 
     def test_force_reindex_clears_cache(self, tmp_path):
         """`chirp index --force` must invalidate the answer cache (AC-7)."""

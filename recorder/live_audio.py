@@ -221,8 +221,8 @@ class LiveAudioStream:
         try:
             self.frame_queue.put_nowait(frame)
         except queue.Full:
-            # The WAV is already written above; a full frame_queue only
-            # degrades the live transcript, never the saved recording.
+            # The WAV is written above; a full frame_queue only degrades the
+            # live transcript, never the saved recording.
             with self._dropped_frames_lock:
                 self._dropped_frames += 1
         try:

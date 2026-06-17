@@ -19,7 +19,7 @@ from notes_chat.config import get_notes_config
 
 logger = logging.getLogger(__name__)
 
-# Diagnostics/progress/errors → stderr; the answer body and JSON → stdout.
+# Diagnostics/progress/errors → stderr; answer body and JSON → stdout.
 console = stderr_console
 app = typer.Typer()
 
@@ -179,8 +179,8 @@ def ask(
                 else:
                     stdout_console.print(cached_answer)
         elif json_output or markdown:
-            # Under --json the answer is collected, not streamed/rendered, so no
-            # Markdown is ever instantiated; the raw JSON is emitted at the end.
+            # Under --json the answer is collected, not streamed, so the raw
+            # JSON can be emitted at the end.
             answer_result = generate_answer(config, question, context)
             if not answer_result.get("success"):
                 console.print(

@@ -66,7 +66,7 @@ class TestBm25ModelCache:
             _search_bm25(bm25_file, "roadmap", k=5)
             _search_bm25(bm25_file, "project", k=5)
 
-        # Built once for the first query; cached (by mtime+size) thereafter.
+        # Built once, then cached by (mtime, size) for later queries.
         assert spy.call_count == 1
 
 
@@ -77,7 +77,6 @@ class TestFreshnessShortCircuit:
 
         retrieval_module._FRESHNESS_CACHE.pop(str(config.notes_chat.index_dir), None)
 
-        # Build the index up-front with a fake embed client.
         IndexManager(config, llm_client=_FakeEmbedClient()).build_index()
 
         with (
@@ -85,9 +84,8 @@ class TestFreshnessShortCircuit:
             patch("notes_chat.retrieval.IndexManager.build_index") as mock_build,
         ):
             mock_build.return_value = {"success": True}
-            # First query: tree is "not fresh" yet -> build_index runs once.
             retrieve_context(config, "budget")
-            # Second query: nothing changed -> build_index is skipped.
+            # Second query: tree unchanged, so build_index is skipped.
             retrieve_context(config, "timeline")
 
         assert mock_build.call_count == 1
@@ -110,8 +108,7 @@ class TestFreshnessShortCircuit:
         retrieval_module._record_index_freshness(config)
         assert retrieval_module._index_is_fresh(config)
 
-        # Edit the note in place (and bump mtime so the change is observable even
-        # if the content length happens to match).
+        # Bump mtime too, so the edit is observable even if the size matches.
         note_file.write_text("# Sync\n\nCompletely new body content after an edit.")
         future = time.time() + 5
         os.utime(note_file, (future, future))
@@ -149,8 +146,7 @@ class TestBm25RebuildCadence:
         full_rebuild.assert_not_called()
         assert append_spy.call_count == 5
 
-        # Every save's distinct chunk made it into the lexicon via append.
         with (config.notes_chat.index_dir / "bm25.json").open() as f:
             data = json.load(f)
         assert len(data["doc_ids"]) == 5
-        assert len(set(data["doc_ids"])) == 5  # no id collision
+        assert len(set(data["doc_ids"])) == 5

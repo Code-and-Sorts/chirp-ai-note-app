@@ -37,12 +37,12 @@ def temp_socket_path() -> Iterator[Path]:
             if path.exists():
                 path.unlink()
         except OSError:
-            # Best-effort cleanup: the temp file may already be removed.
+            # best-effort cleanup
             pass
         try:
             tmp_dir.rmdir()
         except OSError:
-            # Best-effort cleanup: the temp directory may be missing or non-empty.
+            # best-effort cleanup
             pass
 
 
@@ -61,7 +61,7 @@ async def in_process_daemon(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (TimeoutError, asyncio.CancelledError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -102,7 +102,7 @@ class FakeDaemon:
                     try:
                         await writer.wait_closed()
                     except (ConnectionResetError, BrokenPipeError, OSError):
-                        # Best-effort teardown: the writer/peer may already be gone.
+                        # best-effort teardown
                         pass
 
         self._server = await asyncio.start_unix_server(
@@ -116,7 +116,7 @@ class FakeDaemon:
             if self.socket_path.exists():
                 self.socket_path.unlink()
         except OSError:
-            # Best-effort cleanup: the temp file may already be removed.
+            # best-effort cleanup
             pass
 
     async def stop(self) -> None:
@@ -126,7 +126,7 @@ class FakeDaemon:
         try:
             await self._server.wait_closed()
         except Exception:  # noqa: BLE001
-            # Best-effort teardown: the server socket is closing.
+            # best-effort teardown
             pass
 
 

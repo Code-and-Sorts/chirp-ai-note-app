@@ -100,10 +100,8 @@ class Dispatcher:
                 },
             )
         except LLMError as exc:
-            # Any LLM-layer exception carrying its own wire code keeps that code
-            # (model errors, capacity, protocol conflicts) instead of being
-            # flattened to MODEL_GENERATION_FAILED. The catch-all below stays for
-            # genuinely-unexpected non-LLM failures (true inference crashes).
+            # Preserve the exception's own wire code; the catch-all below only
+            # handles genuinely-unexpected non-LLM failures.
             await _write_error_for_typed(writer, request_id, op, exc)
         except Exception as exc:
             _logger.exception(
@@ -316,10 +314,8 @@ class Dispatcher:
             return
 
         # Reject a duplicate in-flight id before any load/stream so a reused or
-        # hostile id can never overwrite the original request's should_stop
-        # (which would cross-cancel it or leave it uncancellable). The daemon
-        # still echoes the client id (CHIRPD-CORE decision 5) — it rejects, it
-        # does not invent or rewrite.
+        # hostile id can't overwrite the original's should_stop. The daemon still
+        # echoes the client id (CHIRPD-CORE decision 5).
         should_stop = asyncio.Event()
         if not state.register_cancellation(request_id, should_stop):
             await _write_event(
@@ -357,8 +353,7 @@ class Dispatcher:
         try:
             async with loaded.lock:
                 # Touch at stream start so a generation longer than the idle
-                # timeout leaves the model resident: the _delayed_unload guard
-                # sees recent activity instead of a load-time stamp.
+                # timeout leaves the model resident.
                 state.touch(loaded)
                 try:
                     async for token in state.backend.stream_generate(
@@ -380,15 +375,9 @@ class Dispatcher:
                             connection_closed = True
                             should_stop.set()
                             break
-                    # Classify the loop's end: a cancel is a true mid-stream
-                    # interrupt ONLY if the backend did NOT run to natural
-                    # exhaustion. The backend sets usage_out["completed"] when its
-                    # token stream finished on its own; if it stopped early
-                    # (because should_stop was observed), it never sets it. So a
-                    # cancel that raced in at the very end of a fully-streamed
-                    # answer (completed == 1) stays graceful (done), while a cancel
-                    # that actually cut generation short (completed unset) is
-                    # MODEL_CANCELLED.
+                    # A cancel is a real mid-stream interrupt only if the backend
+                    # stopped early; it sets usage_out["completed"] on natural
+                    # exhaustion, so a cancel racing in at the end stays graceful.
                     interrupted_mid_stream = should_stop.is_set() and not usage_out.get(
                         "completed"
                     )
@@ -424,10 +413,6 @@ class Dispatcher:
             if connection_closed:
                 return
 
-            # Only a cancel that actually broke the loop mid-stream is an error.
-            # A cancel that lands after the generator already exhausted (the full
-            # answer streamed) is a graceful completion and emits ``done`` — so a
-            # fully-answered query never gets a spurious red error tail.
             if interrupted_mid_stream:
                 await _write_event(
                     writer,

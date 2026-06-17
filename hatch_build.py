@@ -26,9 +26,7 @@ class CustomBuildHook(BuildHookInterface):
             build_data["force_include"]["audio_capture/CaptureAudio.app"] = (
                 "audio_capture/CaptureAudio.app"
             )
-            # py3-none keeps the wheel CPython-version-agnostic (the helper is a
-            # subprocess, not a C extension); macosx_13_0 matches the helper's
-            # build target and the macOS 13+ runtime requirement, so pip refuses
-            # the wheel on macOS 11/12 rather than installing a binary that can't run.
+            # py3-none: helper is a subprocess, not a C extension. macosx_13_0
+            # matches its build target so pip refuses the wheel on macOS 11/12.
             build_data["pure_python"] = False
             build_data["tag"] = "py3-none-macosx_13_0_arm64"

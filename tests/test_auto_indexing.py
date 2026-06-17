@@ -29,12 +29,10 @@ class TestAutoIndexing:
 
             mock_manager._add_to_index.assert_called_once_with(notes_path)
             mock_manager._save_manifest.assert_called_once()
-            # A single save appends only this note's chunks; it must NOT trigger
-            # a full-corpus rebuild (AC-6).
+            # AC-6: a single save appends, never triggers a full-corpus rebuild.
             mock_manager.append_bm25_for_file.assert_called_once_with(str(notes_path))
             mock_manager._rebuild_bm25.assert_not_called()
-            # L1: the auto-index path goes through the same embed-fingerprint
-            # guard + stamp as the explicit build.
+            # L1: auto-index uses the same embed-fingerprint guard + stamp as build.
             mock_manager._ensure_embed_fingerprint.assert_called_once()
             mock_manager._stamp_fingerprint_if_missing.assert_called_once()
 

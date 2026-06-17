@@ -7,12 +7,12 @@ from notes_chat.config import PROMPT_VERSION, get_notes_config
 
 logger = logging.getLogger(__name__)
 
-# Answers older than the TTL are treated as misses (and pruned). Bounds staleness
-# even when the inputs that key the cache haven't changed.
+# Bounds staleness even when the cache-key inputs haven't changed: older
+# answers are treated as misses and pruned.
 CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 
-# Hard cap on cached answer files; the oldest are evicted past this so the cache
-# dir can't grow without bound (it previously wrote one file per key, forever).
+# Hard cap so the cache dir can't grow without bound (it previously wrote one
+# file per key, forever).
 CACHE_MAX_ENTRIES = 500
 
 
@@ -93,8 +93,8 @@ def _evict_if_needed(cache_dir) -> None:
     """Drop the oldest entries once the cache exceeds ``CACHE_MAX_ENTRIES``."""
     overflow = len(list(cache_dir.glob("*.json"))) - CACHE_MAX_ENTRIES
     if overflow <= 0:
-        # Under the cap: nothing to evict. (A bare negative slice would delete
-        # almost everything — `entries[:-498]` keeps only the newest 2.)
+        # Guard the slice below: a negative overflow (entries[:-498]) would keep
+        # only the newest 2 instead of evicting nothing.
         return
     entries = sorted(cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
     for stale in entries[:overflow]:

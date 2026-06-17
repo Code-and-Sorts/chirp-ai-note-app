@@ -98,8 +98,8 @@ class IndexManager:
 
             for file_path in added_files + modified_files:
                 if self._add_to_index(Path(file_path)):
-                    # Record only files that actually indexed, so a failed embed
-                    # is retried next run instead of being marked done forever.
+                    # Record only files that indexed, so a failed embed is
+                    # retried next run rather than marked done forever.
                     manifest[file_path] = current_files[file_path]
                     processed_count += 1
                     if progress_callback:
@@ -269,9 +269,8 @@ class IndexManager:
         return None
 
     def _write_fingerprint_metadata(self, collection) -> None:
-        # `collection.modify` rejects the `hnsw:space` key (the distance function
-        # is fixed at creation), so the fingerprint metadata omits it. The cosine
-        # space set at creation still governs retrieval.
+        # collection.modify rejects the hnsw:space key (distance function is
+        # fixed at creation), so omit it; the cosine space still governs retrieval.
         metadata: dict[str, Any] = {EMBED_ALIAS_KEY: self._resolved_embed_alias()}
         dim = None
         try:
@@ -482,10 +481,9 @@ class IndexManager:
                 continue
 
             if len(section) <= self.settings.chunk_size:
-                # Prefix by the note's slug (parent dir), not file_path.stem —
-                # the stem is always "notes" so stem-prefixed ids collide across
-                # every note, and Chroma's add silently keeps only one note's
-                # chunks per id. The slug is unique per note directory.
+                # Prefix by slug (parent dir), not file_path.stem: the stem is
+                # always "notes", so stem-prefixed ids collide across notes and
+                # Chroma's add silently keeps only one note's chunks per id.
                 chunk_id = f"{file_path.parent.name}_{i:03d}"
                 norm = re.sub(r"\s+", " ", section.strip()).lower()
                 content_hash = hashlib.sha256(norm.encode()).hexdigest()[:16]
@@ -596,8 +594,8 @@ class IndexManager:
             doc_ids = records.get("ids") or []
             documents = records.get("documents") or []
             if doc_ids:
-                # Chunk ids are `{slug}_NNN`; purge ghost ids for this note that
-                # vanished when it was re-chunked into fewer chunks.
+                # Purge {slug}_NNN ghost ids for this note that vanished when it
+                # was re-chunked into fewer chunks.
                 slug_prefix = f"{Path(file_path).parent.name}_"
                 append_bm25_index(
                     self.bm25_file,

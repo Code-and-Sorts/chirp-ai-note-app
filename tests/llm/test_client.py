@@ -151,7 +151,7 @@ def test_health_sync_against_in_process_daemon(
             try:
                 await asyncio.wait_for(task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
-                # Best-effort teardown: the task is already being cancelled.
+                # best-effort teardown
                 pass
 
     payload = asyncio.run(_drive())
@@ -477,9 +477,6 @@ async def test_connection_lost_raises_typed_exception(
         await llm_client.health()
 
 
-# --- AC-1: per-inter-event inference read timeout ---
-
-
 async def test_inference_timeout_when_daemon_stalls_after_hello(
     temp_socket_path: Path,
     fake_daemon_factory: FakeDaemonFactory,
@@ -503,8 +500,8 @@ async def test_inference_timeout_when_daemon_stalls_after_hello(
         await forever.wait()  # accept the request, then stall forever
 
     await fake_daemon_factory(_handler)
-    # Pin both budgets small: the first read after a request uses the
-    # first-event budget, so both must be tiny for the test to be fast.
+    # The first read after a request uses the first-event budget, so both must
+    # be tiny for the test to be fast.
     llm_client = LLMClient(
         socket_path=temp_socket_path,
         inference_timeout_s=0.2,
@@ -514,7 +511,6 @@ async def test_inference_timeout_when_daemon_stalls_after_hello(
     with pytest.raises(LLMInferenceTimeout) as exc_info:
         await llm_client.health()
     elapsed = time.monotonic() - start
-    # Fires within the budget (+ generous slack), not an unbounded hang.
     assert elapsed < 5.0
     assert exc_info.value.details["timeout_seconds"] == 0.2
     assert "chirp daemon" in str(exc_info.value)
@@ -525,7 +521,6 @@ def test_first_event_budget_is_proportional_to_per_event_budget() -> None:
     """M2: the first-event budget scales with the per-event budget (×2 default)."""
     assert client_module._first_event_budget(60.0) == 120.0
     assert client_module._first_event_budget(0.2) == pytest.approx(0.4)
-    # The multiplier is derived from the default pair so they stay consistent.
     assert client_module._FIRST_EVENT_BUDGET_MULTIPLIER == 2.0
 
 
@@ -553,9 +548,8 @@ async def test_first_event_timeout_honors_env_override(
         await forever.wait()  # stall on the FIRST event after the request
 
     await fake_daemon_factory(_handler)
-    # Drive purely via the env override — NO constructor budget args. With the
-    # old fixed +60s headroom this first read would block ~60s; with the
-    # proportional multiplier it fires at ~0.2 × 2 = 0.4s.
+    # No constructor budget args: the env override alone must bound the first read
+    # (proportionally, ~0.2 × 2 = 0.4s), not a fixed 60s floor.
     monkeypatch.setenv("CHIRP_INFERENCE_TIMEOUT", "0.2")
     llm_client = LLMClient(socket_path=temp_socket_path)
     assert llm_client._first_event_timeout_s == pytest.approx(0.4)
@@ -563,7 +557,6 @@ async def test_first_event_timeout_honors_env_override(
     with pytest.raises(LLMInferenceTimeout):
         await llm_client.health()
     elapsed = time.monotonic() - start
-    # Fires fast (env-honored), nowhere near a 60s fixed floor.
     assert elapsed < 5.0
     forever.set()
 
@@ -589,8 +582,8 @@ async def test_healthy_slow_but_steady_stream_does_not_trip_timeout(
         )
         request = await read_request(reader)
         req_id = request.get("id")
-        # Each delta lands at 0.05s — well within the 0.3s per-event budget, so a
-        # total stream (0.25s) longer than the budget still never trips.
+        # Each delta (0.05s) renews the 0.3s per-event budget, so a total stream
+        # longer than the budget still never trips.
         for token in tokens:
             await asyncio.sleep(0.05)
             await write_event(
@@ -713,7 +706,7 @@ async def test_chat_stream_yields_tokens(temp_socket_path: Path) -> None:
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -756,7 +749,7 @@ async def test_chat_non_streaming_returns_concatenated_string(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -794,7 +787,7 @@ async def test_embed_batched_round_trip(temp_socket_path: Path) -> None:
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -854,7 +847,7 @@ async def test_cancel_in_flight_chat_raises_llm_cancelled(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -897,7 +890,7 @@ async def test_chat_propagates_model_generation_failed(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -947,7 +940,7 @@ def test_chat_stream_sync_returns_generator(temp_socket_path: Path) -> None:
             try:
                 await asyncio.wait_for(task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
-                # Best-effort teardown: the task is already being cancelled.
+                # best-effort teardown
                 pass
 
     tokens = asyncio.run(_drive())
@@ -1354,7 +1347,7 @@ async def test_model_list_against_in_process_daemon(
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -1397,7 +1390,7 @@ async def test_model_load_unload_round_trip(temp_socket_path: Path) -> None:
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 
@@ -1442,7 +1435,7 @@ async def test_model_status_returns_rich_dict(temp_socket_path: Path) -> None:
         try:
             await asyncio.wait_for(task, timeout=2.0)
         except (asyncio.CancelledError, TimeoutError):
-            # Best-effort teardown: the task is already being cancelled.
+            # best-effort teardown
             pass
 
 

@@ -188,12 +188,12 @@ class TestRetrievalMerge:
         scores = [score for _, score, _ in merged]
         assert scores == sorted(scores, reverse=True)
 
-        # Both rank-0 chunks share the top RRF score; the top semantic chunk is
-        # NOT buried under the high-magnitude BM25 hit.
+        # Both rank-0 chunks tie at the top RRF score; the top semantic chunk
+        # is not buried under the high-magnitude BM25 hit.
         rank_zero = {chunk_id for chunk_id, _, _ in merged[:2]}
         assert rank_zero == {"chroma1", "bm25_1"}
         assert merged[0][1] == merged[1][1]
-        # The raw BM25 magnitude (1.5) is replaced by the fused score.
+        # The raw BM25 magnitude (1.5) is replaced by the fused score (< 1.0).
         assert merged[0][1] < 1.0
 
     def test_top_semantic_survives_high_magnitude_bm25(self):
@@ -208,8 +208,7 @@ class TestRetrievalMerge:
                 },
             ),
         ]
-        # BM25 raw scores dwarf the semantic score; under the old sort they'd
-        # all rank above sem_top.
+        # BM25 raw scores dwarf the semantic score; the old sort buried sem_top.
         bm25_results = [
             ("lex1", 12.0, {"source": "bm25"}),
             ("lex2", 9.0, {"source": "bm25"}),
@@ -218,7 +217,6 @@ class TestRetrievalMerge:
 
         merged = _merge_and_dedupe(chroma_results, bm25_results)
         top_ids = {chunk_id for chunk_id, _, _ in merged[:1]}
-        # sem_top is rank 0 in its list and ties lex1 (rank 0) at the top.
         assert "sem_top" in {cid for cid, _, _ in merged[:2]}
         assert top_ids <= {"sem_top", "lex1"}
 
@@ -239,7 +237,6 @@ class TestRetrievalMerge:
         chunk_id = "team-sync-2025-01-15_000"
         shared_meta = {"path": "/n/team-sync-2025-01-15/notes.md", "content_hash": "h1"}
 
-        # The chunk lives in Chroma; the same id is also a BM25 hit.
         manager = MagicMock()
         manager.collection.get.return_value = {
             "ids": [chunk_id],
@@ -262,12 +259,10 @@ class TestRetrievalMerge:
             bm25_module._MODEL_CACHE.pop(str(bm25_file), None)
             bm25_results = _search_bm25(bm25_file, "budget", k=5, index_manager=manager)
 
-        # Hydration gave the bm25 hit the chroma metadata + content.
         assert len(bm25_results) == 1
         assert bm25_results[0][2]["metadata"] == shared_meta
         assert bm25_results[0][2]["content"] == "budget timeline discussion"
 
-        # The same chunk from the chroma side, same (path, content_hash).
         chroma_results = [
             (
                 chunk_id,
@@ -278,11 +273,11 @@ class TestRetrievalMerge:
 
         merged = _merge_and_dedupe(chroma_results, bm25_results)
 
-        assert len(merged) == 1  # collapsed, not duplicated
+        assert len(merged) == 1
         _id, score, data = merged[0]
-        # BOTH rank-0 contributions are summed: 1/60 + 1/60.
+        # Both rank-0 contributions are summed: 1/60 + 1/60.
         assert score == pytest.approx(2.0 / 60.0)
-        assert data.get("content")  # survives into _build_context
+        assert data.get("content")
 
     def test_dedupe_without_hydration_does_not_collapse(self):
         """Without the index_manager (no hydration), the bm25 hit keys by id.
@@ -299,7 +294,7 @@ class TestRetrievalMerge:
         bm25_results = [(chunk_id, 5.0, {"source": "bm25"})]  # no metadata
 
         merged = _merge_and_dedupe(chroma_results, bm25_results)
-        # Two distinct signatures (path::hash vs bare id) => not collapsed.
+        # Distinct signatures (path::hash vs bare id) => not collapsed.
         assert len(merged) == 2
 
     def test_bm25_only_hit_surfaces_content_after_hydration(self):
@@ -346,7 +341,6 @@ class TestRetrievalMerge:
                 bm25_file, "jira 1234", k=5, index_manager=manager
             )
 
-        # Only the lexical source has this chunk; it must still enter the context.
         context, _sources, ids = _build_context(bm25_results, char_budget=10000)
         assert chunk_id in ids
         assert "JIRA-1234" in context

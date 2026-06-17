@@ -230,7 +230,7 @@ class TestAskMarkdownToggle:
         self._stub_pipeline(monkeypatch, answer="answer")
         result = CliRunner().invoke(app, ["ask", "-q", "what?", "--no-markdown"])
         assert result.exit_code == 0
-        # The sources footer is a diagnostic → stderr (AC-1); the answer is data.
+        # Sources footer → stderr (AC-1); the answer is data on stdout.
         assert "sources: note #1" in result.stderr
         assert "Sources:" not in result.output
         assert "answer" in result.stdout
@@ -254,8 +254,8 @@ class TestAskMarkdownToggle:
 
         from notes_chat.cli import app
 
-        # dry-run + --json must still emit valid JSON on stdout (not the human
-        # diagnostics), so a `jq` consumer never gets empty input.
+        # dry-run + --json still emits valid JSON on stdout, so a jq consumer
+        # never gets empty input.
         self._stub_pipeline(monkeypatch, answer="unused")
         result = CliRunner().invoke(app, ["ask", "-q", "what?", "--json", "--dry-run"])
         assert result.exit_code == 0

@@ -1,9 +1,8 @@
 from config.settings import ChirpSettings
 
-# Bump whenever SYSTEM_PROMPT / the grounded-answer prompt changes so the
-# answer cache treats answers from an older prompt as stale. Lives here (a
-# leaf module) rather than in notes_chat.prompting to keep notes_chat.cache
-# free of a cache<->prompting import cycle.
+# Bump on any prompt change so the answer cache treats older-prompt answers as
+# stale. Lives in this leaf module (not notes_chat.prompting) to avoid a
+# cache<->prompting import cycle.
 PROMPT_VERSION = "2"
 
 

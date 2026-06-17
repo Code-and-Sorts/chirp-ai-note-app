@@ -209,8 +209,8 @@ class MLXBackend:
                         continue
                     loop.call_soon_threadsafe(queue.put_nowait, (SENTINEL_TOKEN, text))
                 if not stopped_early:
-                    # Natural exhaustion (not a cancel-driven break): mark the full
-                    # answer as complete so the dispatcher emits done, not cancel.
+                    # Mark complete on natural exhaustion so the dispatcher emits
+                    # done, not cancel.
                     usage_out["completed"] = 1
                 loop.call_soon_threadsafe(queue.put_nowait, (SENTINEL_DONE, None))
             except Exception as exc:  # noqa: BLE001 — surface to consumer
@@ -376,9 +376,8 @@ class FakeBackend:
             if scheduled_raise is not None and emitted >= self.stream_raises_after:
                 raise scheduled_raise
             yield token
-        # Reached only on natural exhaustion (no early return on should_stop):
-        # signals the dispatcher the full answer streamed, so a cancel that
-        # raced in at the end is graceful (done), not MODEL_CANCELLED.
+        # Mark complete on natural exhaustion so a cancel that raced in at the
+        # end is graceful (done), not MODEL_CANCELLED.
         usage_out["completed"] = 1
 
     async def embed(

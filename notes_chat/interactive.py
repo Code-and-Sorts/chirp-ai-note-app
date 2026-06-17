@@ -18,8 +18,8 @@ from notes_chat.prompting import enhanced_search_and_answer_stream
 
 logger = logging.getLogger(__name__)
 
-# Diagnostics (banner, hints, errors, spinners) → stderr; the answer body
-# rendered while streaming → stdout. The REPL interrupt semantics are unchanged.
+# Diagnostics (banner, hints, errors, spinners) → stderr; the streamed answer
+# body → stdout.
 console = stderr_console
 
 

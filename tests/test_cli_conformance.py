@@ -58,11 +58,6 @@ def typer_main_command(app):
     return typer.main.get_command(app)
 
 
-# ---------------------------------------------------------------------------
-# AC-3 — --version / -V and about --plain
-# ---------------------------------------------------------------------------
-
-
 class TestVersion:
     def test_version_flag_prints_one_line_and_exits_0(self):
         import chirp.cli
@@ -91,15 +86,9 @@ class TestVersion:
         runner, app = _runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["about", "--plain"])
         assert result.exit_code == 0
-        # The static panel carries the credits line; no spinner frames.
         assert "Colby Timm" in result.stdout
         assert "⠋" not in result.stdout
         assert "⠙" not in result.stdout
-
-
-# ---------------------------------------------------------------------------
-# AC-1 — stdout/stderr split (search)
-# ---------------------------------------------------------------------------
 
 
 class TestSearchStreamSplit:
@@ -127,16 +116,10 @@ class TestSearchStreamSplit:
         runner, app = _runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["search", "pricing"])
         assert result.exit_code == 0
-        # Excerpt/table data on stdout; preamble + footer hints on stderr.
         assert "Pricing Call" in result.stdout
         assert "searching 1 note for" in result.stderr
         assert "chirp ask" in result.stderr
         assert "searching 1 note for" not in result.stdout
-
-
-# ---------------------------------------------------------------------------
-# AC-2 — --json for notes / ask / search (raw, no Rich chrome)
-# ---------------------------------------------------------------------------
 
 
 class TestNotesJson:
@@ -151,10 +134,9 @@ class TestNotesJson:
         assert len(payload) == 2
         for row in payload:
             assert set(row) == {"id", "slug", "title", "date", "tags", "notes_path"}
-        # newest-first id == 1 is the most recent note (beta).
+        # id 1 is newest-first, so the most recent note (beta).
         assert payload[0]["id"] == 1
         assert payload[0]["slug"] == "beta-2026-04-21"
-        # No Rich box-drawing characters in the JSON stream.
         assert "─" not in result.stdout
         assert "│" not in result.stdout
 
@@ -227,13 +209,7 @@ class TestSearchJsonRaw:
         payload = json.loads(result.stdout)
         assert payload["query"] == "pricing"
         assert isinstance(payload["matches"], list)
-        # Nothing on stderr — JSON path emits no chrome.
         assert result.stderr == ""
-
-
-# ---------------------------------------------------------------------------
-# AC-4 — uniform prompt escape in record
-# ---------------------------------------------------------------------------
 
 
 class TestPromptEscape:
@@ -272,11 +248,6 @@ class TestPromptEscape:
         assert chirp.cli._prompt_tags() == []
 
 
-# ---------------------------------------------------------------------------
-# AC-5 — NO_COLOR and --no-color
-# ---------------------------------------------------------------------------
-
-
 class TestNoColor:
     def test_no_color_env_strips_ansi(self, tmp_path, monkeypatch):
         _write_note(tmp_path, "alpha-2026-04-20", "Alpha")
@@ -301,18 +272,12 @@ class TestNoColor:
         monkeypatch.setenv("NO_COLOR", "1")
         editor = ManualNoteEditor("T", "# Heading\n\n**bold** text\n")
         editor._ensure_view_cache(80)
-        # Width measurement still works (display lines built), but no styled
-        # segments carry color when NO_COLOR is in effect.
+        # Lines are still built under NO_COLOR; their segments just carry no color.
         assert editor._display_lines
         for display in editor._display_lines:
             for segment in display.segments:
                 if segment.style is not None:
                     assert segment.style.color is None
-
-
-# ---------------------------------------------------------------------------
-# AC-6 — centralized exit-code constants
-# ---------------------------------------------------------------------------
 
 
 class TestExitCodes:
@@ -342,11 +307,6 @@ class TestExitCodes:
         runner, app = _runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes", "view", "nope"])
         assert result.exit_code == 1
-
-
-# ---------------------------------------------------------------------------
-# AC-7 — extractable terminal-restore seam
-# ---------------------------------------------------------------------------
 
 
 class TestTerminalRestore:
@@ -383,14 +343,9 @@ class TestTerminalRestore:
             "show_cursor",
             lambda visible: cursor.__setitem__("shown", visible),
         )
+        # Cursor is restored even when there were no termios settings to reset.
         chirp.cli._restore_terminal(None, None)
-        # Still shows the cursor even when there were no termios settings.
         assert cursor["shown"] is True
-
-
-# ---------------------------------------------------------------------------
-# AC-8 — note editor help / keybinding hint
-# ---------------------------------------------------------------------------
 
 
 class TestEditorHelp:
@@ -477,18 +432,12 @@ class TestExternalEditorHatch:
         assert chirp.cli._edit_in_external_editor(notes_path, "ghost-editor") is False
 
 
-# ---------------------------------------------------------------------------
-# AC-9 — shell completion enabled (alias completer reachable)
-# ---------------------------------------------------------------------------
-
-
 class TestCompletion:
     def test_completion_meta_commands_hidden_but_present(self):
         import chirp.cli
 
         result = CliRunner().invoke(chirp.cli.app, ["--help"])
         assert result.exit_code == 0
-        # Hidden from the 7-command surface...
         assert "--install-completion" not in result.stdout
         assert "--show-completion" not in result.stdout
 
@@ -506,9 +455,7 @@ class TestCompletion:
             for opt in getattr(param, "opts", [])
             if opt in {"--install-completion", "--show-completion"}
         }
-        # Completion is enabled, so both meta-options are present on the app...
         assert meta == {"--install-completion", "--show-completion"}
-        # ...but every one of them is hidden (kept off the 7-command surface).
         for param in params:
             if set(getattr(param, "opts", [])) & meta:
                 assert param.hidden is True
@@ -516,15 +463,10 @@ class TestCompletion:
     def test_show_completion_is_not_an_unknown_option(self):
         import chirp.cli
 
-        # add_completion=True means --show-completion is a recognized option
-        # (the generated completer is reachable), not an unknown-option error.
+        # add_completion=True makes --show-completion a recognized option,
+        # not an unknown-option error.
         result = CliRunner().invoke(chirp.cli.app, ["--show-completion"])
         assert "No such option" not in result.output
-
-
-# ---------------------------------------------------------------------------
-# AC-10 — AppleScript escaping
-# ---------------------------------------------------------------------------
 
 
 class TestAppleScriptEscaping:
@@ -543,7 +485,6 @@ class TestAppleScriptEscaping:
             run.return_value = MagicMock()
             popup._show_macos_notification('Ti"tle', 'mes"sage\\x')
             script = run.call_args[0][0][2]
-        # The raw unescaped quote must never appear bare in the literal.
         assert '\\"' in script
         assert 'mes\\"sage' in script
 
@@ -560,11 +501,6 @@ class TestAppleScriptEscaping:
             popup.ask_yes_no('Ti"tle', 'ques"tion')
             script = run.call_args[0][0][2]
         assert 'ques\\"tion' in script
-
-
-# ---------------------------------------------------------------------------
-# AC-11 — ask dual-input conflict warning
-# ---------------------------------------------------------------------------
 
 
 class TestAskDualInput:
@@ -598,7 +534,6 @@ class TestAskDualInput:
             ["ask", "--json", "positional-q", "--question", "option-q"],
         )
         assert result.exit_code == 0
-        # The warning lands on stderr; the positional wins.
         assert "using the positional" in result.stderr
         payload = json.loads(result.stdout)
         assert payload["question"] == "positional-q"

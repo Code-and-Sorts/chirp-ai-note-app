@@ -142,7 +142,6 @@ class ManualNoteEditor:
                 continue
 
             if self.show_help:
-                # The help overlay is modal: any key dismisses it.
                 self.show_help = False
                 continue
 
@@ -170,8 +169,8 @@ class ManualNoteEditor:
 
     def _render(self, stdscr: curses.window) -> None:
         height, width = stdscr.getmaxyx()
-        # Reserve the bottom-most row for the status line and the row above it for
-        # the persistent keybinding hint, so neither overwrites the text body.
+        # Reserve the last row for the status line and the one above for the hint
+        # so neither overwrites the text body.
         hint_row = max(0, height - 2)
         text_height = max(1, height - 2)
         text_width = max(1, width - 1)
@@ -714,10 +713,8 @@ class ManualNoteEditor:
         if not self._view_cache_dirty and self._view_cache_width == text_width:
             return
 
-        # ``force_terminal=True`` keeps render_lines producing width-correct
-        # segments offscreen (the editor re-emits them through curses), but it
-        # must not override NO_COLOR — so drop the color system entirely when
-        # color is disabled while keeping the same width measurement.
+        # force_terminal=True keeps render_lines width-correct offscreen but must
+        # not override NO_COLOR, so drop the color system when color is disabled.
         console = (
             Console(width=text_width, color_system=None, force_terminal=True)
             if self._no_color_active()

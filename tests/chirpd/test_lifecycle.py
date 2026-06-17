@@ -220,7 +220,7 @@ def test_main_runs_serve_until_cancelled(
         try:
             tmp_dir.rmdir()
         except OSError:
-            # Best-effort cleanup: the temp directory may be missing or non-empty.
+            # best-effort cleanup
             pass
 
 
@@ -242,12 +242,12 @@ async def test_run_returns_when_serve_task_cancelled(
     try:
         await asyncio.wait_for(run_task, timeout=1.0)
     except asyncio.CancelledError:
-        # Best-effort teardown: the task is already being cancelled.
+        # best-effort teardown
         pass
     try:
         if socket_path.exists():
             socket_path.unlink()
         tmp_dir.rmdir()
     except OSError:
-        # Best-effort cleanup: the temp directory may be missing or non-empty.
+        # best-effort cleanup
         pass
