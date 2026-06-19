@@ -21,7 +21,7 @@ import tomli_w
 from pydantic import BaseModel, Field, ValidationError
 
 from chirpd.paths import MODELS_TOML_PATH
-from llm.exceptions import LLMMalformedResponse, LLMModelNotFound
+from llm.exceptions import LLMError, LLMMalformedResponse, LLMModelNotFound
 
 SUPPORTED_SCHEMA_VERSION = 1
 
@@ -91,6 +91,26 @@ def read_registry(path: Path | None = None) -> Registry:
             f"models.toml at {target} failed validation: {err}",
             details={"path": str(target), "errors": err.errors()},
         ) from err
+
+
+def resolved_chat_model(fallback: str | None = None, path: Path | None = None) -> str:
+    """Best-effort display name for the active chat model.
+
+    Returns the registry's configured default chat alias when present, so user
+    surfaces (``chirp about``, ``chirp config --list``, generated ``meta.toml``)
+    reflect the model that actually serves requests rather than the legacy
+    ``settings.models.llm`` value. Falls back to ``fallback`` when the registry
+    has no usable default and never raises — display sites must tolerate a
+    missing or unreadable registry.
+    """
+    try:
+        registry = read_registry(path)
+    except LLMError:
+        return fallback or "unset"
+    alias = registry.default_chat
+    if alias and alias in registry.models:
+        return alias
+    return fallback or "unset"
 
 
 def resolve_alias(

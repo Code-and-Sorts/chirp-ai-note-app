@@ -2,7 +2,7 @@
 
 - **Epic ID:** EPIC-PRODUCTION-HARDENING
 - **Owner:** Colby
-- **Status:** In-progress — stories 8.1–8.6 created from the 2026-06-14 production-readiness audit. Closes the packaging blocker, the RAG correctness/scale gaps, the daemon/client reliability gaps, the audio/transcription reliability gaps, the CLI/TUI best-practice gaps, and the config/CI quality-gate gaps that stand between the current `0.0.1a0` alpha and a defensible `0.1.0`.
+- **Status:** Done
 - **Created:** 2026-06-14
 - **Design source:** Production-readiness audit (2026-06-14), conducted across all nine runtime packages + tests/CI/packaging. Two headline RAG bugs verified directly in source. References [`prd.md`](../prd.md), [`architecture.md`](../architecture.md), and the `.docs/` design notes (`hybrid-retrieval.md`, `embeddings.md`, `chunking.md`).
 - **Related branch (current work):** TBD

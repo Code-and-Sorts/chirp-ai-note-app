@@ -2,7 +2,7 @@
 
 - **Epic ID:** EPIC-DAEMON-LIFECYCLE
 - **Owner:** Colby
-- **Status:** Draft
+- **Status:** Done
 - **Created:** 2026-05-15
 - **Design source:** `_bmad-output/planning-artifacts/prd.md` (FR39–FR45, NFR-O1/O2/O3, NFR-R2/R3); `_bmad-output/planning-artifacts/architecture.md` § Daemon Lifecycle Integration with launchd, § Implementation Patterns → Logging Discipline
 - **Related branch (current work):** TBD

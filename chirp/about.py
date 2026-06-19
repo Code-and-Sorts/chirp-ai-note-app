@@ -30,6 +30,7 @@ from chirp.branding import (
     REPO,
     TAGLINE,
 )
+from llm.registry import resolved_chat_model
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -158,7 +159,7 @@ def run_about(
 
     notes_root = settings.directories.notes_root
     notes_count = _count_notes(notes_root)
-    chat_model = settings.models.llm
+    chat_model = resolved_chat_model(settings.models.llm)
     embed_model = settings.notes_chat.emb_model
     version = _installed_version()
 
@@ -228,7 +229,7 @@ def render_about_plain(console: Console, settings) -> None:
     """
     notes_root = settings.directories.notes_root
     notes_count = _count_notes(notes_root)
-    chat_model = settings.models.llm
+    chat_model = resolved_chat_model(settings.models.llm)
     embed_model = settings.notes_chat.emb_model
     version = _installed_version()
 

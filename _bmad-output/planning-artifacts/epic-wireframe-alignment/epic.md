@@ -2,7 +2,7 @@
 
 - **Epic ID:** EPIC-WF-ALIGN
 - **Owner:** Colby
-- **Status:** Draft
+- **Status:** Done
 - **Created:** 2026-04-20
 - **Design source:** Chirp CLI Wireframes — Direction A ("Classic subcommands"); locked design
 - **Related branch (current work):** `claude/implement-chirp-cli-IoXWx`

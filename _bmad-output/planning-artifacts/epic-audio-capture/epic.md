@@ -2,7 +2,7 @@
 
 - **Epic ID:** EPIC-AUDIO-CAPTURE
 - **Owner:** Colby
-- **Status:** Draft
+- **Status:** Done
 - **Created:** 2026-04-27
 - **Design source:** `audio_capture` technical spec (in-conversation, 2026-04-27); macOS-only v1
 - **Related branch (current work):** `claude/implement-chirp-cli-IoXWx`
