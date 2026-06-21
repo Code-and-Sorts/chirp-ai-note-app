@@ -29,15 +29,15 @@ _XML_TOKENS = [
     '<?xml version="1.0" encoding="UTF-8"?>\n',
     "<MEETING_NOTES>\n",
     "<MEETING_TITLE>Quarterly Planning</MEETING_TITLE>\n",
-    "<EXECUTIVE_SUMMARY>The team aligned on Q3 priorities and owners."
+    "<EXECUTIVE_SUMMARY>The team aligned on Q3 priorities and owners.",
     "</EXECUTIVE_SUMMARY>\n",
     "<AGENDA><ITEM>Review roadmap</ITEM><ITEM>Assign owners</ITEM></AGENDA>\n",
-    '<ACTION_ITEMS><ITEM task="Draft spec" owner="Sam" deadline="2026-07-01"/>'
+    '<ACTION_ITEMS><ITEM task="Draft spec" owner="Sam" deadline="2026-07-01"/>',
     "</ACTION_ITEMS>\n",
     "<NEXT_STEPS><ITEM>Circulate notes</ITEM></NEXT_STEPS>\n",
     "<DECISIONS><ITEM>Ship the alpha</ITEM></DECISIONS>\n",
     "<OPEN_QUESTIONS>None</OPEN_QUESTIONS>\n",
-    "<DISCUSSION_HIGHLIGHTS><ITEM>Strong demo feedback</ITEM>"
+    "<DISCUSSION_HIGHLIGHTS><ITEM>Strong demo feedback</ITEM>",
     "</DISCUSSION_HIGHLIGHTS>\n",
     "</MEETING_NOTES>\n",
 ]
