@@ -183,7 +183,14 @@ class NotesChatConfig(BaseModel):
     overlap: int = 200
     k: int = 10
     ctx_char_budget: int = 8000
-    index_dir: Path = Field(default_factory=default_chirp_home)
+    index_dir: Path = Field(
+        default_factory=default_chirp_home,
+        description=(
+            "Root directory for search-index artifacts. The Chroma vector store "
+            "lives at index_dir/chroma; manifest.json and bm25.json sit directly "
+            "under index_dir, and per-query caches under index_dir/cache."
+        ),
+    )
     auto_index: bool = True
 
     @field_validator("index_dir", mode="before")

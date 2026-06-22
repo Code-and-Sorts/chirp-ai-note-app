@@ -10,6 +10,7 @@ from rich.console import Console
 
 from config.settings import ChirpSettings
 from llm.client import LLMClient
+from llm.registry import resolved_chat_model
 from notes.constants import DEFAULT_MEETING_NAME
 from notes.template_engine import TemplateEngine
 from utils.file_utils import META_FILENAME, NOTES_FILENAME, NoteRecord, list_notes
@@ -289,7 +290,7 @@ class NoteGenerator:
                 meta = {}
 
         meta["whisper_model"] = self.settings.models.whisper
-        meta["llm_model"] = self.settings.models.llm
+        meta["llm_model"] = resolved_chat_model(self.settings.models.llm)
         meta["indexed_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
 
         meta_path.parent.mkdir(parents=True, exist_ok=True)
@@ -513,27 +514,13 @@ Return ONLY the XML document, no additional text before or after."""
             from notes_chat.index import IndexManager
 
             index_manager = IndexManager(self.settings)
-            # Guard the auto-index back door too: catch an embed-model change
-            # before appending mismatched vectors corrupts the index.
-            index_manager._ensure_embed_fingerprint()
-            success = index_manager._add_to_index(notes_path)
+            indexed = index_manager.add_note(
+                notes_path,
+                guard_embed_fingerprint=True,
+                incremental_bm25=True,
+            )
 
-            if success:
-                manifest = index_manager._load_manifest()
-                current_files = index_manager._scan_notes_files()
-
-                file_path = str(notes_path)
-                if file_path in current_files:
-                    manifest[file_path] = current_files[file_path]
-                    index_manager._save_manifest(manifest)
-
-                # Append only this note's chunks, not the whole corpus, so a
-                # burst of saves stays O(note) per save.
-                index_manager.append_bm25_for_file(file_path)
-                # Stamp a fresh auto-index-only corpus so a later model change
-                # is detectable.
-                index_manager._stamp_fingerprint_if_missing()
-
+            if indexed:
                 self.console.print(
                     f"[dim green]✓ Auto-indexed {notes_path.name}[/dim green]"
                 )

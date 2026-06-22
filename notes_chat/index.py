@@ -126,6 +126,50 @@ class IndexManager:
             logger.debug("Index build failed: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
 
+    def add_note(
+        self,
+        notes_path: Path,
+        *,
+        guard_embed_fingerprint: bool = False,
+        incremental_bm25: bool = False,
+    ) -> bool:
+        """Index a single note and persist its manifest + BM25 entries.
+
+        Returns ``True`` when the note was embedded and recorded. With
+        ``guard_embed_fingerprint`` an embed-model change raises
+        :class:`EmbedModelChanged` before mismatched vectors are appended (the
+        note-generation back door). ``incremental_bm25`` appends only this
+        note's chunks instead of rebuilding the whole BM25 index, keeping a
+        burst of saves O(note) per save.
+        """
+        if guard_embed_fingerprint:
+            self._ensure_embed_fingerprint()
+        if not self._add_to_index(notes_path):
+            return False
+
+        manifest = self._load_manifest()
+        current_files = self._scan_notes_files()
+        file_path = str(notes_path)
+        if file_path in current_files:
+            manifest[file_path] = current_files[file_path]
+            self._save_manifest(manifest)
+
+        if incremental_bm25:
+            self.append_bm25_for_file(file_path)
+            self._stamp_fingerprint_if_missing()
+        else:
+            self._rebuild_bm25()
+        return True
+
+    def remove_note(self, notes_path: str | Path) -> None:
+        """Drop a single note from the vector index, manifest, and BM25."""
+        file_path = str(notes_path)
+        self._remove_from_index(file_path)
+        manifest = self._load_manifest()
+        manifest.pop(file_path, None)
+        self._save_manifest(manifest)
+        self._rebuild_bm25()
+
     def _force_rebuild(
         self, progress_callback: Callable | None = None
     ) -> dict[str, Any]:

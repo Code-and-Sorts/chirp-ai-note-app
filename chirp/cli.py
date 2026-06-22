@@ -23,6 +23,7 @@ from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingErro
 from config.settings import ChirpSettings, get_settings
 from llm.cli.daemon import daemon_app
 from llm.cli.models import app as models_app
+from llm.registry import resolved_chat_model
 from utils.file_utils import NoteRecord, list_notes
 
 logger = logging.getLogger(__name__)
@@ -114,8 +115,16 @@ def main(
         "--plain",
         help="Disable colored output (also honors the NO_COLOR env var).",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        "--debug",
+        help="Enable verbose debug logging to stderr for troubleshooting.",
+    ),
 ) -> None:
     """Chirp · AI notes for your terminal."""
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
     apply_color_mode(no_color)
 
 
@@ -994,14 +1003,7 @@ def _reindex_after_edit(settings: ChirpSettings, record: NoteRecord) -> None:
         from notes_chat.index import IndexManager
 
         index_manager = IndexManager(settings)
-        if index_manager._add_to_index(notes_path):
-            manifest = index_manager._load_manifest()
-            current_files = index_manager._scan_notes_files()
-            file_path = str(notes_path)
-            if file_path in current_files:
-                manifest[file_path] = current_files[file_path]
-                index_manager._save_manifest(manifest)
-            index_manager._rebuild_bm25()
+        if index_manager.add_note(notes_path):
             console.print(
                 f"[dim green]{glyphs.SUCCESS} re-indexed {notes_path.name}[/dim green]"
             )
@@ -1053,11 +1055,7 @@ def _drop_from_index(settings: ChirpSettings, notes_path: Path) -> None:
         from notes_chat.index import IndexManager
 
         index_manager = IndexManager(settings)
-        index_manager._remove_from_index(str(notes_path))
-        manifest = index_manager._load_manifest()
-        manifest.pop(str(notes_path), None)
-        index_manager._save_manifest(manifest)
-        index_manager._rebuild_bm25()
+        index_manager.remove_note(notes_path)
     except Exception as exc:  # noqa: BLE001 - defensive auto-index; IndexManager can raise many types
         logger.debug("Failed to update index after delete: %s", exc)
         console.print(f"[dim yellow]failed to update index: {exc}[/dim yellow]")
@@ -1289,7 +1287,7 @@ Notes Root: {settings.directories.notes_root}
 
 [cyan]Models:[/cyan]
 Whisper: {settings.models.whisper}
-LLM: {settings.models.llm}
+LLM: {resolved_chat_model(settings.models.llm)}
 Embedding: {settings.notes_chat.emb_model}
 
 [cyan]Audio:[/cyan]

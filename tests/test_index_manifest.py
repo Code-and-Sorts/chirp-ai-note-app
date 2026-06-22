@@ -1,7 +1,9 @@
 import os
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 import tomli_w
 
 from config.settings import ChirpSettings
@@ -348,3 +350,104 @@ Test meeting content
         alias, dim = reopened._stored_fingerprint()
         assert alias == "bge-small"
         assert dim == 384
+
+
+class TestSingleNoteIndexing:
+    def test_add_note_incremental_with_guard(self, tmp_path):
+        """AC-6 / L1: guarded incremental add appends BM25 and never rebuilds."""
+        config = _make_config(tmp_path)
+        note_file = _seed_note(tmp_path)
+        manager = IndexManager(config)
+
+        with (
+            patch.object(manager, "_ensure_embed_fingerprint") as ensure_fp,
+            patch.object(manager, "_add_to_index", return_value=True) as add_idx,
+            patch.object(manager, "_save_manifest") as save_manifest,
+            patch.object(manager, "append_bm25_for_file") as append_bm25,
+            patch.object(manager, "_rebuild_bm25") as rebuild_bm25,
+            patch.object(manager, "_stamp_fingerprint_if_missing") as stamp_fp,
+        ):
+            result = manager.add_note(
+                note_file, guard_embed_fingerprint=True, incremental_bm25=True
+            )
+
+        assert result is True
+        ensure_fp.assert_called_once()
+        add_idx.assert_called_once_with(note_file)
+        save_manifest.assert_called_once()
+        append_bm25.assert_called_once_with(str(note_file))
+        stamp_fp.assert_called_once()
+        rebuild_bm25.assert_not_called()
+
+    def test_add_note_defaults_full_rebuild_no_guard(self, tmp_path):
+        config = _make_config(tmp_path)
+        note_file = _seed_note(tmp_path)
+        manager = IndexManager(config)
+
+        with (
+            patch.object(manager, "_ensure_embed_fingerprint") as ensure_fp,
+            patch.object(manager, "_add_to_index", return_value=True),
+            patch.object(manager, "_save_manifest"),
+            patch.object(manager, "append_bm25_for_file") as append_bm25,
+            patch.object(manager, "_rebuild_bm25") as rebuild_bm25,
+        ):
+            result = manager.add_note(note_file)
+
+        assert result is True
+        ensure_fp.assert_not_called()
+        rebuild_bm25.assert_called_once()
+        append_bm25.assert_not_called()
+
+    def test_add_note_returns_false_when_index_fails(self, tmp_path):
+        config = _make_config(tmp_path)
+        note_file = _seed_note(tmp_path)
+        manager = IndexManager(config)
+
+        with (
+            patch.object(manager, "_add_to_index", return_value=False),
+            patch.object(manager, "_save_manifest") as save_manifest,
+            patch.object(manager, "_rebuild_bm25") as rebuild_bm25,
+            patch.object(manager, "append_bm25_for_file") as append_bm25,
+        ):
+            result = manager.add_note(note_file)
+
+        assert result is False
+        save_manifest.assert_not_called()
+        rebuild_bm25.assert_not_called()
+        append_bm25.assert_not_called()
+
+    def test_add_note_propagates_embed_model_change(self, tmp_path):
+        from chirp.exceptions import EmbedModelChanged
+
+        config = _make_config(tmp_path)
+        note_file = _seed_note(tmp_path)
+        manager = IndexManager(config)
+
+        with (
+            patch.object(
+                manager,
+                "_ensure_embed_fingerprint",
+                side_effect=EmbedModelChanged("changed"),
+            ),
+            patch.object(manager, "_add_to_index") as add_idx,
+            pytest.raises(EmbedModelChanged),
+        ):
+            manager.add_note(note_file, guard_embed_fingerprint=True)
+
+        add_idx.assert_not_called()
+
+    def test_remove_note(self, tmp_path):
+        config = _make_config(tmp_path)
+        note_file = _seed_note(tmp_path)
+        manager = IndexManager(config)
+
+        with (
+            patch.object(manager, "_remove_from_index") as remove_idx,
+            patch.object(manager, "_save_manifest") as save_manifest,
+            patch.object(manager, "_rebuild_bm25") as rebuild_bm25,
+        ):
+            manager.remove_note(note_file)
+
+        remove_idx.assert_called_once_with(str(note_file))
+        save_manifest.assert_called_once()
+        rebuild_bm25.assert_called_once()
