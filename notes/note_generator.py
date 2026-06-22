@@ -514,9 +514,6 @@ Return ONLY the XML document, no additional text before or after."""
             from notes_chat.index import IndexManager
 
             index_manager = IndexManager(self.settings)
-            # Guard the auto-index back door (guard_embed_fingerprint) so an
-            # embed-model change is caught before mismatched vectors corrupt the
-            # index; incremental_bm25 keeps a burst of saves O(note) per save.
             indexed = index_manager.add_note(
                 notes_path,
                 guard_embed_fingerprint=True,

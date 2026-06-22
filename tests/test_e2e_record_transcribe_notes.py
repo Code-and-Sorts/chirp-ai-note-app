@@ -23,8 +23,6 @@ from notes.note_generator import NoteGenerator
 
 pytestmark = pytest.mark.integration
 
-# A valid structured-notes XML document, split into streamed tokens so the fake
-# client exercises NoteGenerator._call_llm's token-join path.
 _XML_TOKENS = [
     '<?xml version="1.0" encoding="UTF-8"?>\n',
     "<MEETING_NOTES>\n",
@@ -48,7 +46,6 @@ def _seed_recorded_and_transcribed_note(notes_root: Path) -> Path:
     note_dir = notes_root / "quarterly-planning-2026-06-19"
     note_dir.mkdir(parents=True)
 
-    # `record` stage: an audio.wav plus the meta.toml it seeds.
     (note_dir / "audio.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfake-audio")
     with (note_dir / "meta.toml").open("wb") as fh:
         tomli_w.dump(
@@ -60,7 +57,6 @@ def _seed_recorded_and_transcribed_note(notes_root: Path) -> Path:
             fh,
         )
 
-    # `transcribe` stage: the transcript.txt note generation consumes (>= 50 chars).
     (note_dir / "transcript.txt").write_text(
         "We reviewed the Q3 roadmap, assigned owners, and agreed to ship the "
         "alpha after one more round of demo feedback.",
@@ -77,8 +73,6 @@ def test_record_transcribe_notes_produces_all_artifacts(
 
     settings = ChirpSettings(
         directories=DirectoriesConfig(notes_root=notes_root),
-        # Keep the assertion on artifacts; the embedding index needs Chroma and a
-        # live embed model, which are out of scope for this happy-path check.
         notes_chat=NotesChatConfig(auto_index=False),
     )
 
@@ -90,7 +84,6 @@ def test_record_transcribe_notes_produces_all_artifacts(
 
     assert result["success"], result
 
-    # All four canonical artifacts exist after the pipeline.
     for name in ("audio.wav", "transcript.txt", "notes.md", "meta.toml"):
         assert (note_dir / name).exists(), f"missing {name}"
 
@@ -101,9 +94,7 @@ def test_record_transcribe_notes_produces_all_artifacts(
     with (note_dir / "meta.toml").open("rb") as fh:
         meta = tomllib.load(fh)
     assert meta["whisper_model"] == settings.models.whisper
-    # Review item 3: llm_model reflects a resolved name, not an empty value.
     assert meta["llm_model"]
     assert meta["title"] == "Quarterly Planning"
 
-    # The fake was actually exercised by note generation.
     assert fake.chat_stream_sync.calls
