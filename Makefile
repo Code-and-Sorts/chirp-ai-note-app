@@ -138,8 +138,10 @@ setup: install ## Initial setup for new installations
 	@echo "  2. Run 'make verify-deps' to verify setup"
 
 # Build commands
-build: ## Build package
-	uv build
+# Wheel-only: the helper bundle is force-included (hatch_build.py), which gets
+# double-added when a wheel is built from an sdist, so never build the sdist.
+build: ## Build the wheel
+	uv build --wheel
 
 
 # Cleaning commands
