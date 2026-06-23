@@ -1,9 +1,11 @@
 import json
 import logging
+import logging.handlers
 import math
 import platform
 import sys
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -99,6 +101,82 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _cli_log_path() -> Path:
+    subdir = (
+        Path.home() / "Library" / "Logs" / "chirp"
+        if sys.platform == "darwin"
+        else Path.home() / ".cache" / "chirp"
+    )
+    return subdir / "chirp.log"
+
+
+def _configure_cli_logging(verbose: bool) -> None:
+    """Send chirp's logs to a rotating file, and to stderr only with --verbose.
+
+    The ``record`` and live-transcription TUIs drive a Rich ``Live`` display on
+    stderr. A logging ``StreamHandler`` on the same stream (the old
+    ``basicConfig`` default) interleaves WARNING lines into the live frame,
+    breaking its in-place redraw and flashing errors away before they can be
+    read. Routing to a file keeps those diagnostics durable and off the TTY.
+    """
+    level = logging.DEBUG if verbose else logging.WARNING
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    for handler in list(root.handlers):
+        if getattr(handler, "_chirp_cli_managed", False):
+            root.removeHandler(handler)
+            handler.close()
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    handlers: list[logging.Handler] = []
+
+    log_path = _cli_log_path()
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_path, maxBytes=5 * 1024 * 1024, backupCount=2, encoding="utf-8"
+        )
+        file_handler.setFormatter(formatter)
+        handlers.append(file_handler)
+    except OSError:
+        verbose = True
+
+    if verbose:
+        stream_handler = logging.StreamHandler(sys.stderr)
+        stream_handler.setFormatter(formatter)
+        handlers.append(stream_handler)
+
+    for handler in handlers:
+        handler.setLevel(level)
+        handler._chirp_cli_managed = True  # type: ignore[attr-defined]
+        root.addHandler(handler)
+
+
+@contextmanager
+def _quiet_tty_logging():
+    """Detach TTY-bound log handlers for the duration of a Rich ``Live`` block.
+
+    Even under --verbose, a stderr handler would corrupt the live display, so
+    suspend any handler writing to stdout/stderr (the rotating file handler,
+    whose stream is the logfile, is left attached) and restore them after.
+    """
+    root = logging.getLogger()
+    suspended = [
+        handler
+        for handler in root.handlers
+        if isinstance(handler, logging.StreamHandler)
+        and getattr(handler, "stream", None) in (sys.stderr, sys.stdout)
+    ]
+    for handler in suspended:
+        root.removeHandler(handler)
+    try:
+        yield
+    finally:
+        for handler in suspended:
+            root.addHandler(handler)
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(
@@ -120,11 +198,11 @@ def main(
         "--verbose",
         "-v",
         "--debug",
-        help="Enable verbose debug logging to stderr for troubleshooting.",
+        help="Also echo debug logs to stderr (always written to the chirp log file).",
     ),
 ) -> None:
     """Chirp · AI notes for your terminal."""
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
+    _configure_cli_logging(verbose)
     apply_color_mode(no_color)
 
 
@@ -451,11 +529,14 @@ def record(
             live.update(_render_record_view(state), refresh=True)
 
         try:
-            with Live(
-                _render_record_view(state),
-                console=console,
-                refresh_per_second=10,
-            ) as live:
+            with (
+                _quiet_tty_logging(),
+                Live(
+                    _render_record_view(state),
+                    console=console,
+                    refresh_per_second=10,
+                ) as live,
+            ):
                 recorder.start_recording(
                     duration_minutes=duration,
                     title=title,
@@ -529,7 +610,8 @@ def _run_live_transcription(
     )
 
     try:
-        result: LiveSessionResult = session.run()
+        with _quiet_tty_logging():
+            result: LiveSessionResult = session.run()
     except ImportError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(exit_codes.RUNTIME_ERROR)
@@ -1386,7 +1468,7 @@ def devices():
 
     console.print()
     console.print(
-        "System audio is captured via the bundled CaptureAudio.app; no virtual driver required."
+        "System audio is captured via the bundled Chirp.app helper; no virtual driver required."
     )
     if platform.system() == "Darwin":
         try:
