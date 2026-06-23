@@ -9,8 +9,8 @@ This document outlines a pragmatic, phased plan to add speaker detection to Chir
   - Minimal impact on the current CLI until we flip it on
 
 - Scope
-  - macOS focus to start (BlackHole + Aggregate/Multi-Output devices)
-  - Compatible with existing transcription (faster-whisper)
+  - macOS focus to start (bundled Chirp.app: ScreenCaptureKit system audio + mic)
+  - Compatible with existing transcription (mlx-whisper)
   - Future-compatible with Linux/Windows if desired
 
 ## Phase 0 — Prep and Guardrails
@@ -22,7 +22,7 @@ This document outlines a pragmatic, phased plan to add speaker detection to Chir
   - `diarization.align_words: true`
   - `diarization.mic_label.enabled: true`
 - Recorder readiness
-  - Dual capture (Mic + System via BlackHole) or Aggregate Device input (2 channels)
+  - Dual capture (Mic + System) via the bundled Chirp.app helper
   - Keep sample rate aligned (e.g., 48 kHz)
 - Tooling
   - `chirp status` and `chirp devices` surface device hints (Aggregate/Multi-Output)
