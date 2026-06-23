@@ -111,14 +111,7 @@ def _cli_log_path() -> Path:
 
 
 def _configure_cli_logging(verbose: bool) -> None:
-    """Send chirp's logs to a rotating file, and to stderr only with --verbose.
-
-    The ``record`` and live-transcription TUIs drive a Rich ``Live`` display on
-    stderr. A logging ``StreamHandler`` on the same stream (the old
-    ``basicConfig`` default) interleaves WARNING lines into the live frame,
-    breaking its in-place redraw and flashing errors away before they can be
-    read. Routing to a file keeps those diagnostics durable and off the TTY.
-    """
+    # stderr handlers corrupt the record/live Rich Live TUIs (also on stderr).
     level = logging.DEBUG if verbose else logging.WARNING
     root = logging.getLogger()
     root.setLevel(level)
@@ -155,12 +148,6 @@ def _configure_cli_logging(verbose: bool) -> None:
 
 @contextmanager
 def _quiet_tty_logging():
-    """Detach TTY-bound log handlers for the duration of a Rich ``Live`` block.
-
-    Even under --verbose, a stderr handler would corrupt the live display, so
-    suspend any handler writing to stdout/stderr (the rotating file handler,
-    whose stream is the logfile, is left attached) and restore them after.
-    """
     root = logging.getLogger()
     suspended = [
         handler
