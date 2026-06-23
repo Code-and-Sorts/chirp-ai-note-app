@@ -113,15 +113,11 @@ class TestTranscribeCli:
         return FakeBatchProcessor
 
     def test_model_override_passed_to_batch_processor(self, tmp_path, monkeypatch):
-        import sys
-        from unittest.mock import MagicMock
-
         settings = _make_settings(tmp_path)
         self._seed_note_with_audio(tmp_path)
         captured: dict = {}
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-        monkeypatch.setitem(sys.modules, "faster_whisper", MagicMock())
         monkeypatch.setattr(
             "transcriber.batch_processor.BatchProcessor",
             self._fake_processor(captured),
@@ -140,15 +136,11 @@ class TestTranscribeCli:
         assert captured["force"] is False
 
     def test_n_and_force_passed_through(self, tmp_path, monkeypatch):
-        import sys
-        from unittest.mock import MagicMock
-
         settings = _make_settings(tmp_path)
         self._seed_note_with_audio(tmp_path)
         captured: dict = {}
 
         monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
-        monkeypatch.setitem(sys.modules, "faster_whisper", MagicMock())
         monkeypatch.setattr(
             "transcriber.batch_processor.BatchProcessor",
             self._fake_processor(captured),

@@ -38,7 +38,7 @@ chirpd = "chirpd.__main__:main"
 packages = ["audio_capture", "chirp", "chirpd", "config", "llm", "notes", "notes_chat", "recorder", "transcriber", "utils"]
 
 [tool.hatch.build.hooks.custom]
-# hatch_build.py conditionally includes CaptureAudio.app when present
+# hatch_build.py conditionally includes Chirp.app when present
 
 [project.optional-dependencies]
 dev = [
@@ -57,7 +57,7 @@ dev = [
 [tool.ruff]
 target-version = "py311"
 line-length = 88
-extend-exclude = ["audio_capture/swift", "audio_capture/CaptureAudio.app"]
+extend-exclude = ["audio_capture/swift", "audio_capture/Chirp.app"]
 
 [tool.ruff.lint]
 select = [

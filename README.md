@@ -19,7 +19,7 @@ Chirp is a local-first CLI for recording meetings, transcribing audio, generatin
 
 ## Prerequisites
 
-Chirp currently targets **macOS 13.0 (Ventura) or later** for audio capture. The bundled `CaptureAudio.app` helper uses ScreenCaptureKit's audio-only mode, which requires macOS 13+.
+Chirp currently targets **macOS 13.0 (Ventura) or later** for audio capture. The bundled `Chirp.app` helper uses ScreenCaptureKit's audio-only mode, which requires macOS 13+.
 
 - macOS 13.0+ on **Apple Silicon** (M1/M2/M3/M4 or newer — chirpd runs models on MLX)
 - Python 3.11+
@@ -132,7 +132,7 @@ chirp search "owner: .*" --regex --json
 
 ## Setup details
 
-`chirp init` is the recommended setup path. It checks for Apple Silicon, verifies Homebrew and `ffmpeg`, confirms the bundled chirpd daemon is reachable, reports whether a default chat model is registered, and checks the screen-recording permission — then helps install anything missing and offers to start chirpd at login. The bundled `CaptureAudio.app` records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
+`chirp init` is the recommended setup path. It checks for Apple Silicon, verifies Homebrew and `ffmpeg`, confirms the bundled chirpd daemon is reachable, reports whether a default chat model is registered, and checks the screen-recording permission — then helps install anything missing and offers to start chirpd at login. The bundled `Chirp.app` helper records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
 
 If you prefer to set things up manually on macOS:
 

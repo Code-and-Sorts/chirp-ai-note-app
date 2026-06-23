@@ -1,4 +1,4 @@
-"""Hatchling build hook: bundle CaptureAudio.app and platform-tag the wheel.
+"""Hatchling build hook: bundle Chirp.app and platform-tag the wheel.
 
 The Swift helper is a build artifact (gitignored).  A plain force-include
 entry errors at install time in environments that haven't run the Swift
@@ -21,10 +21,10 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 class CustomBuildHook(BuildHookInterface):
     def initialize(self, version: str, build_data: dict) -> None:
-        app_src = Path(__file__).parent / "audio_capture" / "CaptureAudio.app"
+        app_src = Path(__file__).parent / "audio_capture" / "Chirp.app"
         if app_src.is_dir():
-            build_data["force_include"]["audio_capture/CaptureAudio.app"] = (
-                "audio_capture/CaptureAudio.app"
+            build_data["force_include"]["audio_capture/Chirp.app"] = (
+                "audio_capture/Chirp.app"
             )
             # py3-none: helper is a subprocess, not a C extension. macosx_13_0
             # matches its build target so pip refuses the wheel on macOS 11/12.

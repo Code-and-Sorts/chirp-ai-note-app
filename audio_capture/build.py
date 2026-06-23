@@ -3,7 +3,7 @@
 Usage: ``python -m audio_capture.build``
 
 Verifies that ``swiftc`` is available at Swift 5.9 or newer, then shells out
-to the Makefile in ``audio_capture/swift`` to produce ``CaptureAudio.app``.
+to the Makefile in ``audio_capture/swift`` to produce ``Chirp.app``.
 """
 
 from __future__ import annotations
@@ -69,17 +69,14 @@ def main() -> int:
     if proc.returncode != 0:
         return proc.returncode
 
-    bundle = Path(__file__).parent / "CaptureAudio.app"
+    bundle = Path(__file__).parent / "Chirp.app"
     binary = bundle / "Contents" / "MacOS" / "capture_audio"
 
-    # Replace the linker-applied ad-hoc signature with a proper bundle-level
-    # ad-hoc signature so Info.plist is bound and the bundle identifier
-    # (com.codeandsorts.chirp.capture-audio) is the code identity TCC uses.
-    # Without this, macOS attributes screen-recording / mic prompts to the
-    # parent process (Terminal/IDE) and Chirp never appears in System
-    # Settings → Privacy & Security.
+    # Ad-hoc ("-") re-prompts for TCC on every rebuild (cdhash changes); a
+    # self-signed CHIRP_CODESIGN_IDENTITY gives a stable designated requirement.
+    identity = os.environ.get("CHIRP_CODESIGN_IDENTITY") or "-"
     sign_proc = subprocess.run(
-        ["codesign", "--force", "--deep", "--sign", "-", str(bundle)]
+        ["codesign", "--force", "--deep", "--sign", identity, str(bundle)]
     )
     if sign_proc.returncode != 0:
         sys.stderr.write("codesign failed; the bundle is unsigned\n")

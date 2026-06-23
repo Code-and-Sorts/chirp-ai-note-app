@@ -1,6 +1,7 @@
 ARCH ?= $(shell uname -m)
 SWIFT ?= swiftc
-BUNDLE := ../CaptureAudio.app
+SIGN_IDENTITY := $(or $(CHIRP_CODESIGN_IDENTITY),-)
+BUNDLE := ../Chirp.app
 MACOS_DIR := $(BUNDLE)/Contents/MacOS
 BINARY := $(MACOS_DIR)/capture_audio
 PLIST_DEST := $(BUNDLE)/Contents/Info.plist
@@ -14,7 +15,7 @@ VERSION := $(shell awk -F'"' '/^version[[:space:]]*=/ {print $$2; exit}' $(PYPRO
 build: $(BINARY) $(PLIST_DEST) codesign
 
 codesign:
-	codesign --force --deep --sign - $(BUNDLE)
+	codesign --force --deep --sign "$(SIGN_IDENTITY)" $(BUNDLE)
 
 $(MACOS_DIR):
 	mkdir -p $(MACOS_DIR)

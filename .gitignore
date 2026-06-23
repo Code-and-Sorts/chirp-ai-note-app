@@ -207,7 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 # Chirp specific
-audio_capture/CaptureAudio.app/
+audio_capture/Chirp.app/
 to-transcribe/*.wav
 to-transcribe/*.m4a
 to-transcribe/*.mp3

@@ -134,27 +134,12 @@ setup: install ## Initial setup for new installations
 	uv run pre-commit install
 	@echo "Chirp setup complete!"
 	@echo "Next steps:"
-	@echo "  1. Install BlackHole: make setup-blackhole"
-	@echo "  2. Register a chat model: uv run chirp models add mlx-community/gemma-4-4b-it-4bit"
-	@echo "  3. Run 'make verify-deps' to verify setup"
-
-setup-blackhole: ## Show BlackHole installation instructions
-	@echo "BlackHole Audio Driver Installation"
-	@echo ""
-	@echo "1. Install BlackHole:"
-	@echo "   brew install blackhole-2ch"
-	@echo ""
-	@echo "2. Configure Audio MIDI Setup:"
-	@echo "   - Open Audio MIDI Setup (Applications/Utilities)"
-	@echo "   - Create a Multi-Output Device"
-	@echo "   - Include both your speakers and BlackHole"
-	@echo "   - Set this as your default output device"
-	@echo ""
-	@echo "3. Verify with: make verify-deps"
+	@echo "  1. Register a chat model: uv run chirp models add mlx-community/gemma-4-4b-it-4bit"
+	@echo "  2. Run 'make verify-deps' to verify setup"
 
 # Build commands
-build: ## Build package
-	uv build
+build: ## Build the wheel (never the sdist: force-included helper double-adds)
+	uv build --wheel
 
 
 # Cleaning commands

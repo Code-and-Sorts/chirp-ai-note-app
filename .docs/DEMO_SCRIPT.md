@@ -214,7 +214,6 @@ chirp devices
 
 # Lists:
 # - Available input devices
-# - BlackHole status
 # - Recommended device
 ```
 
@@ -224,7 +223,6 @@ chirp devices
 chirp test
 
 # Tests:
-# ✓ BlackHole installation
 # ✓ chirpd daemon readiness
 # ✓ Registered default chat model
 # ✓ Embedding model (nomic-embed-text)

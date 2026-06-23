@@ -38,6 +38,13 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      MACOS_CERT_P12:
+        required: false
+      MACOS_CERT_PASSWORD:
+        required: false
+      MACOS_SIGN_IDENTITY:
+        required: false
     outputs:
       build-successful:
         description: 'Whether the build was successful'
@@ -146,25 +153,46 @@ jobs:
         RELEASE_TAG: ${{ inputs.package-version }}
       run: cd scripts && uv run python update_release_version.py
 
+    - name: 🔎 Check Developer ID signing secrets (macOS only)
+      id: signing
+      if: runner.os == 'macOS'
+      env:
+        CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      run: |
+        if [ -n "$CERT_P12" ]; then
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: 🔑 Import Developer ID certificate (macOS, when secrets present)
+      if: ${{ runner.os == 'macOS' && steps.signing.outputs.enabled == 'true' }}
+      uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
+      with:
+        p12-file-base64: ${{ secrets.MACOS_CERT_P12 }}
+        p12-password: ${{ secrets.MACOS_CERT_PASSWORD }}
+
     - name: 🍎 Build native audio_capture helper (macOS only)
       if: runner.os == 'macOS'
       # MUST run after the version-bump steps above and before the wheel build:
       # the Swift Makefile stamps Info.plist from pyproject's version at build
-      # time, and the wheel bundles the ad-hoc code-signed CaptureAudio.app whose
-      # signature is the helper's TCC (Screen-Recording/Mic) permission identity
+      # time, and the wheel bundles the code-signed Chirp.app whose signature is
+      # the helper's TCC (Screen-Recording/Mic) permission identity
       # (com.codeandsorts.chirp.capture-audio). Reordering would ship a stale
       # version or an unsigned helper.
+      env:
+        CHIRP_CODESIGN_IDENTITY: ${{ steps.signing.outputs.enabled == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
       run: uv run python -m audio_capture.build
 
     - name: 🔖 Verify bundled helper version matches pyproject (macOS only)
       if: runner.os == 'macOS'
       run: |
-        plist="audio_capture/CaptureAudio.app/Contents/Info.plist"
+        plist="audio_capture/Chirp.app/Contents/Info.plist"
         bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
         project_version=$(uv run python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
         echo "bundle=$bundle_version project=$project_version"
         if [ "$bundle_version" != "$project_version" ]; then
-          echo "::error::CaptureAudio.app Info.plist version ($bundle_version) != pyproject version ($project_version); rebuild the helper after the version bump." >&2
+          echo "::error::Chirp.app Info.plist version ($bundle_version) != pyproject version ($project_version); rebuild the helper after the version bump." >&2
           exit 1
         fi
 
