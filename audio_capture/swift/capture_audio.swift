@@ -48,6 +48,9 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stoppedLock = os_unfair_lock()
     private var stopped = false
     private var micConverterErrorReported = false
+    private var micEmittedSamples: UInt64 = 0
+    private var micAnchorUs: UInt64 = 0
+    private var micAnchored = false
 
     override init() {
         var info = mach_timebase_info_data_t()
@@ -174,7 +177,12 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
                   let channelData = outBuffer.floatChannelData?[0] else { return }
             let byteCount = frameLength * MemoryLayout<Float>.size
             let pcm = Data(bytes: channelData, count: byteCount)
-            let timestampUs = self.microsecondsSinceAnchor(hostTime: when.hostTime)
+            if !self.micAnchored {
+                self.micAnchorUs = self.microsecondsSinceAnchor(hostTime: when.hostTime)
+                self.micAnchored = true
+            }
+            let timestampUs = self.micAnchorUs &+ self.micEmittedSamples &* 1_000_000 / 16000
+            self.micEmittedSamples &+= UInt64(frameLength)
             self.writeFrame(source: 0x02, timestampUs: timestampUs, pcm: pcm)
         }
         try audioEngine.start()
