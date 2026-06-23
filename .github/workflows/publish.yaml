@@ -32,6 +32,7 @@ jobs:
       update-version-for-pr: false
       package-version: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
       run-integration-tests: false
+    secrets: inherit
 
   publish-package:
     needs: build-and-test
