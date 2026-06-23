@@ -492,7 +492,7 @@ def test_built_bundle_binary_is_executable(tmp_path: Path) -> None:
     bundle_binary = (
         repo_root
         / "audio_capture"
-        / "CaptureAudio.app"
+        / "Chirp.app"
         / "Contents"
         / "MacOS"
         / "capture_audio"
@@ -593,7 +593,7 @@ def test_wheel_bundles_executable_helper(tmp_path: Path) -> None:
     bundle_binary = (
         repo_root
         / "audio_capture"
-        / "CaptureAudio.app"
+        / "Chirp.app"
         / "Contents"
         / "MacOS"
         / "capture_audio"
@@ -614,7 +614,7 @@ def test_wheel_bundles_executable_helper(tmp_path: Path) -> None:
     assert len(wheels) == 1, f"expected one wheel, found {wheels}"
     wheel_path = wheels[0]
 
-    binary_in_wheel = "audio_capture/CaptureAudio.app/Contents/MacOS/capture_audio"
+    binary_in_wheel = "audio_capture/Chirp.app/Contents/MacOS/capture_audio"
     with zipfile.ZipFile(wheel_path) as zf:
         names = zf.namelist()
         assert binary_in_wheel in names, (
@@ -643,7 +643,7 @@ def test_wheel_is_platform_tagged_arm64(tmp_path: Path) -> None:
     bundle_binary = (
         repo_root
         / "audio_capture"
-        / "CaptureAudio.app"
+        / "Chirp.app"
         / "Contents"
         / "MacOS"
         / "capture_audio"

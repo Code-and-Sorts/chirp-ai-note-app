@@ -1,6 +1,6 @@
 ARCH ?= $(shell uname -m)
 SWIFT ?= swiftc
-BUNDLE := ../CaptureAudio.app
+BUNDLE := ../Chirp.app
 MACOS_DIR := $(BUNDLE)/Contents/MacOS
 BINARY := $(MACOS_DIR)/capture_audio
 PLIST_DEST := $(BUNDLE)/Contents/Info.plist

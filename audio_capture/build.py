@@ -3,7 +3,7 @@
 Usage: ``python -m audio_capture.build``
 
 Verifies that ``swiftc`` is available at Swift 5.9 or newer, then shells out
-to the Makefile in ``audio_capture/swift`` to produce ``CaptureAudio.app``.
+to the Makefile in ``audio_capture/swift`` to produce ``Chirp.app``.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def main() -> int:
     if proc.returncode != 0:
         return proc.returncode
 
-    bundle = Path(__file__).parent / "CaptureAudio.app"
+    bundle = Path(__file__).parent / "Chirp.app"
     binary = bundle / "Contents" / "MacOS" / "capture_audio"
 
     # Replace the linker-applied ad-hoc signature with a proper bundle-level

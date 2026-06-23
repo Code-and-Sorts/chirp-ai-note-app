@@ -150,7 +150,7 @@ jobs:
       if: runner.os == 'macOS'
       # MUST run after the version-bump steps above and before the wheel build:
       # the Swift Makefile stamps Info.plist from pyproject's version at build
-      # time, and the wheel bundles the ad-hoc code-signed CaptureAudio.app whose
+      # time, and the wheel bundles the ad-hoc code-signed Chirp.app whose
       # signature is the helper's TCC (Screen-Recording/Mic) permission identity
       # (com.codeandsorts.chirp.capture-audio). Reordering would ship a stale
       # version or an unsigned helper.
@@ -159,12 +159,12 @@ jobs:
     - name: 🔖 Verify bundled helper version matches pyproject (macOS only)
       if: runner.os == 'macOS'
       run: |
-        plist="audio_capture/CaptureAudio.app/Contents/Info.plist"
+        plist="audio_capture/Chirp.app/Contents/Info.plist"
         bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
         project_version=$(uv run python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
         echo "bundle=$bundle_version project=$project_version"
         if [ "$bundle_version" != "$project_version" ]; then
-          echo "::error::CaptureAudio.app Info.plist version ($bundle_version) != pyproject version ($project_version); rebuild the helper after the version bump." >&2
+          echo "::error::Chirp.app Info.plist version ($bundle_version) != pyproject version ($project_version); rebuild the helper after the version bump." >&2
           exit 1
         fi
 

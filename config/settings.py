@@ -140,7 +140,7 @@ class VadParameters(BaseModel):
 
 
 class AudioConfig(BaseModel):
-    # The bundled CaptureAudio.app helper produces 16 kHz mono float32
+    # The bundled Chirp.app helper produces 16 kHz mono float32
     # frames; the recorder paths write 16 kHz mono int16 WAVs. The fields
     # here describe the recorder's effective output format so the value
     # `chirp config` displays matches what's actually written to disk.

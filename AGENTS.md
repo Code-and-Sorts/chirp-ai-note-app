@@ -5,7 +5,7 @@ Chirp is a Typer-based CLI in `chirp/cli.py`. Runtime domains live in sibling pa
 
 ## Build, Test & Development Commands
 **Setup:** `make dev-install` installs system deps, syncs Python dependencies with `uv`, installs the package editable, and enables pre-commit hooks. Use `make install-venv` if the virtualenv already exists and you only need the editable install.
-**macOS toolchain:** building the bundled `CaptureAudio.app` helper needs `swiftc` (Swift 5.9+, macOS 13+), shipped with `xcode-select --install`. No separate C toolchain is required — the disclaim shim is consolidated into `capture_audio.swift`. Run `uv run python -m audio_capture.build` to (re)build the helper when you change Swift sources.
+**macOS toolchain:** building the bundled `Chirp.app` helper needs `swiftc` (Swift 5.9+, macOS 13+), shipped with `xcode-select --install`. No separate C toolchain is required — the disclaim shim is consolidated into `capture_audio.swift`. Run `uv run python -m audio_capture.build` to (re)build the helper when you change Swift sources.
 **Quality:** `make check` runs `validate`, `lint`, `format-check`, `spell-check`, and `type-check`. Use `make lint-fix` and `make format` before pushing.
 **Testing:** `make test`, `make test-coverage`, `make test-file FILE=tests/test_settings.py`, `make test-match PATTERN=slugify`, and `make test-failed`.
 **CLI verification:** `uv run chirp --help`, `uv run chirp init --recheck`, and `make verify-deps` are the current repo-supported smoke checks.

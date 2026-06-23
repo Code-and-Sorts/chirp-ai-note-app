@@ -1,6 +1,6 @@
 """Tagged dual-source audio capture for macOS.
 
-`AudioCapture` launches a bundled Swift helper (`CaptureAudio.app`) that
+`AudioCapture` launches a bundled Swift helper (`Chirp.app`) that
 streams system audio (via ScreenCaptureKit) and the default microphone (via
 AVAudioEngine) simultaneously, framed on stdout as
 ``[u8 source][u64 LE timestamp_us][u32 LE length][float32 PCM]``.
@@ -119,13 +119,13 @@ def _resolve_binary_path() -> contextlib.AbstractContextManager[Path]:
     package_root = Path(__file__).parent
     package_files = resources.files("audio_capture")
     binary_resource = (
-        package_files / "CaptureAudio.app" / "Contents" / "MacOS" / "capture_audio"
+        package_files / "Chirp.app" / "Contents" / "MacOS" / "capture_audio"
     )
     try:
         ctx = resources.as_file(binary_resource)
     except FileNotFoundError as exc:
         raise RuntimeError(
-            "CaptureAudio.app is not bundled in this installation. "
+            "Chirp.app is not bundled in this installation. "
             "The wheel must be built on macOS via `python -m audio_capture.build` "
             "before installation."
         ) from exc
@@ -135,7 +135,7 @@ def _resolve_binary_path() -> contextlib.AbstractContextManager[Path]:
             path = ctx.__enter__()
             if not path.is_relative_to(package_root):
                 raise RuntimeError(
-                    "resolved CaptureAudio.app path is outside the package directory"
+                    "resolved Chirp.app path is outside the package directory"
                 )
             return path
 
@@ -232,7 +232,7 @@ class AudioCapture:
             # `capture_audio` re-spawns itself with the macOS
             # `responsibility_spawnattrs_setdisclaim` flag set so the
             # screen-recording / mic prompts attribute to the bundled
-            # `CaptureAudio.app` (and a Chirp row appears in System
+            # `Chirp.app` (and a Chirp row appears in System
             # Settings) rather than inheriting the parent terminal's TCC
             # state. From Python's perspective the first invocation is a
             # tiny launcher shim; the second invocation does the actual
@@ -347,13 +347,13 @@ class AudioCapture:
             return PermissionError(
                 "Chirp needs microphone access. Open System Settings → "
                 "Privacy & Security → Microphone and grant access to "
-                "CaptureAudio.app, then try again."
+                "Chirp, then try again."
             )
         if code == "screen_recording_denied":
             return PermissionError(
                 "Chirp needs Screen Recording access. Open System Settings → "
                 "Privacy & Security → Screen Recording and grant access to "
-                "CaptureAudio.app, then try again."
+                "Chirp, then try again."
             )
         return AudioCaptureCrashed(f"capture_audio failed with error: {code}")
 
