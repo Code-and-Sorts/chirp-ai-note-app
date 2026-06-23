@@ -74,7 +74,7 @@ def main() -> int:
 
     # Ad-hoc ("-") re-prompts for TCC on every rebuild (cdhash changes); a
     # self-signed CHIRP_CODESIGN_IDENTITY gives a stable designated requirement.
-    identity = os.environ.get("CHIRP_CODESIGN_IDENTITY", "-")
+    identity = os.environ.get("CHIRP_CODESIGN_IDENTITY") or "-"
     sign_proc = subprocess.run(
         ["codesign", "--force", "--deep", "--sign", identity, str(bundle)]
     )
