@@ -1,5 +1,4 @@
 import threading
-import time
 from collections.abc import Callable
 from datetime import datetime
 
@@ -23,17 +22,20 @@ class MeetingMonitor:
         self.is_monitoring = False
         self.monitor_thread = None
         self.last_warning = None
+        self._wake = threading.Event()
 
     def start(self):
         if self.is_monitoring:
             return
 
         self.is_monitoring = True
+        self._wake.clear()
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
 
     def stop(self):
         self.is_monitoring = False
+        self._wake.set()
         if self.monitor_thread and self.monitor_thread.is_alive():
             self.monitor_thread.join(timeout=1.0)
 
@@ -64,13 +66,13 @@ class MeetingMonitor:
                     )
                     break
 
-                time.sleep(60)
+                self._wake.wait(60)
 
             except Exception as exc:  # noqa: BLE001 - monitor loop must survive callback/popup errors
                 import logging
 
                 logging.getLogger(__name__).debug("Meeting monitor loop error: %s", exc)
-                time.sleep(60)
+                self._wake.wait(60)
                 continue
 
     def get_elapsed_time(self) -> float:
