@@ -16,8 +16,11 @@ WEEKDAY_NAMES = {
 }
 
 
-def parse_time_range(query: str, when_arg: str | None = None) -> TimeRange | None:
-    now = datetime.now(tz.tzlocal())
+def parse_time_range(
+    query: str, when_arg: str | None = None, now: datetime | None = None
+) -> TimeRange | None:
+    if now is None:
+        now = datetime.now(tz.tzlocal())
 
     if when_arg:
         return _parse_when_arg(when_arg, now)
