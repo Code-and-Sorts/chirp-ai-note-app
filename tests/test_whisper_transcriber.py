@@ -315,25 +315,40 @@ class TestWhisperTranscriber:
         assert call_kwargs["min_speech_duration_ms"] == 250
         assert call_kwargs["speech_pad_ms"] == 300
 
-    def test_detect_speech_accepts_mlx_array_audio(self, mock_settings, mlx_module):
-        mx = pytest.importorskip("mlx.core")
-        torch = pytest.importorskip("torch")
+    def test_detect_speech_converts_non_ndarray_audio_before_torch(
+        self, mock_settings, mlx_module
+    ):
+        # mlx_whisper.audio.load_audio returns an mlx.core.array, not numpy.
+        # torch.from_numpy only accepts an ndarray, so _detect_speech must
+        # convert first. Reproduce the contract with a stand-in (real mlx/torch
+        # cost ~5min on CI runners) so the regression stays guarded but fast.
+        class _MlxLikeArray:
+            def __init__(self, data: np.ndarray) -> None:
+                self._data = data
+
+            def __array__(self, dtype=None, copy=None) -> np.ndarray:
+                return np.asarray(self._data, dtype=dtype)
+
+        audio = _MlxLikeArray(np.zeros(16000, dtype=np.float32))
+        captured: dict = {}
+
+        def fake_from_numpy(arr):
+            captured["arr"] = arr
+            if not isinstance(arr, np.ndarray):
+                raise TypeError(f"expected np.ndarray (got {type(arr).__name__})")
+            return arr
 
         with patch(MLX_IMPORT, return_value=mlx_module):
             transcriber = WhisperTranscriber(mock_settings)
 
-        audio = mx.array(np.zeros(16000, dtype=np.float32))
-        captured: dict = {}
-
-        def fake_get_speech_timestamps(tensor, _model, **_kwargs):
-            captured["tensor"] = tensor
-            return [{"start": 0, "end": 16000}]
-
         with patch.dict(
             "sys.modules",
             {
+                "torch": Mock(from_numpy=fake_from_numpy),
                 "silero_vad": Mock(
-                    get_speech_timestamps=fake_get_speech_timestamps,
+                    get_speech_timestamps=Mock(
+                        return_value=[{"start": 0, "end": 16000}]
+                    ),
                     load_silero_vad=Mock(return_value=Mock()),
                 ),
             },
@@ -341,7 +356,7 @@ class TestWhisperTranscriber:
             result = transcriber._detect_speech(audio)
 
         assert result == [{"start": 0, "end": 16000}]
-        assert isinstance(captured["tensor"], torch.Tensor)
+        assert isinstance(captured["arr"], np.ndarray)
 
     def test_model_load_failure_raises_typed_actionable_error(self, mock_settings):
         from chirp.exceptions import WhisperModelLoadError

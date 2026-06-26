@@ -10,6 +10,7 @@ for OS-touching TTY code), but the restore seam is unit-tested directly.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -313,24 +314,38 @@ class TestExitCodes:
         assert result.exit_code == 1
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Strip ANSI color so assertions don't depend on Rich's color detection.
+
+    CI runners emit color (FORCE_COLOR) where local non-tty runs don't, which
+    splits substrings like ``Usage: chirp`` with escape codes.
+    """
+    return _ANSI_RE.sub("", text)
+
+
 class TestUnknownCommand:
     def test_unknown_top_level_command_prints_help(self, tmp_path, monkeypatch):
         runner, app = _runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["bogus"])
+        output = _plain(result.output)
         assert result.exit_code == 2
-        assert "unknown command 'bogus'" in result.output
-        assert "Usage: chirp" in result.output
+        assert "unknown command 'bogus'" in output
+        assert "Usage: chirp" in output
         for command in ("record", "transcribe", "notes", "ask", "search"):
-            assert command in result.output
+            assert command in output
 
     def test_unknown_subcommand_prints_subgroup_help(self, tmp_path, monkeypatch):
         runner, app = _runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["notes", "bogus"])
+        output = _plain(result.output)
         assert result.exit_code == 2
-        assert "unknown command 'bogus'" in result.output
-        assert "Usage: chirp notes" in result.output
+        assert "unknown command 'bogus'" in output
+        assert "Usage: chirp notes" in output
         for command in ("view", "edit", "delete"):
-            assert command in result.output
+            assert command in output
 
     @pytest.mark.parametrize("group", ["models", "daemon"])
     def test_unknown_imported_subgroup_command_prints_help(
@@ -338,18 +353,20 @@ class TestUnknownCommand:
     ):
         runner, app = _runner(tmp_path, monkeypatch)
         result = runner.invoke(app, [group, "bogus"])
+        output = _plain(result.output)
         assert result.exit_code == 2
-        assert "unknown command 'bogus'" in result.output
-        assert f"Usage: chirp {group}" in result.output
+        assert "unknown command 'bogus'" in output
+        assert f"Usage: chirp {group}" in output
 
     def test_unknown_top_level_option_is_not_treated_as_unknown_command(
         self, tmp_path, monkeypatch
     ):
         runner, app = _runner(tmp_path, monkeypatch)
         result = runner.invoke(app, ["--badopt"])
+        output = _plain(result.output)
         assert result.exit_code == 2
-        assert "unknown command" not in result.output
-        assert "No such option" in result.output
+        assert "unknown command" not in output
+        assert "No such option" in output
 
 
 class TestTerminalRestore:
