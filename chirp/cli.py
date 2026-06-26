@@ -51,7 +51,7 @@ class HelpOnUnknownGroup(TyperGroup):
             stderr_console.print(f"[red]unknown command '{unknown}'[/red]")
             with redirect_stdout(sys.stderr):
                 click.echo(ctx.get_help())
-            ctx.exit(exit_codes.USAGE_ERROR)
+            raise typer.Exit(exit_codes.USAGE_ERROR)
 
 
 class OrderedCommandsGroup(HelpOnUnknownGroup):
