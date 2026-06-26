@@ -46,6 +46,14 @@ def _make_stream(
     return stream, frame_queue, level_queue, stop_event
 
 
+class _FakeHelperProc:
+    def __init__(self, exit_event: threading.Event) -> None:
+        self._exit_event = exit_event
+
+    def terminate(self) -> None:
+        self._exit_event.set()
+
+
 class _FakeAudioCapture:
     """Test double whose context-manager protocol mirrors `AudioCapture`."""
 
@@ -58,6 +66,11 @@ class _FakeAudioCapture:
         self._block_after_drain = block_after_drain
         self._exit_event = threading.Event()
         self.mic_device_name = "MockMic"
+        # Mirror AudioCapture's interruptible helper: LiveAudioStream.stop()
+        # calls proc.terminate() before joining the mixer thread, which is what
+        # ends frames() in production. Without it the fake blocks the full
+        # block_after_drain fallback on every stop().
+        self._proc = _FakeHelperProc(self._exit_event)
 
     def __enter__(self) -> _FakeAudioCapture:
         return self
