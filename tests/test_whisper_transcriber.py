@@ -315,6 +315,34 @@ class TestWhisperTranscriber:
         assert call_kwargs["min_speech_duration_ms"] == 250
         assert call_kwargs["speech_pad_ms"] == 300
 
+    def test_detect_speech_accepts_mlx_array_audio(self, mock_settings, mlx_module):
+        mx = pytest.importorskip("mlx.core")
+        torch = pytest.importorskip("torch")
+
+        with patch(MLX_IMPORT, return_value=mlx_module):
+            transcriber = WhisperTranscriber(mock_settings)
+
+        audio = mx.array(np.zeros(16000, dtype=np.float32))
+        captured: dict = {}
+
+        def fake_get_speech_timestamps(tensor, _model, **_kwargs):
+            captured["tensor"] = tensor
+            return [{"start": 0, "end": 16000}]
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "silero_vad": Mock(
+                    get_speech_timestamps=fake_get_speech_timestamps,
+                    load_silero_vad=Mock(return_value=Mock()),
+                ),
+            },
+        ):
+            result = transcriber._detect_speech(audio)
+
+        assert result == [{"start": 0, "end": 16000}]
+        assert isinstance(captured["tensor"], torch.Tensor)
+
     def test_model_load_failure_raises_typed_actionable_error(self, mock_settings):
         from chirp.exceptions import WhisperModelLoadError
 
