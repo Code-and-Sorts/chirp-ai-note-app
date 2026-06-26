@@ -313,6 +313,45 @@ class TestExitCodes:
         assert result.exit_code == 1
 
 
+class TestUnknownCommand:
+    def test_unknown_top_level_command_prints_help(self, tmp_path, monkeypatch):
+        runner, app = _runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["bogus"])
+        assert result.exit_code == 2
+        assert "unknown command 'bogus'" in result.output
+        assert "Usage: chirp" in result.output
+        for command in ("record", "transcribe", "notes", "ask", "search"):
+            assert command in result.output
+
+    def test_unknown_subcommand_prints_subgroup_help(self, tmp_path, monkeypatch):
+        runner, app = _runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["notes", "bogus"])
+        assert result.exit_code == 2
+        assert "unknown command 'bogus'" in result.output
+        assert "Usage: chirp notes" in result.output
+        for command in ("view", "edit", "delete"):
+            assert command in result.output
+
+    @pytest.mark.parametrize("group", ["models", "daemon"])
+    def test_unknown_imported_subgroup_command_prints_help(
+        self, tmp_path, monkeypatch, group
+    ):
+        runner, app = _runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, [group, "bogus"])
+        assert result.exit_code == 2
+        assert "unknown command 'bogus'" in result.output
+        assert f"Usage: chirp {group}" in result.output
+
+    def test_unknown_top_level_option_is_not_treated_as_unknown_command(
+        self, tmp_path, monkeypatch
+    ):
+        runner, app = _runner(tmp_path, monkeypatch)
+        result = runner.invoke(app, ["--badopt"])
+        assert result.exit_code == 2
+        assert "unknown command" not in result.output
+        assert "No such option" in result.output
+
+
 class TestTerminalRestore:
     def test_restore_terminal_calls_tcsetattr_and_show_cursor(self, monkeypatch):
         import chirp.cli
