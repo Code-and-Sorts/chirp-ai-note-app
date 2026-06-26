@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -z \"$(git status --porcelain 2>/dev/null)\" ]; then exit 0; fi; out=$(make check 2>&1); rc=$?; if [ $rc -ne 0 ]; then printf '%s\\n' \"$out\" | tail -n 50; echo 'AGENTS.md quality gate (make check) failed — fix the issues above before finishing.'; exit 2; fi; exit 0",
+            "asyncRewake": true,
+            "timeout": 300,
+            "statusMessage": "Verifying AGENTS.md quality gates (make check)…"
+          }
+        ]
+      }
+    ]
+  }
+}
