@@ -255,12 +255,9 @@ def _compile_pattern(options: SearchOptions) -> re.Pattern[str]:
         except re.error as exc:
             raise ValueError(f"invalid regex: {exc.msg}") from exc
 
-    # Literal mode matches on the same terms BM25 scores in `chirp ask`: tokenize
-    # the query with the shared tokenizer and match each token as a whole word.
-    # This keeps the two search modes agreeing on what counts as a match (e.g.
-    # "jira-123" matches the "jira" and "123" tokens, not just the literal
-    # hyphenated span). Fall back to an escaped-substring match when the query
-    # has no usable tokens (e.g. a single punctuation character).
+    # Match the same terms BM25 scores in `chirp ask` so the two search modes
+    # agree on what counts as a match (e.g. "jira-123" matches the "jira" and
+    # "123" tokens). Fall back to a substring match when there are no tokens.
     tokens = _tokenize_document(options.query)
     if not tokens:
         return re.compile(re.escape(options.query), re.IGNORECASE)

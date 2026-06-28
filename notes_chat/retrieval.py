@@ -19,21 +19,16 @@ logger = logging.getLogger(__name__)
 # either source.
 RRF_K = 60
 
-# Per-source RRF weights as (bm25_weight, chroma_weight). The query router picks
-# between these when semantic search is enabled; LEXICAL_ONLY is forced when it is
-# off so the vector half contributes nothing even if it were searched.
+# Query-router weights, ordered (bm25_weight, chroma_weight). On literal queries
+# the vector half is downweighted rather than dropped so a paraphrase can still
+# break a lexical tie.
 LEXICAL_ONLY = (1.0, 0.0)
-# Literal queries (IDs, dates, quotes, acronyms, very short) where BM25 wins on
-# exact spans — semantic still contributes, but downweighted.
 LITERAL_WEIGHTS = (1.0, 0.3)
-# Conceptual/natural-language queries where paraphrase matching earns its keep —
-# both sources contribute fully.
 CONCEPTUAL_WEIGHTS = (1.0, 1.0)
 
-# A token carrying two or more digits (jira-123, v2.3.1, 2026-06-28) is almost
-# always a literal identifier the embedding model can't disambiguate.
+# A token with two or more digits (jira-123, v2.3.1, 2026-06-28) reads as a
+# literal identifier the embedding model can't disambiguate.
 _MULTI_DIGIT_RE = re.compile(r"\d.*\d")
-# ALL-CAPS acronyms of two or more characters (API, RRF, BM25).
 _ACRONYM_RE = re.compile(r"\b[A-Z]{2,}\b")
 
 
@@ -120,9 +115,8 @@ def retrieve_context(
             index_manager=index_manager,
         )
 
-        # BM25 is the only hard-required retriever. The vector half runs only
-        # when semantic search is opted in; otherwise nothing touches Chroma or
-        # the embedding model at query time.
+        # Gating the vector path here is the opt-in guarantee: with semantic off,
+        # nothing touches Chroma or the embedding model at query time.
         chroma_results: list[tuple[str, float, dict[str, Any]]] = []
         weights = LEXICAL_ONLY
         if config.notes_chat.semantic_enabled:
