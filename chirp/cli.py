@@ -5,10 +5,11 @@ import math
 import platform
 import sys
 from collections import deque
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import click
 import typer
 from rich.console import Group, RenderableType
 from rich.live import Live
@@ -41,7 +42,19 @@ VISIBLE_COMMAND_ORDER = (
 )
 
 
-class OrderedCommandsGroup(TyperGroup):
+class HelpOnUnknownGroup(TyperGroup):
+    def resolve_command(self, ctx, args):
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError:
+            unknown = args[0] if args else ""
+            stderr_console.print(f"[red]unknown command '{unknown}'[/red]")
+            with redirect_stdout(sys.stderr):
+                click.echo(ctx.get_help())
+            raise typer.Exit(exit_codes.USAGE_ERROR)
+
+
+class OrderedCommandsGroup(HelpOnUnknownGroup):
     def list_commands(self, ctx):
         ordered = [name for name in VISIBLE_COMMAND_ORDER if name in self.commands]
         for name in self.commands:
@@ -725,14 +738,18 @@ def _run_regen_pipeline(settings) -> None:
             console.print(f"[red]  {glyphs.FAILURE} {slug}: {error}[/red]")
 
 
-notes_app = typer.Typer(help="Browse, view, edit, or delete your notes")
+notes_app = typer.Typer(
+    help="Browse, view, edit, or delete your notes", cls=HelpOnUnknownGroup
+)
 app.add_typer(notes_app, name="notes", rich_help_panel=MAIN_PANEL)
 
+models_app.info.cls = HelpOnUnknownGroup
 app.add_typer(models_app, name="models", rich_help_panel=MODELS_PANEL)
 
 # Hidden maintenance group: happy-path users never need the daemon, so it stays
 # out of `chirp --help` and is surfaced only via `chirp daemon --help`. Mirrors
 # the hidden flat commands `config`, `devices`, and `index` defined below.
+daemon_app.info.cls = HelpOnUnknownGroup
 app.add_typer(
     daemon_app,
     name="daemon",

@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-import freezegun
 import pytest
 
 from llm.exceptions import LLMError
@@ -20,12 +19,6 @@ from llm.exceptions import LLMError
 # can set attributes on the stub without AttributeError.
 if "pyaudio" not in sys.modules:
     sys.modules["pyaudio"] = mock.MagicMock()
-
-# freezegun walks every imported module's __dir__ on entry. transformers v5
-# has a lazy __dir__ that imports submodules unconditionally, and some of
-# those submodules raise NameError at class-body evaluation time. Ignore
-# transformers so freezegun never triggers that lazy load.
-freezegun.configure(extend_ignore_list=["transformers"])
 
 
 @pytest.fixture(autouse=True)

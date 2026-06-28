@@ -265,12 +265,13 @@ class WhisperTranscriber:
         return clips
 
     def _detect_speech(self, audio) -> list[dict[str, int]]:
+        import numpy as np
         import torch
         from silero_vad import get_speech_timestamps
 
         model = self._load_vad_model()
         params = self.settings.audio.vad_parameters.model_dump()
-        audio_tensor = torch.from_numpy(audio)
+        audio_tensor = torch.from_numpy(np.array(audio, dtype=np.float32))
         timestamps: list[dict[str, int]] = get_speech_timestamps(
             audio_tensor,
             model,

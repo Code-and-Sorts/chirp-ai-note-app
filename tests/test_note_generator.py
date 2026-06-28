@@ -145,6 +145,10 @@ class TestNoteGenerator:
         with (
             patch("notes.note_generator.TemplateEngine") as mock_template_engine,
             patch("notes.note_generator.PopupManager"),
+            patch(
+                "notes.note_generator.resolved_chat_model",
+                lambda fallback=None, *a, **k: fallback,
+            ),
         ):
             template_instance = mock_template_engine.return_value
             template_instance.render_meeting_section.return_value = (
