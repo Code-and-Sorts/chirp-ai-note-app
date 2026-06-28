@@ -10,10 +10,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from notes_chat.retrieval import (
+    CONCEPTUAL_WEIGHTS,
+    LITERAL_WEIGHTS,
     _build_context,
     _create_chunk_header,
     _format_mm_ss,
     _generate_suggestion,
+    _route_query,
     _search_bm25,
     _search_chroma,
     _slug_from_chunk,
@@ -27,8 +30,12 @@ from notes_chat.retrieval import (
 # ---------------------------------------------------------------------------
 
 
-def _make_config(tmp_path: Path):
-    """Build a minimal settings-like namespace for testing."""
+def _make_config(tmp_path: Path, semantic_enabled: bool = True):
+    """Build a minimal settings-like namespace for testing.
+
+    ``semantic_enabled`` defaults to ``True`` so the chroma-path tests in this
+    module exercise hybrid retrieval; gating tests pass ``False`` explicitly.
+    """
     index_dir = tmp_path / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
     notes_root = tmp_path / "notes"
@@ -37,6 +44,7 @@ def _make_config(tmp_path: Path):
     return SimpleNamespace(
         directories=SimpleNamespace(notes_root=notes_root),
         notes_chat=SimpleNamespace(
+            semantic_enabled=semantic_enabled,
             index_dir=index_dir,
             k=5,
             ctx_char_budget=10000,
@@ -186,6 +194,82 @@ class TestRetrieveContext:
 
         assert result["success"] is False
         assert "boom" in result["error"]
+
+
+class TestSemanticGate:
+    def test_lexical_only_skips_chroma_when_semantic_disabled(self, tmp_path):
+        config = _make_config(tmp_path, semantic_enabled=False)
+        bm25_chunk = (
+            "id1",
+            1.0,
+            {
+                "content": "lexical content about meetings",
+                "metadata": {"path": "/notes/slug/notes.md", "date": "2025-01-01"},
+            },
+        )
+        with (
+            patch("notes_chat.retrieval.IndexManager") as MockIM,
+            patch("notes_chat.retrieval._search_chroma") as mock_chroma,
+            patch("notes_chat.retrieval._get_query_embedding") as mock_embed,
+            patch("notes_chat.retrieval._search_bm25", return_value=[bm25_chunk]),
+            patch("notes_chat.retrieval.parse_time_range", return_value=None),
+            patch("notes_chat.retrieval._build_note_index", return_value={}),
+        ):
+            manager = _make_index_manager(config, manifest_exists=True)
+            MockIM.return_value = manager
+            result = retrieve_context(config, "what happened in the meeting")
+
+        assert result["success"] is True
+        mock_chroma.assert_not_called()
+        mock_embed.assert_not_called()
+
+    def test_searches_chroma_when_semantic_enabled(self, tmp_path):
+        config = _make_config(tmp_path, semantic_enabled=True)
+        chunk = (
+            "id1",
+            0.9,
+            {
+                "content": "semantic content",
+                "metadata": {"path": "/notes/slug/notes.md", "date": "2025-01-01"},
+            },
+        )
+        with (
+            patch("notes_chat.retrieval.IndexManager") as MockIM,
+            patch(
+                "notes_chat.retrieval._search_chroma", return_value=[chunk]
+            ) as mock_chroma,
+            patch("notes_chat.retrieval._search_bm25", return_value=[]),
+            patch("notes_chat.retrieval.parse_time_range", return_value=None),
+            patch("notes_chat.retrieval._build_note_index", return_value={}),
+        ):
+            manager = _make_index_manager(config, manifest_exists=True)
+            MockIM.return_value = manager
+            result = retrieve_context(config, "summarise the planning discussion")
+
+        assert result["success"] is True
+        mock_chroma.assert_called_once()
+
+
+class TestRouteQuery:
+    def test_quoted_phrase_is_literal(self):
+        assert _route_query('find "action items" please now') == LITERAL_WEIGHTS
+
+    def test_jira_style_id_is_literal(self):
+        assert _route_query("status of PROJ-1234 ticket") == LITERAL_WEIGHTS
+
+    def test_acronym_is_literal(self):
+        assert _route_query("what did we decide about the API gateway") == (
+            LITERAL_WEIGHTS
+        )
+
+    def test_short_query_is_literal(self):
+        assert _route_query("budget numbers") == LITERAL_WEIGHTS
+
+    def test_natural_language_question_is_conceptual(self):
+        assert (
+            _route_query("what were the main concerns raised during planning")
+            == CONCEPTUAL_WEIGHTS
+        )
 
 
 # ---------------------------------------------------------------------------

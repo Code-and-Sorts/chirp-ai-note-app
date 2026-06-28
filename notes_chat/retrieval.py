@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,23 @@ logger = logging.getLogger(__name__)
 # (and .docs/hybrid-retrieval.md); it damps low-rank items without starving
 # either source.
 RRF_K = 60
+
+# Per-source RRF weights as (bm25_weight, chroma_weight). The query router picks
+# between these when semantic search is enabled; LEXICAL_ONLY is forced when it is
+# off so the vector half contributes nothing even if it were searched.
+LEXICAL_ONLY = (1.0, 0.0)
+# Literal queries (IDs, dates, quotes, acronyms, very short) where BM25 wins on
+# exact spans — semantic still contributes, but downweighted.
+LITERAL_WEIGHTS = (1.0, 0.3)
+# Conceptual/natural-language queries where paraphrase matching earns its keep —
+# both sources contribute fully.
+CONCEPTUAL_WEIGHTS = (1.0, 1.0)
+
+# A token carrying two or more digits (jira-123, v2.3.1, 2026-06-28) is almost
+# always a literal identifier the embedding model can't disambiguate.
+_MULTI_DIGIT_RE = re.compile(r"\d.*\d")
+# ALL-CAPS acronyms of two or more characters (API, RRF, BM25).
+_ACRONYM_RE = re.compile(r"\b[A-Z]{2,}\b")
 
 
 def _as_naive(value: datetime) -> datetime:
@@ -95,15 +113,23 @@ def retrieve_context(
         else:
             time_range = parse_time_range(question)
 
-        chroma_results = _search_chroma(
-            index_manager, question, config.notes_chat.k, time_range
-        )
         bm25_results = _search_bm25(
             index_manager.bm25_file,
             question,
             config.notes_chat.k,
             index_manager=index_manager,
         )
+
+        # BM25 is the only hard-required retriever. The vector half runs only
+        # when semantic search is opted in; otherwise nothing touches Chroma or
+        # the embedding model at query time.
+        chroma_results: list[tuple[str, float, dict[str, Any]]] = []
+        weights = LEXICAL_ONLY
+        if config.notes_chat.semantic_enabled:
+            weights = _route_query(question)
+            chroma_results = _search_chroma(
+                index_manager, question, config.notes_chat.k, time_range
+            )
 
         if not chroma_results and not bm25_results:
             suggestion = _generate_suggestion(config, time_range)
@@ -113,7 +139,7 @@ def retrieve_context(
                 "suggestion": suggestion,
             }
 
-        merged_chunks = _merge_and_dedupe(chroma_results, bm25_results)
+        merged_chunks = _merge_and_dedupe(chroma_results, bm25_results, weights)
 
         context, sources, retrieved_ids = _build_context(
             merged_chunks, config.notes_chat.ctx_char_budget, config
@@ -274,29 +300,64 @@ def _signature(chunk_id: str, data: dict[str, Any]) -> str:
     return chunk_id
 
 
+def _route_query(question: str) -> tuple[float, float]:
+    """Pick per-source RRF weights ``(bm25, chroma)`` from the query's shape.
+
+    Pure and deterministic — no I/O. Literal signals (quoted spans, multi-digit
+    tokens, ALL-CAPS acronyms, very short queries) favour BM25 because lexical
+    retrieval wins on exact spans the small embedding model can't disambiguate.
+    Anything else is treated as conceptual, where paraphrase matching helps. The
+    function runs the same regardless of whether semantic search is enabled; it
+    only changes outcomes once the vector half actually contributes.
+    """
+    if '"' in question:
+        return LITERAL_WEIGHTS
+
+    tokens = question.split()
+    if len(tokens) <= 2:
+        return LITERAL_WEIGHTS
+
+    for token in tokens:
+        if _MULTI_DIGIT_RE.search(token):
+            return LITERAL_WEIGHTS
+
+    if _ACRONYM_RE.search(question):
+        return LITERAL_WEIGHTS
+
+    return CONCEPTUAL_WEIGHTS
+
+
 def _merge_and_dedupe(
     chroma_results: list[tuple[str, float, dict[str, Any]]],
     bm25_results: list[tuple[str, float, dict[str, Any]]],
+    weights: tuple[float, float] = (1.0, 1.0),
 ) -> list[tuple[str, float, dict[str, Any]]]:
     """Fuse Chroma and BM25 results with Reciprocal Rank Fusion.
 
     Each input list is already rank-ordered. A chunk's fused score is
-    ``Σ 1/(RRF_K + rank_i)`` across the lists it appears in (rank is 0-based),
-    so its contribution is its *rank* in each source, not the source-specific
-    raw magnitude — this keeps an unbounded BM25 score from starving semantic
-    hits. Results are deduped by ``(path, content_hash)``, keeping the
-    best-ranked representative, and ordered by fused score. The fused score
-    replaces the raw score for ordering only.
+    ``Σ weight_i · 1/(RRF_K + rank_i)`` across the lists it appears in (rank is
+    0-based), so its contribution is its *rank* in each source scaled by that
+    source's weight, not the source-specific raw magnitude — this keeps an
+    unbounded BM25 score from starving semantic hits. ``weights`` is
+    ``(bm25_weight, chroma_weight)`` from the query router; the default
+    ``(1.0, 1.0)`` reproduces unweighted fusion exactly. Results are deduped by
+    ``(path, content_hash)``, keeping the best-ranked representative, and ordered
+    by fused score. The fused score replaces the raw score for ordering only.
     """
+    bm25_weight, chroma_weight = weights
+    source_weights = {"chroma": chroma_weight, "bm25": bm25_weight}
     fused: dict[str, float] = {}
     best: dict[str, tuple[str, dict[str, Any]]] = {}
     best_rank: dict[str, int] = {}
 
     for source, results in (("chroma", chroma_results), ("bm25", bm25_results)):
+        weight_source = source_weights[source]
         for rank, (chunk_id, _raw_score, data) in enumerate(results):
             data["source"] = data.get("source", source)
             signature = _signature(chunk_id, data)
-            fused[signature] = fused.get(signature, 0.0) + 1.0 / (RRF_K + rank)
+            fused[signature] = fused.get(signature, 0.0) + weight_source * (
+                1.0 / (RRF_K + rank)
+            )
             if signature not in best_rank or rank < best_rank[signature]:
                 best_rank[signature] = rank
                 best[signature] = (chunk_id, data)

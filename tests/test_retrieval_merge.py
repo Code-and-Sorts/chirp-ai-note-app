@@ -345,6 +345,72 @@ class TestRetrievalMerge:
         assert chunk_id in ids
         assert "JIRA-1234" in context
 
+    def test_weighted_rrf_default_matches_unweighted(self):
+        """`weights=(1.0, 1.0)` reproduces the pre-change unweighted fusion."""
+        chroma_results = [
+            (
+                "c1",
+                0.9,
+                {"content": "a", "metadata": {"path": "f1", "content_hash": "x1"}},
+            ),
+            (
+                "c2",
+                0.8,
+                {"content": "b", "metadata": {"path": "f2", "content_hash": "x2"}},
+            ),
+        ]
+        bm25_results = [
+            ("b1", 2.5, {"source": "bm25"}),
+            ("b2", 1.8, {"source": "bm25"}),
+        ]
+
+        # _merge_and_dedupe mutates the data dicts (sets "source"), so feed each
+        # call independent copies.
+        def _copy(rows):
+            return [(cid, score, dict(data)) for cid, score, data in rows]
+
+        default = _merge_and_dedupe(_copy(chroma_results), _copy(bm25_results))
+        explicit = _merge_and_dedupe(
+            _copy(chroma_results), _copy(bm25_results), weights=(1.0, 1.0)
+        )
+
+        assert [cid for cid, _, _ in default] == [cid for cid, _, _ in explicit]
+        assert [s for _, s, _ in default] == [s for _, s, _ in explicit]
+
+    def test_lexical_only_weights_drop_chroma_contribution(self):
+        """With chroma weight 0.0, chroma hits score 0 and sort below BM25 hits."""
+        chroma_results = [
+            (
+                "c1",
+                0.95,
+                {"content": "a", "metadata": {"path": "f1", "content_hash": "x1"}},
+            ),
+        ]
+        bm25_results = [("b1", 1.0, {"source": "bm25"})]
+
+        merged = _merge_and_dedupe(chroma_results, bm25_results, weights=(1.0, 0.0))
+
+        by_id = {cid: score for cid, score, _ in merged}
+        assert by_id["c1"] == 0.0
+        assert by_id["b1"] == pytest.approx(1.0 / 60.0)
+        assert merged[0][0] == "b1"
+
+    def test_literal_weights_downweight_chroma(self):
+        """A 0.3 chroma weight scales that source's RRF contribution."""
+        chroma_results = [
+            (
+                "c1",
+                0.9,
+                {"content": "a", "metadata": {"path": "f1", "content_hash": "x1"}},
+            ),
+        ]
+        bm25_results = [("b1", 1.0, {"source": "bm25"})]
+
+        merged = _merge_and_dedupe(chroma_results, bm25_results, weights=(1.0, 0.3))
+        by_id = {cid: score for cid, score, _ in merged}
+        assert by_id["c1"] == pytest.approx(0.3 * (1.0 / 60.0))
+        assert by_id["b1"] == pytest.approx(1.0 / 60.0)
+
     def test_chunk_header_creation(self):
         """Headers carry date + filename; sources fall back to slug when no config."""
         chunks = [

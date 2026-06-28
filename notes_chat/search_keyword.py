@@ -12,6 +12,7 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+from notes_chat.bm25 import _tokenize_document
 from utils.file_utils import NoteRecord, list_notes
 
 EXCERPT_WIDTH = 120
@@ -253,7 +254,18 @@ def _compile_pattern(options: SearchOptions) -> re.Pattern[str]:
             return re.compile(options.query, re.IGNORECASE)
         except re.error as exc:
             raise ValueError(f"invalid regex: {exc.msg}") from exc
-    return re.compile(re.escape(options.query), re.IGNORECASE)
+
+    # Literal mode matches on the same terms BM25 scores in `chirp ask`: tokenize
+    # the query with the shared tokenizer and match each token as a whole word.
+    # This keeps the two search modes agreeing on what counts as a match (e.g.
+    # "jira-123" matches the "jira" and "123" tokens, not just the literal
+    # hyphenated span). Fall back to an escaped-substring match when the query
+    # has no usable tokens (e.g. a single punctuation character).
+    tokens = _tokenize_document(options.query)
+    if not tokens:
+        return re.compile(re.escape(options.query), re.IGNORECASE)
+    alternation = "|".join(re.escape(token) for token in dict.fromkeys(tokens))
+    return re.compile(rf"\b(?:{alternation})\b", re.IGNORECASE)
 
 
 def _apply_since(
