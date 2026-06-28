@@ -255,9 +255,8 @@ def _compile_pattern(options: SearchOptions) -> re.Pattern[str]:
         except re.error as exc:
             raise ValueError(f"invalid regex: {exc.msg}") from exc
 
-    # Match the same terms BM25 scores in `chirp ask` so the two search modes
-    # agree on what counts as a match (e.g. "jira-123" matches the "jira" and
-    # "123" tokens). Fall back to a substring match when there are no tokens.
+    # Match the same tokens BM25 scores in `chirp ask` so both modes agree on a
+    # match; fall back to a substring match when the query has no usable tokens.
     tokens = _tokenize_document(options.query)
     if not tokens:
         return re.compile(re.escape(options.query), re.IGNORECASE)

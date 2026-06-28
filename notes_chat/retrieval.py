@@ -19,15 +19,10 @@ logger = logging.getLogger(__name__)
 # either source.
 RRF_K = 60
 
-# Query-router weights, ordered (bm25_weight, chroma_weight). On literal queries
-# the vector half is downweighted rather than dropped so a paraphrase can still
-# break a lexical tie.
 LEXICAL_ONLY = (1.0, 0.0)
 LITERAL_WEIGHTS = (1.0, 0.3)
 CONCEPTUAL_WEIGHTS = (1.0, 1.0)
 
-# A token with two or more digits (jira-123, v2.3.1, 2026-06-28) reads as a
-# literal identifier the embedding model can't disambiguate.
 _MULTI_DIGIT_RE = re.compile(r"\d.*\d")
 _ACRONYM_RE = re.compile(r"\b[A-Z]{2,}\b")
 
@@ -115,8 +110,6 @@ def retrieve_context(
             index_manager=index_manager,
         )
 
-        # Gating the vector path here is the opt-in guarantee: with semantic off,
-        # nothing touches Chroma or the embedding model at query time.
         chroma_results: list[tuple[str, float, dict[str, Any]]] = []
         weights = LEXICAL_ONLY
         if config.notes_chat.semantic_enabled:
