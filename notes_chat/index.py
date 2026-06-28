@@ -704,8 +704,8 @@ class IndexManager:
 
         Used by the auto-index-on-save path so a single save doesn't trigger a
         full-corpus re-tokenize (a burst of N saves would otherwise cost N full
-        rebuilds — see AC-6). Chunks come from the file itself, so this works
-        with the vector half disabled.
+        rebuilds). Chunks come from the file itself, so this works with the
+        vector half disabled.
         """
         try:
             from notes_chat.bm25 import append_bm25_index

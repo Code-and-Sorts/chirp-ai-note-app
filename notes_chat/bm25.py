@@ -131,9 +131,9 @@ class BM25Index:
     def hydrate(self, chunk_id: str) -> tuple[str, dict[str, Any]] | None:
         """Return the raw ``(content, metadata)`` stored for ``chunk_id``.
 
-        Phase 2 stores each chunk's content + metadata in ``bm25.json`` itself, so
-        a lexical hit can build context with no Chroma round-trip. Returns ``None``
-        for ids without stored content (old-schema index awaiting a rebuild).
+        Content + metadata live in ``bm25.json`` itself, so a lexical hit can
+        build context with no Chroma round-trip. Returns ``None`` for ids without
+        stored content (old-schema index awaiting a rebuild).
         """
         if self._hydration is None:
             self._hydration = {

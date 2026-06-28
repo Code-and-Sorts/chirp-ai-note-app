@@ -226,9 +226,9 @@ class TestRetrievalMerge:
         Drives the REAL `_search_bm25` hydration: a bare bm25 result carries no
         metadata, so without hydration the same physical chunk would key by bare
         chunk_id (bm25) vs `path::content_hash` (chroma) and NOT dedupe — getting
-        1/60 twice instead of a summed 2/60 and wasting a top-k slot. Phase 2
-        hydrates from the self-sufficient BM25 store (no Chroma), so both sources
-        carry `path::content_hash` and collapse.
+        1/60 twice instead of a summed 2/60 and wasting a top-k slot. Hydrating
+        from the self-sufficient BM25 store (no Chroma) gives both sources
+        `path::content_hash`, so they collapse.
         """
         import json
 
