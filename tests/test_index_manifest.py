@@ -424,6 +424,55 @@ class TestLexicalOnlyIndexing:
         assert manager.collection.get()["ids"]
         assert manager.bm25_file.exists()
 
+    def test_incremental_add_note_skips_fingerprint_when_lexical_only(self, tmp_path):
+        """Off-mirror of the guarded incremental add: no embed-fingerprint work.
+
+        This is the production-default (semantic off) auto-index-on-save path;
+        with the flag on it would call ensure/stamp (see the guarded on-case).
+        """
+        config = _make_config(tmp_path, semantic_enabled=False)
+        note_file = _seed_note(tmp_path)
+        manager = IndexManager(config)
+
+        with (
+            patch.object(manager, "_ensure_embed_fingerprint") as ensure_fp,
+            patch.object(manager, "_add_to_index", return_value=True) as add_idx,
+            patch.object(manager, "_save_manifest") as save_manifest,
+            patch.object(manager, "append_bm25_for_file") as append_bm25,
+            patch.object(manager, "_rebuild_bm25") as rebuild_bm25,
+            patch.object(manager, "_stamp_fingerprint_if_missing") as stamp_fp,
+        ):
+            result = manager.add_note(
+                note_file, guard_embed_fingerprint=True, incremental_bm25=True
+            )
+
+        assert result is True
+        ensure_fp.assert_not_called()
+        stamp_fp.assert_not_called()
+        add_idx.assert_called_once_with(note_file)
+        save_manifest.assert_called_once()
+        append_bm25.assert_called_once_with(str(note_file))
+        rebuild_bm25.assert_not_called()
+
+    def test_incremental_add_note_lexical_only_end_to_end(self, tmp_path):
+        """The real auto-index path off: no embed call, no chroma/, BM25 has content."""
+        from notes_chat.bm25 import BM25Index
+
+        config = _make_config(tmp_path, semantic_enabled=False)
+        note_file = _seed_note(tmp_path)
+
+        manager = IndexManager(config, llm_client=_ExplodingEmbedClient())
+        assert manager.add_note(
+            note_file, guard_embed_fingerprint=True, incremental_bm25=True
+        )
+
+        assert not (config.notes_chat.index_dir / "chroma").exists()
+        index = BM25Index(manager.bm25_file)
+        hits = index.search("chunking", k=5)
+        assert hits
+        content, _meta = index.hydrate(hits[0][0])
+        assert "chunking" in content.lower()
+
 
 class TestSingleNoteIndexing:
     def test_add_note_incremental_with_guard(self, tmp_path):

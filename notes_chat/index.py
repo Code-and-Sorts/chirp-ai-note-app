@@ -442,6 +442,9 @@ class IndexManager:
 
     def _save_manifest(self, manifest: dict[str, Any]):
         """Save the index manifest."""
+        # A lexical-only add_note never opens Chroma (which used to create
+        # index_dir as a side effect), so ensure the directory exists here.
+        self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
         with self.manifest_file.open("w") as f:
             json.dump(manifest, f, indent=2)
 
