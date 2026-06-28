@@ -207,6 +207,87 @@ def test_literal_query_uses_whole_word_matching(tmp_path):
     assert run_search(settings, SearchOptions(query="tiers"))["matches"]
 
 
+def test_cjk_query_matches_bm25_tokens_not_substrings(tmp_path):
+    """Token matching is Unicode-safe and tracks BM25 across scripts.
+
+    `_tokenize_document` splits on whitespace/punctuation, so "日本語" is a token
+    only when whitespace-separated. A literal search must match exactly that —
+    not a substring inside a longer CJK run, which `\\b` would also reject but
+    only by accident of ASCII assumptions.
+    """
+    from notes_chat.bm25 import _tokenize_document
+    from notes_chat.search_keyword import SearchOptions, run_search
+
+    assert _tokenize_document("読む 日本語 です") == ["読む", "日本語", "です"]
+    assert _tokenize_document("読む日本語です") == ["読む日本語です"]
+
+    settings = _build_settings(tmp_path)
+    now = datetime.now()
+    _seed_note(
+        settings,
+        slug="cjk-spaced-recent",
+        created_at=now,
+        title="cjk spaced",
+        transcript="読む 日本語 です\n",
+        notes_md="meeting\n",
+    )
+    _seed_note(
+        settings,
+        slug="cjk-joined-recent",
+        created_at=now,
+        title="cjk joined",
+        transcript="読む日本語です\n",
+        notes_md="meeting\n",
+    )
+
+    titles = {
+        m["title"]
+        for m in run_search(settings, SearchOptions(query="日本語"))["matches"]
+    }
+    assert titles == {"cjk spaced"}
+
+
+def test_underscore_token_matches_whole_token_only(tmp_path):
+    """`user_name` is one BM25 token (underscore is a word char), so a search for
+    `name` must not match it — exactly as `chirp ask` would score it."""
+    from notes_chat.bm25 import _tokenize_document
+    from notes_chat.search_keyword import SearchOptions, run_search
+
+    assert _tokenize_document("user_name") == ["user_name"]
+
+    settings = _build_settings(tmp_path)
+    _seed_note(
+        settings,
+        slug="snake-case-recent",
+        created_at=datetime.now(),
+        title="snake case",
+        transcript="the user_name field is required\n",
+        notes_md="meeting\n",
+    )
+
+    assert run_search(settings, SearchOptions(query="name"))["matches"] == []
+    assert run_search(settings, SearchOptions(query="user_name"))["matches"]
+
+
+def test_multi_word_literal_query_matches_any_token(tmp_path):
+    """A multi-word literal query matches notes containing ANY of its tokens
+    (BM25's OR semantics), not only the adjacent phrase."""
+    from notes_chat.search_keyword import SearchOptions, run_search
+
+    settings = _build_settings(tmp_path)
+    _seed_note(
+        settings,
+        slug="pricing-only-recent",
+        created_at=datetime.now(),
+        title="pricing only",
+        transcript="the pricing review is tomorrow\n",
+        notes_md="meeting\n",
+    )
+
+    result = run_search(settings, SearchOptions(query="pricing roadmap"))
+    assert {m["title"] for m in result["matches"]} == {"pricing only"}
+
+
 def _invoke_search(args: list[str], settings):
     import importlib
 

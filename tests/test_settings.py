@@ -25,6 +25,9 @@ class TestChirpSettings:
         assert settings.audio.sample_rate == 16000
         assert settings.audio.channels == 1
 
+    def test_semantic_retrieval_defaults_off(self):
+        assert ChirpSettings().notes_chat.semantic_enabled is False
+
     def test_directories_config_paths(self):
         settings = ChirpSettings()
 
