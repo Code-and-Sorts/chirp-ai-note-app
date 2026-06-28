@@ -178,6 +178,7 @@ class LLMSettings(BaseModel):
 
 
 class NotesChatConfig(BaseModel):
+    semantic_enabled: bool = False
     emb_model: str = "nomic-embed-text"
     chunk_size: int = 1000
     overlap: int = 200

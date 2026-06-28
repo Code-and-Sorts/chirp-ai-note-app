@@ -157,6 +157,56 @@ def test_levenshtein_close_keywords_filters_query_tokens():
     assert _is_close("xylophone", "pricing") is False
 
 
+def test_literal_query_matches_same_tokens_as_bm25(tmp_path):
+    """`chirp search` matches the tokens BM25 would score for a hyphenated ID.
+
+    "JIRA-1234" tokenizes to ["jira", "1234"], so the literal search finds a note
+    that contains the ID even though it never appears as one un-split substring.
+    """
+    from notes_chat.bm25 import _tokenize_document
+    from notes_chat.search_keyword import SearchOptions, run_search
+
+    settings = _build_settings(tmp_path)
+    now = datetime.now()
+    _seed_note(
+        settings,
+        slug="jira-note-recent",
+        created_at=now,
+        title="jira note",
+        transcript="JIRA-1234 must ship before the cutoff\n",
+        notes_md="owner follows up on the ticket\n",
+    )
+
+    assert _tokenize_document("JIRA-1234") == ["jira", "1234"]
+    result = run_search(settings, SearchOptions(query="JIRA-1234"))
+    assert result["matches"]
+    assert result["matches"][0]["hits"] >= 1
+
+
+def test_literal_query_uses_whole_word_matching(tmp_path):
+    """A literal search agrees with BM25's token equality, not substrings.
+
+    BM25 scores the token "tier" distinctly from "tiers", so searching "tier"
+    must not match a note whose only near-form is "tiers" — matching what
+    `chirp ask` would retrieve.
+    """
+    from notes_chat.search_keyword import SearchOptions, run_search
+
+    settings = _build_settings(tmp_path)
+    now = datetime.now()
+    _seed_note(
+        settings,
+        slug="tiers-note-recent",
+        created_at=now,
+        title="tiers note",
+        transcript="we compared the pricing tiers carefully\n",
+        notes_md="no standalone keyword here\n",
+    )
+
+    assert run_search(settings, SearchOptions(query="tier"))["matches"] == []
+    assert run_search(settings, SearchOptions(query="tiers"))["matches"]
+
+
 def _invoke_search(args: list[str], settings):
     import importlib
 
