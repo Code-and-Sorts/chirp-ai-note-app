@@ -30,10 +30,17 @@ class _FakeEmbedClient:
         return [[0.1] * self.dim for _ in inputs]
 
 
-def _make_config(tmp_path):
+def _make_config(tmp_path, semantic_enabled: bool = True):
+    """Build settings rooted at ``tmp_path``.
+
+    ``semantic_enabled`` defaults to ``True`` so the embed/Chroma regression
+    tests below exercise the vector path; the lexical-only suite passes ``False``
+    to assert no embed model loads and no ``chroma/`` directory is created.
+    """
     config = ChirpSettings()
     config.directories.notes_root = tmp_path
     config.notes_chat.index_dir = tmp_path / ".notes_index"
+    config.notes_chat.semantic_enabled = semantic_enabled
     return config
 
 
@@ -350,6 +357,72 @@ Test meeting content
         alias, dim = reopened._stored_fingerprint()
         assert alias == "bge-small"
         assert dim == 384
+
+
+class _ExplodingEmbedClient:
+    """Sentinel embed client: any embed call fails the lexical-only contract."""
+
+    def embed_sync(self, inputs, model="default"):
+        raise AssertionError("embed model must not load when semantic is disabled")
+
+
+class TestLexicalOnlyIndexing:
+    def test_build_creates_no_chroma_dir_and_never_embeds(self, tmp_path):
+        """Semantic off: no embed model loads and no chroma/ directory appears."""
+        config = _make_config(tmp_path, semantic_enabled=False)
+        _seed_note(tmp_path)
+
+        manager = IndexManager(config, llm_client=_ExplodingEmbedClient())
+        result = manager.build_index()
+
+        assert result["success"]
+        assert result["files_processed"] == 1
+        assert not (config.notes_chat.index_dir / "chroma").exists()
+        assert manager.bm25_file.exists()
+        assert manager.manifest_file.exists()
+
+    def test_bm25_store_carries_content_when_lexical_only(self, tmp_path):
+        """A BM25 hit hydrates content + metadata straight from bm25.json."""
+        from notes_chat.bm25 import BM25Index
+
+        config = _make_config(tmp_path, semantic_enabled=False)
+        _seed_note(tmp_path)
+
+        manager = IndexManager(config, llm_client=_ExplodingEmbedClient())
+        assert manager.build_index()["success"]
+
+        index = BM25Index(manager.bm25_file)
+        hits = index.search("chunking", k=5)
+        assert hits
+        content, metadata = index.hydrate(hits[0][0])
+        assert "chunking" in content.lower()
+        assert metadata["path"].endswith("notes.md")
+        assert not (config.notes_chat.index_dir / "chroma").exists()
+
+    def test_force_rebuild_lexical_only_skips_chroma(self, tmp_path):
+        """--force with semantic off rebuilds BM25 without creating chroma/."""
+        config = _make_config(tmp_path, semantic_enabled=False)
+        _seed_note(tmp_path)
+
+        manager = IndexManager(config, llm_client=_ExplodingEmbedClient())
+        result = manager.build_index(force=True)
+
+        assert result["success"]
+        assert result["files_processed"] == 1
+        assert not (config.notes_chat.index_dir / "chroma").exists()
+        assert manager.bm25_file.exists()
+
+    def test_semantic_on_still_populates_chroma_and_bm25(self, tmp_path):
+        """Regression: with semantic on, both Chroma and BM25 are populated."""
+        config = _make_config(tmp_path, semantic_enabled=True)
+        _seed_note(tmp_path)
+
+        manager = IndexManager(config, llm_client=_FakeEmbedClient())
+        assert manager.build_index()["success"]
+
+        assert (config.notes_chat.index_dir / "chroma").exists()
+        assert manager.collection.get()["ids"]
+        assert manager.bm25_file.exists()
 
 
 class TestSingleNoteIndexing:

@@ -220,15 +220,19 @@ def _search_bm25(
     k: int,
     index_manager: IndexManager | None = None,
 ) -> list[tuple[str, float, dict[str, Any]]]:
-    """Search BM25 index, hydrating each hit with its Chroma metadata + content.
+    """Search BM25, hydrating each hit with its content + metadata from the store.
 
-    A bare ``{"source": "bm25"}`` payload carries no ``metadata`` and no
-    ``content``, which breaks two things: (1) ``_merge_and_dedupe`` would key the
-    hit by bare chunk_id instead of ``path::content_hash``, so a chunk found by
-    BOTH retrievers fails to dedupe and its RRF contributions are never summed;
-    (2) ``_build_context`` drops contentless chunks, so the lexical half of
-    "hybrid" could never surface a BM25-only hit. Hydrating from Chroma
-    (``collection.get(ids=...)``) gives both sources the same shape.
+    The lexical store (``bm25.json``) carries each chunk's content and metadata,
+    so hits hydrate from it directly — no Chroma round-trip, which is what lets
+    lexical-only retrieval answer with the vector half disabled. A bare
+    ``{"source": "bm25"}`` payload carries no ``metadata`` and no ``content``,
+    which breaks two things: (1) ``_merge_and_dedupe`` would key the hit by bare
+    chunk_id instead of ``path::content_hash``, so a chunk found by BOTH
+    retrievers fails to dedupe and its RRF contributions are never summed;
+    (2) ``_build_context`` drops contentless chunks, so the lexical half could
+    never surface a BM25-only hit. Hydrating from the store gives both sources
+    the same shape. ``index_manager`` is accepted for call-site compatibility but
+    no longer consulted — the BM25 store is self-sufficient.
     """
     try:
         bm25_index = BM25Index(bm25_file)
@@ -236,52 +240,22 @@ def _search_bm25(
         if not bm25_results:
             return []
 
-        if index_manager is None:
-            return [
-                (chunk_id, score, {"source": "bm25"})
-                for chunk_id, score in bm25_results
-            ]
-
-        hydrated = _hydrate_chunks(index_manager, [cid for cid, _ in bm25_results])
         results: list[tuple[str, float, dict[str, Any]]] = []
         for chunk_id, score in bm25_results:
-            data = hydrated.get(chunk_id)
-            if data is None:
-                # Stale BM25 id with no Chroma record: keep it so a lexical-only
-                # match isn't dropped, but without content it can't enter context.
-                data = {"source": "bm25"}
+            hydrated = bm25_index.hydrate(chunk_id)
+            if hydrated is None:
+                # Keep a contentless old-schema/stale hit so the match isn't
+                # dropped, though without content it can't enter context.
+                data: dict[str, Any] = {"source": "bm25"}
+            else:
+                content, metadata = hydrated
+                data = {"content": content, "metadata": metadata, "source": "bm25"}
             results.append((chunk_id, score, data))
         return results
 
     except Exception as e:  # noqa: BLE001 - BM25 can raise many types on corrupt index
         logger.debug("BM25 search failed: %s", e, exc_info=True)
         return []
-
-
-def _hydrate_chunks(
-    index_manager: IndexManager, chunk_ids: list[str]
-) -> dict[str, dict[str, Any]]:
-    """Map chunk_id → ``{"content", "metadata", "source": "bm25"}`` from Chroma."""
-    try:
-        records = index_manager.collection.get(ids=chunk_ids)
-    except Exception as e:  # noqa: BLE001 - chromadb raises various internal exceptions
-        logger.debug("BM25 hydrate failed: %s", e, exc_info=True)
-        return {}
-
-    ids = records.get("ids") or []
-    documents = records.get("documents") or []
-    metadatas = records.get("metadatas") or []
-
-    hydrated: dict[str, dict[str, Any]] = {}
-    for i, chunk_id in enumerate(ids):
-        document = documents[i] if i < len(documents) else ""
-        metadata = metadatas[i] if i < len(metadatas) else {}
-        hydrated[chunk_id] = {
-            "content": document,
-            "metadata": metadata,
-            "source": "bm25",
-        }
-    return hydrated
 
 
 def _signature(chunk_id: str, data: dict[str, Any]) -> str:

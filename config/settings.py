@@ -369,12 +369,14 @@ class ChirpSettings(BaseModel):
 
     def ensure_directories_exist(self):
         chirp_home = default_chirp_home()
-        for directory in [
+        directories = [
             self.directories.notes_root,
             chirp_home,
             self.notes_chat.index_dir,
-            self.notes_chat.index_dir / "chroma",
-        ]:
+        ]
+        if self.notes_chat.semantic_enabled:
+            directories.append(self.notes_chat.index_dir / "chroma")
+        for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
 
 
