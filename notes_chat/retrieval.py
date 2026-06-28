@@ -23,8 +23,15 @@ LEXICAL_ONLY = (1.0, 0.0)
 LITERAL_WEIGHTS = (1.0, 0.3)
 CONCEPTUAL_WEIGHTS = (1.0, 1.0)
 
-_MULTI_DIGIT_RE = re.compile(r"\d.*\d")
 _ACRONYM_RE = re.compile(r"\b[A-Z]{2,}\b")
+
+
+def _looks_like_id(token: str) -> bool:
+    """True for mixed digit+non-digit tokens (jira-123, v2.3.1, 2026-06-28).
+
+    Excludes bare numbers (room 101) so ordinary counts don't route as literal.
+    """
+    return any(ch.isdigit() for ch in token) and not token.isdigit()
 
 
 def _as_naive(value: datetime) -> datetime:
@@ -290,12 +297,10 @@ def _signature(chunk_id: str, data: dict[str, Any]) -> str:
 def _route_query(question: str) -> tuple[float, float]:
     """Pick per-source RRF weights ``(bm25, chroma)`` from the query's shape.
 
-    Pure and deterministic — no I/O. Literal signals (quoted spans, multi-digit
+    Pure and deterministic — no I/O. Literal signals (quoted spans, id-shaped
     tokens, ALL-CAPS acronyms, very short queries) favour BM25 because lexical
     retrieval wins on exact spans the small embedding model can't disambiguate.
-    Anything else is treated as conceptual, where paraphrase matching helps. The
-    function runs the same regardless of whether semantic search is enabled; it
-    only changes outcomes once the vector half actually contributes.
+    Anything else is treated as conceptual, where paraphrase matching helps.
     """
     if '"' in question:
         return LITERAL_WEIGHTS
@@ -305,7 +310,7 @@ def _route_query(question: str) -> tuple[float, float]:
         return LITERAL_WEIGHTS
 
     for token in tokens:
-        if _MULTI_DIGIT_RE.search(token):
+        if _looks_like_id(token):
             return LITERAL_WEIGHTS
 
     if _ACRONYM_RE.search(question):

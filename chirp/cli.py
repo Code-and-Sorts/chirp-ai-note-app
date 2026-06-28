@@ -1362,6 +1362,11 @@ def config(
         "--embedding-model",
         help="Set embedding model (e.g. nomic-embed-text)",
     ),
+    semantic: bool | None = typer.Option(
+        None,
+        "--semantic/--no-semantic",
+        help="Enable or disable opt-in semantic (vector) retrieval for ask",
+    ),
 ):
     """Manage Chirp configuration"""
     settings = get_settings()
@@ -1375,6 +1380,9 @@ Notes Root: {settings.directories.notes_root}
 Whisper: {settings.models.whisper}
 LLM: {resolved_chat_model(settings.models.llm)}
 Embedding: {settings.notes_chat.emb_model}
+
+[cyan]Search:[/cyan]
+Semantic retrieval: {"on" if settings.notes_chat.semantic_enabled else "off"}
 
 [cyan]Audio:[/cyan]
 Sample Rate: {settings.audio.sample_rate}
@@ -1404,6 +1412,10 @@ Interval: {settings.monitoring.warning_interval} minutes""",
 
     if embedding_model:
         settings.notes_chat.emb_model = embedding_model
+        changes_made = True
+
+    if semantic is not None:
+        settings.notes_chat.semantic_enabled = semantic
         changes_made = True
 
     if changes_made:

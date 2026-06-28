@@ -255,13 +255,23 @@ def _compile_pattern(options: SearchOptions) -> re.Pattern[str]:
         except re.error as exc:
             raise ValueError(f"invalid regex: {exc.msg}") from exc
 
-    # Match the same tokens BM25 scores in `chirp ask` so both modes agree on a
-    # match; fall back to a substring match when the query has no usable tokens.
-    tokens = _tokenize_document(options.query)
+    return _token_pattern(options.query) or re.compile(
+        re.escape(options.query), re.IGNORECASE
+    )
+
+
+def _token_pattern(text: str) -> re.Pattern[str] | None:
+    """Regex matching whole BM25 tokens of ``text``, or None if it has none.
+
+    Tokens are flanked by ``(?<!\\w)``/``(?!\\w)`` rather than ``\\b`` so the
+    match is exact token equality with `chirp ask`'s BM25 for every script
+    (``\\b`` assumes ASCII word edges and mishandles CJK / underscore runs).
+    """
+    tokens = list(dict.fromkeys(_tokenize_document(text)))
     if not tokens:
-        return re.compile(re.escape(options.query), re.IGNORECASE)
-    alternation = "|".join(re.escape(token) for token in dict.fromkeys(tokens))
-    return re.compile(rf"\b(?:{alternation})\b", re.IGNORECASE)
+        return None
+    alternation = "|".join(re.escape(token) for token in tokens)
+    return re.compile(rf"(?<!\w)(?:{alternation})(?!\w)", re.IGNORECASE)
 
 
 def _apply_since(
@@ -313,7 +323,10 @@ def _window_excerpt(line: str, match_start: int, match_end: int) -> str:
 
 
 def _markup_excerpt(text: str, query: str, regex: bool) -> str:
-    pattern = re.compile(query if regex else re.escape(query), re.IGNORECASE)
+    if regex:
+        pattern = re.compile(query, re.IGNORECASE)
+    else:
+        pattern = _token_pattern(query) or re.compile(re.escape(query), re.IGNORECASE)
     out: list[str] = []
     cursor = 0
     for match in pattern.finditer(text):

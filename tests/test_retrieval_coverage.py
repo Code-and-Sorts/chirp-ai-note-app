@@ -30,11 +30,11 @@ from notes_chat.retrieval import (
 # ---------------------------------------------------------------------------
 
 
-def _make_config(tmp_path: Path, semantic_enabled: bool = True):
+def _make_config(tmp_path: Path, semantic_enabled: bool = False):
     """Build a minimal settings-like namespace for testing.
 
-    ``semantic_enabled`` defaults to ``True`` so the chroma-path tests in this
-    module exercise hybrid retrieval; gating tests pass ``False`` explicitly.
+    ``semantic_enabled`` defaults to ``False`` to match the production default;
+    chroma-path tests pass ``True`` explicitly.
     """
     index_dir = tmp_path / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
@@ -117,7 +117,7 @@ class TestRetrieveContext:
         assert "No documents found" in result["error"]
 
     def test_returns_error_when_context_empty_after_filtering(self, tmp_path):
-        config = _make_config(tmp_path)
+        config = _make_config(tmp_path, semantic_enabled=True)
         chunk = ("id1", 0.9, {"content": "", "metadata": {}})
         with (
             patch("notes_chat.retrieval.IndexManager") as MockIM,
@@ -134,7 +134,7 @@ class TestRetrieveContext:
         assert "No relevant content" in result["error"]
 
     def test_returns_success_with_context(self, tmp_path):
-        config = _make_config(tmp_path)
+        config = _make_config(tmp_path, semantic_enabled=True)
         chunk = (
             "id1",
             0.9,
@@ -160,7 +160,7 @@ class TestRetrieveContext:
         assert "chunks_retrieved" in result
 
     def test_uses_when_filter_for_time_range(self, tmp_path):
-        config = _make_config(tmp_path)
+        config = _make_config(tmp_path, semantic_enabled=True)
         fake_range = SimpleNamespace(start=MagicMock(), end_exclusive=MagicMock())
         chunk = (
             "id1",
@@ -256,6 +256,15 @@ class TestRouteQuery:
 
     def test_jira_style_id_is_literal(self):
         assert _route_query("status of PROJ-1234 ticket") == LITERAL_WEIGHTS
+
+    def test_version_token_is_literal(self):
+        assert _route_query("when did we ship v2.3.1 to staging") == LITERAL_WEIGHTS
+
+    def test_bare_number_is_conceptual(self):
+        assert (
+            _route_query("what is the layout of room 101 in the building")
+            == CONCEPTUAL_WEIGHTS
+        )
 
     def test_acronym_is_literal(self):
         assert _route_query("what did we decide about the API gateway") == (
