@@ -113,6 +113,24 @@ def resolved_chat_model(fallback: str | None = None, path: Path | None = None) -
     return fallback or "unset"
 
 
+def resolved_embed_model(fallback: str | None = None, path: Path | None = None) -> str:
+    """Best-effort display name for the active embed model.
+
+    Mirrors :func:`resolved_chat_model`: returns the registry's configured
+    default embed alias when present, else ``fallback`` (the recommended embed
+    model), else ``"none"``. Never raises — display sites (``chirp about``,
+    ``chirp config --list``) must tolerate a missing or unreadable registry.
+    """
+    try:
+        registry = read_registry(path)
+    except LLMError:
+        return fallback or "none"
+    alias = registry.default_embed
+    if alias and alias in registry.models:
+        return alias
+    return fallback or "none"
+
+
 def resolve_alias(
     registry: Registry,
     identifier: str,

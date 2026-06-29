@@ -1,5 +1,9 @@
 # Deferred Work
 
+## Deferred from: lexical-first retrieval phases 3–5 (2026-06-28)
+
+- **No chirpd daemon-side embed guard.** With semantic search off, nothing asks chirpd to embed (Phase 2 removed every embed call), so the opt-in is enforced entirely client-side: retrieval skips the vector path, and `chirp config --semantic` is the only thing that registers/loads an embed model. A defense-in-depth guard that rejects `embed`/`model.load(role="embed")` ops on the daemon when no embed model is configured is intentionally not added — there is no caller to guard against today. Revisit if a future client path can request embeddings while semantic is off. [chirpd/dispatcher.py, chirpd/backend.py]
+
 ## Deferred from: code review of 1.1-storage-rewrite (2026-04-20)
 
 - Live session writes `transcript.live.txt` instead of canonical `transcript.txt`. Intentional — live transcript is a watch-along preview; canonical transcript comes from `chirp transcribe`. Revisit if users expect live-only recordings to flow into notes/index. [recorder/live_session.py]

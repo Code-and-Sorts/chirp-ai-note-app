@@ -24,7 +24,9 @@ def _fake_settings(tmp_path):
     return SimpleNamespace(
         directories=SimpleNamespace(notes_root=notes_root),
         models=SimpleNamespace(llm="llama3.1:8b"),
-        notes_chat=SimpleNamespace(emb_model="nomic-embed-text"),
+        notes_chat=SimpleNamespace(
+            semantic_enabled=False, recommended_embed_model="bge-small-en-v1.5"
+        ),
     )
 
 

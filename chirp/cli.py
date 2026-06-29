@@ -26,7 +26,7 @@ from chirp.exceptions import AudioDeviceError, ConfigurationError, RecordingErro
 from config.settings import ChirpSettings, get_settings
 from llm.cli.daemon import daemon_app
 from llm.cli.models import app as models_app
-from llm.registry import resolved_chat_model
+from llm.registry import resolved_chat_model, resolved_embed_model
 from utils.file_utils import NoteRecord, list_notes
 
 logger = logging.getLogger(__name__)
@@ -1357,15 +1357,19 @@ def config(
     llm_model: str | None = typer.Option(
         None, "--llm-model", help="Set LLM model (e.g. llama3.1:8b)"
     ),
-    embedding_model: str | None = typer.Option(
-        None,
-        "--embedding-model",
-        help="Set embedding model (e.g. nomic-embed-text)",
-    ),
     semantic: bool | None = typer.Option(
         None,
         "--semantic/--no-semantic",
-        help="Enable or disable opt-in semantic (vector) retrieval for ask",
+        help=(
+            "Enable opt-in semantic (vector) retrieval for ask. Enabling "
+            "registers an embed model and rebuilds the index; --no-semantic "
+            "returns to lexical-only (add --purge to delete the vector store)."
+        ),
+    ),
+    purge: bool = typer.Option(
+        False,
+        "--purge",
+        help="With --no-semantic, delete the vector store at index_dir/chroma.",
     ),
 ):
     """Manage Chirp configuration"""
@@ -1379,7 +1383,7 @@ Notes Root: {settings.directories.notes_root}
 [cyan]Models:[/cyan]
 Whisper: {settings.models.whisper}
 LLM: {resolved_chat_model(settings.models.llm)}
-Embedding: {settings.notes_chat.emb_model}
+Embedding: {resolved_embed_model(settings.notes_chat.recommended_embed_model)}
 
 [cyan]Search:[/cyan]
 Semantic retrieval: {"on" if settings.notes_chat.semantic_enabled else "off"}
@@ -1396,6 +1400,13 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         stdout_console.print(panel)
         return
 
+    if semantic is not None:
+        _toggle_semantic(settings, enable=semantic, purge=purge)
+        return
+
+    if purge:
+        console.print("[yellow]--purge has no effect without --no-semantic.[/yellow]")
+
     changes_made = False
 
     if notes_root:
@@ -1410,18 +1421,91 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         settings.models.llm = llm_model
         changes_made = True
 
-    if embedding_model:
-        settings.notes_chat.emb_model = embedding_model
-        changes_made = True
-
-    if semantic is not None:
-        settings.notes_chat.semantic_enabled = semantic
-        changes_made = True
-
     if changes_made:
         settings.save_to_file(ChirpSettings.get_config_path())
         settings.ensure_directories_exist()
         console.print("[green]configuration updated[/green]")
+
+
+def _toggle_semantic(settings: ChirpSettings, *, enable: bool, purge: bool) -> None:
+    if enable:
+        _enable_semantic(settings)
+    else:
+        _disable_semantic(settings, purge=purge)
+
+
+def _enable_semantic(settings: ChirpSettings) -> None:
+    """Wire up the vector half: register the embed model, verify it loads, flip
+    the flag, then backfill Chroma.
+
+    Atomicity (lexical-first stays the safe fallback): the flag is flipped only
+    after the embed model is registered AND verified loadable on chirpd. Any
+    earlier failure exits without touching the flag, so a half-enabled state can
+    never make `chirp ask` fail at query time.
+    """
+    from chirp.init_flow import RECOMMENDED_EMBED_REPO
+    from llm.cli.models import register_model
+    from llm.client import LLMClient
+    from llm.exceptions import LLMError
+    from notes_chat.index import build_index
+
+    if settings.notes_chat.semantic_enabled:
+        console.print("[green]semantic search is already on.[/green]")
+        return
+
+    console.print(
+        f"[blue]enabling semantic search — registering embed model "
+        f"{RECOMMENDED_EMBED_REPO}…[/blue]"
+    )
+    alias = register_model(RECOMMENDED_EMBED_REPO, role="embed", warm=False)
+
+    console.print(f"[blue]verifying chirpd can load {alias}…[/blue]")
+    try:
+        LLMClient().model_load_sync(alias, "embed")
+    except LLMError as exc:
+        console.print(
+            f"[red]could not load embed model {alias} on chirpd ({exc}). "
+            "semantic search stays off — you remain on lexical (BM25) search. "
+            "Run `chirp daemon logs` to diagnose, then retry.[/red]"
+        )
+        raise typer.Exit(exit_codes.MODEL_LOAD_FAILED) from exc
+
+    settings.notes_chat.semantic_enabled = True
+    settings.save_to_file(ChirpSettings.get_config_path())
+    settings.ensure_directories_exist()
+    console.print("[green]semantic search enabled.[/green] rebuilding the index…")
+    result = build_index(settings, force=True)
+    if not result.get("success"):
+        console.print(
+            f"[yellow]index rebuild reported a problem: {result.get('error')}. "
+            "`chirp ask` will retry the build on demand.[/yellow]"
+        )
+        return
+    console.print("[green]done — `chirp ask` now uses hybrid retrieval.[/green]")
+
+
+def _disable_semantic(settings: ChirpSettings, *, purge: bool) -> None:
+    settings.notes_chat.semantic_enabled = False
+    settings.save_to_file(ChirpSettings.get_config_path())
+    console.print(
+        "[green]semantic search disabled.[/green] now using lexical (BM25) search."
+    )
+    if purge:
+        _purge_chroma(settings.notes_chat.index_dir / "chroma")
+
+
+def _purge_chroma(chroma_dir: Path) -> None:
+    import shutil
+
+    if not chroma_dir.exists():
+        console.print(f"[dim]no vector store at {chroma_dir}; nothing to purge.[/dim]")
+        return
+    try:
+        shutil.rmtree(chroma_dir)
+    except OSError as exc:
+        console.print(f"[yellow]could not purge {chroma_dir}: {exc}[/yellow]")
+        return
+    console.print(f"[green]purged vector store at {chroma_dir}.[/green]")
 
 
 @app.command(hidden=True)

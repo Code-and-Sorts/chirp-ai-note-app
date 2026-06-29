@@ -86,6 +86,34 @@ class TestChirpSettings:
         reloaded = ChirpSettings.load_from_file(config_path)
         assert reloaded.directories.notes_root == tmp_path / "custom-root"
 
+    def test_recommended_embed_model_round_trips(self, tmp_path):
+        settings = ChirpSettings()
+        settings.notes_chat.recommended_embed_model = "custom-embed"
+        config_path = tmp_path / "config.toml"
+
+        settings.save_to_file(config_path)
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert reloaded.notes_chat.recommended_embed_model == "custom-embed"
+
+    def test_legacy_emb_model_key_loads_without_error(self, tmp_path):
+        """An old config carrying the renamed ``emb_model`` key must still load.
+
+        The key was renamed to ``recommended_embed_model``; pydantic ignores the
+        stale extra key rather than raising, so existing configs survive upgrade.
+        """
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[notes_chat]\nemb_model = "nomic-embed-text"\nk = 7\n',
+            encoding="utf-8",
+        )
+
+        reloaded = ChirpSettings.load_from_file(config_path)
+
+        assert not hasattr(reloaded.notes_chat, "emb_model")
+        assert reloaded.notes_chat.k == 7
+        assert reloaded.notes_chat.recommended_embed_model == "bge-small-en-v1.5"
+
     def test_non_table_init_value_does_not_block_load(self, tmp_path):
         """A hand-written non-table `init` value must not crash settings load.
 
