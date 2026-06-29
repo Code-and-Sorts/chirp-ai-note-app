@@ -1,6 +1,34 @@
 import pytest
 
-from notes_chat.retrieval import _build_context, _merge_and_dedupe
+from notes_chat.retrieval import (
+    _apply_relevance_floor,
+    _build_context,
+    _merge_and_dedupe,
+)
+
+
+def _hit(cid, score):
+    return (cid, score, {"source": "bm25"})
+
+
+class TestRelevanceFloor:
+    def test_drops_zero_and_below_ratio_keeps_top(self):
+        hits = [_hit("a", 8.0), _hit("b", 3.6), _hit("c", 1.2), _hit("d", 0.0)]
+        kept = {cid for cid, _s, _d in _apply_relevance_floor(hits, ratio=0.2)}
+        # top kept; b (>20% of 8) kept; c (1.2 < 1.6) and zero-score d dropped.
+        assert kept == {"a", "b"}
+
+    def test_top_is_always_kept(self):
+        kept = _apply_relevance_floor([_hit("only", 5.0)], ratio=0.2)
+        assert [cid for cid, _s, _d in kept] == ["only"]
+
+    def test_tiny_corpus_nonpositive_top_keeps_everything(self):
+        # BM25 IDF can drive a genuine match to <= 0 in a tiny corpus.
+        hits = [_hit("a", 0.0), _hit("b", -0.3)]
+        assert _apply_relevance_floor(hits) == hits
+
+    def test_empty_in_empty_out(self):
+        assert _apply_relevance_floor([]) == []
 
 
 class TestRetrievalMerge:
