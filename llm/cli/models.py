@@ -30,6 +30,7 @@ from rich.table import Table
 
 from chirp import glyphs
 from chirpd.paths import MODELS_TOML_PATH
+from config.settings import get_settings
 from llm import hf
 from llm.cli._console import console, stdout_console
 from llm.cli._progress import RichProgressCallback
@@ -106,8 +107,42 @@ def add_command(
     ),
 ) -> None:
     """Download a model from HuggingFace, register it, and warm it on the daemon."""
+    register_model(
+        hf_repo,
+        role=role,
+        alias=alias,
+        warm=not no_warm,
+        require_semantic_for_embed=True,
+    )
+
+
+def register_model(
+    hf_repo: str,
+    *,
+    role: Literal["chat", "embed"] | None = None,
+    alias: str | None = None,
+    warm: bool = True,
+    require_semantic_for_embed: bool = False,
+) -> str:
+    """Validate, download, register, and optionally warm a model; return its alias.
+
+    Shared by ``chirp models add`` and the ``chirp config --semantic`` enable
+    flow so both register through one path (epic §3 decision 8 ordering:
+    validate → resolve role → resolve alias → download → read → mutate → write
+    → warm). ``require_semantic_for_embed`` gates the user-facing ``models add``
+    path: an embed model can't be added while semantic search is off. The enable
+    flow leaves it ``False`` because it is mid-flight turning semantic on and
+    registers the embed model *before* flipping the flag.
+    """
     metadata = _validate_repo(hf_repo)
     resolved_role = _resolve_role(hf_repo, metadata, role)
+    if require_semantic_for_embed and resolved_role == "embed" and not _semantic_on():
+        _exit(
+            "Error: semantic search is off, so embed models can't be added. Run "
+            "`chirp config --semantic` to enable it (registers an embed model), "
+            "then add more embed models.",
+            2,
+        )
     resolved_alias = _resolve_alias(hf_repo, alias)
     _download(hf_repo, resolved_alias)
 
@@ -121,8 +156,21 @@ def add_command(
 
     _warn_on_role_change(resolved_alias, previous_entry, resolved_role)
 
-    if not no_warm:
+    if warm:
         _warm(resolved_alias, resolved_role)
+    return resolved_alias
+
+
+def _semantic_on() -> bool:
+    """Whether opt-in semantic retrieval is enabled in config.
+
+    A failure to read config is treated as off — the lexical-first default —
+    so a broken config never silently exposes embed-model addability.
+    """
+    try:
+        return get_settings().notes_chat.semantic_enabled
+    except Exception:  # noqa: BLE001 - config read must not break models commands
+        return False
 
 
 @dataclass(frozen=True)
@@ -143,13 +191,23 @@ def list_command(
         "--json",
         help="Emit a JSON document on stdout instead of a table.",
     ),
+    show_all: bool = typer.Option(
+        False,
+        "--all",
+        help="Include embed models even when semantic search is off.",
+    ),
 ) -> None:
-    """List registered models with role, default, and daemon-loaded state."""
+    """List registered models with role, default, and daemon-loaded state.
+
+    With semantic search off (the default), embed models are hidden because
+    they serve no purpose until it is enabled; pass --all to see them.
+    """
     registry = _read_registry()
     daemon_reachable, loaded_aliases = _query_loaded_state()
-    rows = _compose_rows(registry, loaded_aliases)
+    include_embed = show_all or _semantic_on()
+    rows = _compose_rows(registry, loaded_aliases, include_embed=include_embed)
     if json_output:
-        _render_list_json(registry, rows, daemon_reachable)
+        _render_list_json(registry, rows, daemon_reachable, include_embed=include_embed)
     else:
         _render_list_table(rows, daemon_reachable)
 
@@ -176,11 +234,18 @@ def _query_loaded_state() -> tuple[bool, set[str]]:
     return True, loaded_aliases
 
 
-def _compose_rows(registry: Registry, loaded_aliases: set[str]) -> list[ListRow]:
+def _compose_rows(
+    registry: Registry,
+    loaded_aliases: set[str],
+    *,
+    include_embed: bool = True,
+) -> list[ListRow]:
     """Build the sorted render rows from the registry and loaded-alias set.
 
     Sorted by ``(role, alias)`` ascending — ``chat`` sorts before ``embed`` —
-    so the table order is stable across runs.
+    so the table order is stable across runs. When ``include_embed`` is False
+    (semantic search off, no ``--all``), embed rows are dropped so both the
+    table and JSON renderers stay consistent.
     """
     defaults = {
         alias
@@ -196,6 +261,7 @@ def _compose_rows(registry: Registry, loaded_aliases: set[str]) -> list[ListRow]
             hf_repo=entry.hf_repo,
         )
         for alias, entry in registry.models.items()
+        if include_embed or entry.role != "embed"
     ]
     rows.sort(key=lambda row: (row.role, row.alias))
     return rows
@@ -230,12 +296,16 @@ def _render_list_table(rows: list[ListRow], daemon_reachable: bool) -> None:
 
 
 def _render_list_json(
-    registry: Registry, rows: list[ListRow], daemon_reachable: bool
+    registry: Registry,
+    rows: list[ListRow],
+    daemon_reachable: bool,
+    *,
+    include_embed: bool = True,
 ) -> None:
     payload: dict[str, Any] = {
         "schema_version": registry.schema_version,
         "default_chat": registry.default_chat,
-        "default_embed": registry.default_embed,
+        "default_embed": registry.default_embed if include_embed else None,
         "models": [
             {
                 "alias": row.alias,
