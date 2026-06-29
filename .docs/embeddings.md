@@ -1,5 +1,12 @@
 # Embedding Backend
 
+> **Applies only when semantic search is enabled.** Embeddings are opt-in
+> (`notes_chat.semantic_enabled`, default `False`). With the default lexical-first
+> setup, retrieval is BM25-only and nothing in this document runs — no embed
+> model is registered, no Chroma store is created, and the query path never calls
+> `embed_sync`. Turn it on with `chirp config --semantic` (which registers the
+> embed model and rebuilds the index). See [Retrieval](./hybrid-retrieval.md).
+
 This document explains how embeddings are generated and used in Chirp’s RAG pipeline.
 
 - Code references: `notes_chat/index.py`, `notes_chat/retrieval.py`, `config/settings.py`, `llm/client.py`

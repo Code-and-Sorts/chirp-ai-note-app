@@ -6,10 +6,12 @@ This document defines the chunking strategy used for indexing notes into the RAG
 - Config knobs: `notes_chat.chunk_size`, `notes_chat.overlap` in `config/config.yaml` / `config/settings.py`
 - Defaults: `chunk_size: 1000` characters, `overlap: 200` characters
 
+Chunks feed the BM25 lexical index always, and the embedding/Chroma index only when semantic search is enabled (`notes_chat.semantic_enabled`; see [Retrieval](./hybrid-retrieval.md)). Chunking itself is identical in both modes.
+
 ## Goals
 
 - Preserve semantic boundaries by splitting around second-level headings first (`##` in Markdown)
-- Keep chunks under a target character budget for efficient embedding and retrieval
+- Keep chunks under a target character budget for efficient lexical indexing and (when enabled) embedding
 - Add overlap to reduce information loss at boundaries
 
 ## Inputs & Outputs

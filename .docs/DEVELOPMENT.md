@@ -8,7 +8,7 @@ This document is for contributors working on Chirp. End users should start with 
 - macOS for local audio-capture development
 - Homebrew
 - Git
-- A registered MLX chat + embed model for note-generation and retrieval flows (`chirp models add …`); the bundled chirpd daemon serves them on-device
+- A registered MLX chat model for note-generation and retrieval flows (`chirp models add …`); the bundled chirpd daemon serves it on-device. An embed model is optional — retrieval is lexical-first (BM25), and the embed model is only registered when you opt into semantic search with `chirp config --semantic`
 
 ## Setup
 

@@ -130,6 +130,24 @@ chirp search "action item" --since 30d
 chirp search "owner: .*" --regex --json
 ```
 
+## How search works
+
+`chirp ask` and `chirp search` run on a **lexical (BM25) index by default** — fast, exact-term matching over your transcripts and notes, with no embedding model to download. This is the out-of-the-box behavior; nothing else is required.
+
+**Semantic search is opt-in.** Enable it to also match on meaning (paraphrases, related concepts) using on-device embeddings:
+
+```bash
+# Enable: registers a small embed model, verifies chirpd can load it, then
+# rebuilds the index. `chirp ask` then blends lexical and semantic hits.
+chirp config --semantic
+
+# Disable: return to lexical-only. Add --purge to also delete the vector store.
+chirp config --no-semantic
+chirp config --no-semantic --purge
+```
+
+While semantic search is off, embed models stay hidden from `chirp models list` (pass `--all` to see them) and can't be added until you enable it.
+
 ## Setup details
 
 `chirp init` is the recommended setup path. It checks for Apple Silicon, verifies Homebrew and `ffmpeg`, confirms the bundled chirpd daemon is reachable, reports whether a default chat model is registered, and checks the screen-recording permission — then helps install anything missing and offers to start chirpd at login. The bundled `Chirp.app` helper records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
@@ -142,16 +160,19 @@ If you prefer to set things up manually on macOS:
    brew install ffmpeg
    ```
 
-2. Register a chat model and an embedding model (downloaded to the local HF cache, served on-device by chirpd):
+2. Register a chat model (downloaded to the local HF cache, served on-device by chirpd):
 
    ```bash
    # Chat — balanced quality and speed (~2 GB)
    chirp models add mlx-community/gemma-4-4b-it-4bit
    # ...or a smaller-footprint variant for tighter RAM:
    chirp models add mlx-community/gemma-4-e2b-it-8bit
+   ```
 
-   # Embeddings (for search / retrieval)
-   chirp models add mlx-community/bge-small-en-v1.5 --role embed
+   Search works out of the box on the lexical (BM25) index — no embedding model needed. To also match on meaning, opt into semantic search; this registers the embed model and rebuilds the index for you (see [How search works](#how-search-works)):
+
+   ```bash
+   chirp config --semantic
    ```
 
 3. Re-check your environment:
