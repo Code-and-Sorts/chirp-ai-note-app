@@ -34,7 +34,7 @@ class Stage(Enum):
     LOAD_AUDIO = ("loaded audio", 0)
     TRANSCRIBE = ("transcribe", 1)
     GENERATE_NOTES = ("generate notes", 2)
-    INDEX = ("index to chromadb", 3)
+    INDEX = ("index notes", 3)
     SAVE = ("save", 4)
 
     def __init__(self, label: str, idx: int) -> None:

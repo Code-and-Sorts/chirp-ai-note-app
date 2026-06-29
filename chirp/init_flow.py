@@ -49,9 +49,11 @@ EXIT_NOT_APPLE_SILICON = exit_codes.NOT_APPLE_SILICON
 # migration plan and the README sweep (7.5) reference these constants.
 RECOMMENDED_CHAT_REPO = "mlx-community/gemma-4-4b-it-4bit"
 SMALLER_CHAT_REPO = "mlx-community/gemma-4-e2b-it-8bit"
-# Recommended embed model registered by `chirp config --semantic`. Its inferred
-# alias (bge-small-en-v1.5) matches NotesChatConfig.recommended_embed_model.
-RECOMMENDED_EMBED_REPO = "mlx-community/bge-small-en-v1.5"
+# Recommended embed model registered by `chirp config --semantic`. Must be a
+# repo that exists on HF: the bf16 build is the published mlx-community embed
+# (the bare `bge-small-en-v1.5` repo 404s). Its inferred alias
+# (bge-small-en-v1.5-bf16) matches NotesChatConfig.recommended_embed_model.
+RECOMMENDED_EMBED_REPO = "mlx-community/bge-small-en-v1.5-bf16"
 
 _MODELS_ADD_HINT = f"not configured — run 'chirp models add {RECOMMENDED_CHAT_REPO}'"
 

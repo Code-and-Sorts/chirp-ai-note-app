@@ -112,7 +112,7 @@ class TestChirpSettings:
 
         assert not hasattr(reloaded.notes_chat, "emb_model")
         assert reloaded.notes_chat.k == 7
-        assert reloaded.notes_chat.recommended_embed_model == "bge-small-en-v1.5"
+        assert reloaded.notes_chat.recommended_embed_model == "bge-small-en-v1.5-bf16"
 
     def test_non_table_init_value_does_not_block_load(self, tmp_path):
         """A hand-written non-table `init` value must not crash settings load.

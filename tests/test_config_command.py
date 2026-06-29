@@ -63,7 +63,7 @@ def test_enable_registers_verifies_flips_and_rebuilds(
         assert repo == RECOMMENDED_EMBED_REPO
         assert role == "embed"
         assert warm is False
-        return "bge-small-en-v1.5"
+        return "bge-small-en-v1.5-bf16"
 
     client = MagicMock()
     client.model_load_sync.side_effect = lambda *a, **k: order.append("verify")
@@ -82,7 +82,7 @@ def test_enable_registers_verifies_flips_and_rebuilds(
 
     assert result.exit_code == 0
     assert order == ["register", "verify", "build"]
-    client.model_load_sync.assert_called_once_with("bge-small-en-v1.5", "embed")
+    client.model_load_sync.assert_called_once_with("bge-small-en-v1.5-bf16", "embed")
     assert _reload(config_env.config_path).notes_chat.semantic_enabled is True
 
 
@@ -94,7 +94,8 @@ def test_enable_aborts_and_keeps_flag_off_when_load_fails(
     build = MagicMock()
 
     monkeypatch.setattr(
-        "llm.cli.models.register_model", MagicMock(return_value="bge-small-en-v1.5")
+        "llm.cli.models.register_model",
+        MagicMock(return_value="bge-small-en-v1.5-bf16"),
     )
     monkeypatch.setattr("llm.client.LLMClient", MagicMock(return_value=client))
     monkeypatch.setattr("notes_chat.index.build_index", build)
@@ -144,7 +145,8 @@ def test_enable_with_purge_warns_but_proceeds(
 ) -> None:
     client = MagicMock()
     monkeypatch.setattr(
-        "llm.cli.models.register_model", MagicMock(return_value="bge-small-en-v1.5")
+        "llm.cli.models.register_model",
+        MagicMock(return_value="bge-small-en-v1.5-bf16"),
     )
     monkeypatch.setattr("llm.client.LLMClient", MagicMock(return_value=client))
     monkeypatch.setattr(
@@ -189,7 +191,8 @@ def test_scalar_setter_persists_through_enable(
 ) -> None:
     new_root = tmp_path / "relocated"
     monkeypatch.setattr(
-        "llm.cli.models.register_model", MagicMock(return_value="bge-small-en-v1.5")
+        "llm.cli.models.register_model",
+        MagicMock(return_value="bge-small-en-v1.5-bf16"),
     )
     monkeypatch.setattr("llm.client.LLMClient", MagicMock(return_value=MagicMock()))
     monkeypatch.setattr(
@@ -241,7 +244,7 @@ def test_list_shows_resolved_embed_alias(
     assert result.exit_code == 0
     assert "spy-embed" in result.stdout
     assert "nomic-embed-text" not in result.stdout
-    assert calls == ["bge-small-en-v1.5"]
+    assert calls == ["bge-small-en-v1.5-bf16"]
 
 
 def test_embedding_model_option_is_gone(config_env: SimpleNamespace) -> None:
