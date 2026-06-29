@@ -1400,13 +1400,6 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         stdout_console.print(panel)
         return
 
-    if semantic is not None:
-        _toggle_semantic(settings, enable=semantic, purge=purge)
-        return
-
-    if purge:
-        console.print("[yellow]--purge has no effect without --no-semantic.[/yellow]")
-
     changes_made = False
 
     if notes_root:
@@ -1426,9 +1419,18 @@ Interval: {settings.monitoring.warning_interval} minutes""",
         settings.ensure_directories_exist()
         console.print("[green]configuration updated[/green]")
 
+    if semantic is not None:
+        _toggle_semantic(settings, enable=semantic, purge=purge)
+        return
+
+    if purge:
+        console.print("[yellow]--purge has no effect without --no-semantic.[/yellow]")
+
 
 def _toggle_semantic(settings: ChirpSettings, *, enable: bool, purge: bool) -> None:
     if enable:
+        if purge:
+            console.print("[yellow]--purge has no effect with --semantic.[/yellow]")
         _enable_semantic(settings)
     else:
         _disable_semantic(settings, purge=purge)

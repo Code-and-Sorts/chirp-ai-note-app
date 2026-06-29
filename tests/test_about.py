@@ -53,3 +53,27 @@ def test_run_about_paints_all_logo_rows(tmp_path):
     assert "chirp" in output
     assert "Colby Timm" in output
     assert TAGLINE in output
+
+
+def test_plain_about_shows_lexical_label_when_semantic_off(tmp_path):
+    buffer = StringIO()
+    console = Console(file=buffer, width=120, force_terminal=False)
+
+    about.render_about_plain(console, _fake_settings(tmp_path))
+
+    assert "lexical (BM25)" in buffer.getvalue()
+
+
+def test_plain_about_shows_embed_alias_when_semantic_on(tmp_path, monkeypatch):
+    settings = _fake_settings(tmp_path)
+    settings.notes_chat.semantic_enabled = True
+    monkeypatch.setattr(about, "resolved_embed_model", lambda fallback: "my-embed")
+
+    buffer = StringIO()
+    console = Console(file=buffer, width=120, force_terminal=False)
+
+    about.render_about_plain(console, settings)
+
+    output = buffer.getvalue()
+    assert "my-embed" in output
+    assert "lexical (BM25)" not in output

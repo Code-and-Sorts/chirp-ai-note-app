@@ -120,6 +120,92 @@ def test_disable_with_purge_removes_chroma(config_env: SimpleNamespace) -> None:
     assert _reload(config_env.config_path).notes_chat.semantic_enabled is False
 
 
+def test_enable_when_already_on_is_a_noop(
+    config_env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_semantic_on(config_env)
+    register = MagicMock()
+    build = MagicMock()
+    monkeypatch.setattr("llm.cli.models.register_model", register)
+    monkeypatch.setattr("llm.client.LLMClient", MagicMock())
+    monkeypatch.setattr("notes_chat.index.build_index", build)
+
+    result = runner.invoke(cli.app, ["config", "--semantic"])
+
+    assert result.exit_code == 0
+    assert "already on" in result.stderr
+    register.assert_not_called()
+    build.assert_not_called()
+    assert _reload(config_env.config_path).notes_chat.semantic_enabled is True
+
+
+def test_enable_with_purge_warns_but_proceeds(
+    config_env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = MagicMock()
+    monkeypatch.setattr(
+        "llm.cli.models.register_model", MagicMock(return_value="bge-small-en-v1.5")
+    )
+    monkeypatch.setattr("llm.client.LLMClient", MagicMock(return_value=client))
+    monkeypatch.setattr(
+        "notes_chat.index.build_index", MagicMock(return_value={"success": True})
+    )
+
+    result = runner.invoke(cli.app, ["config", "--semantic", "--purge"])
+
+    assert result.exit_code == 0
+    assert "no effect with --semantic" in result.stderr
+    assert _reload(config_env.config_path).notes_chat.semantic_enabled is True
+
+
+def test_disable_purge_when_chroma_missing(config_env: SimpleNamespace) -> None:
+    _seed_semantic_on(config_env)
+    assert not (config_env.index_dir / "chroma").exists()
+
+    result = runner.invoke(cli.app, ["config", "--no-semantic", "--purge"])
+
+    assert result.exit_code == 0
+    assert "nothing to purge" in result.stderr
+    assert _reload(config_env.config_path).notes_chat.semantic_enabled is False
+
+
+def test_scalar_setter_applies_alongside_semantic_toggle(
+    config_env: SimpleNamespace, tmp_path: Path
+) -> None:
+    new_root = tmp_path / "relocated"
+
+    result = runner.invoke(
+        cli.app, ["config", "--no-semantic", "--notes-root", str(new_root)]
+    )
+
+    assert result.exit_code == 0
+    reloaded = _reload(config_env.config_path)
+    assert reloaded.directories.notes_root == new_root
+    assert reloaded.notes_chat.semantic_enabled is False
+
+
+def test_scalar_setter_persists_through_enable(
+    config_env: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new_root = tmp_path / "relocated"
+    monkeypatch.setattr(
+        "llm.cli.models.register_model", MagicMock(return_value="bge-small-en-v1.5")
+    )
+    monkeypatch.setattr("llm.client.LLMClient", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        "notes_chat.index.build_index", MagicMock(return_value={"success": True})
+    )
+
+    result = runner.invoke(
+        cli.app, ["config", "--semantic", "--notes-root", str(new_root)]
+    )
+
+    assert result.exit_code == 0
+    reloaded = _reload(config_env.config_path)
+    assert reloaded.directories.notes_root == new_root
+    assert reloaded.notes_chat.semantic_enabled is True
+
+
 def test_disable_without_purge_keeps_chroma(config_env: SimpleNamespace) -> None:
     chroma = config_env.index_dir / "chroma"
     chroma.mkdir()

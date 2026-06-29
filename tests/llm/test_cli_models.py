@@ -737,6 +737,21 @@ def test_list_json_hides_embed_when_semantic_off(
     assert payload["default_embed"] is None
 
 
+def test_list_all_json_shows_embed_when_semantic_off(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list", "--all", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    aliases = {model["alias"] for model in payload["models"]}
+    assert aliases == {"gemma-4-4b-it-4bit", "bge-small-en-v1.5"}
+    assert payload["default_embed"] == "bge-small-en-v1.5"
+
+
 def test_list_daemon_unreachable_tty(
     registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
 ) -> None:
