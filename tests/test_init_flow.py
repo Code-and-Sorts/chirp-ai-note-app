@@ -799,8 +799,38 @@ def test_finalize_paths_preserves_existing_config(tmp_path, monkeypatch):
     init_flow._finalize_paths(settings, _console())
 
     assert config_path.stat().st_mtime == original_mtime
-    assert (settings.notes_chat.index_dir / "chroma").exists()
     assert settings.directories.notes_root.exists()
+
+
+def test_finalize_paths_skips_chroma_when_lexical_only(tmp_path, monkeypatch):
+    """A fresh lexical-only install must not get an empty chroma/ directory."""
+    settings = _fake_settings(tmp_path)
+    settings.notes_chat.semantic_enabled = False
+    monkeypatch.setattr(
+        init_flow.ChirpSettings, "get_config_path", lambda: tmp_path / "config.toml"
+    )
+    monkeypatch.setattr(init_flow, "_offer_launch_agent", lambda *a, **k: None)
+
+    console = _console()
+    init_flow._finalize_paths(settings, console)
+
+    assert not (settings.notes_chat.index_dir / "chroma").exists()
+    assert "chromadb" not in console.file.getvalue()
+
+
+def test_finalize_paths_creates_chroma_when_semantic_on(tmp_path, monkeypatch):
+    settings = _fake_settings(tmp_path)
+    settings.notes_chat.semantic_enabled = True
+    monkeypatch.setattr(
+        init_flow.ChirpSettings, "get_config_path", lambda: tmp_path / "config.toml"
+    )
+    monkeypatch.setattr(init_flow, "_offer_launch_agent", lambda *a, **k: None)
+
+    console = _console()
+    init_flow._finalize_paths(settings, console)
+
+    assert (settings.notes_chat.index_dir / "chroma").exists()
+    assert "chromadb" in console.file.getvalue()
 
 
 # --- --recheck Ollama migration plan (story 7.2) ---------------------------------

@@ -427,8 +427,14 @@ def _run_switch_model(settings: ChirpSettings, console: Console) -> int:
 
 
 def _finalize_paths(settings: ChirpSettings, console: Console) -> None:
-    """Phase 3 — ensure config/chroma/notes paths exist, print the summary."""
+    """Phase 3 — ensure config/notes (and chroma only when semantic) paths exist.
+
+    Lexical-first: the Chroma vector store is created only when semantic search
+    is enabled, mirroring ``ChirpSettings.ensure_directories_exist``. A fresh,
+    lexical-only install therefore never gets an empty ``chroma/`` directory.
+    """
     config_path = ChirpSettings.get_config_path()
+    semantic_enabled = settings.notes_chat.semantic_enabled
     chroma_dir = settings.notes_chat.index_dir / "chroma"
     notes_root = settings.directories.notes_root
 
@@ -439,14 +445,15 @@ def _finalize_paths(settings: ChirpSettings, console: Console) -> None:
     if not config_existed:
         _merge_config(config_path, console=console)
 
-    chroma_dir.mkdir(parents=True, exist_ok=True)
+    if semantic_enabled:
+        chroma_dir.mkdir(parents=True, exist_ok=True)
     notes_root.mkdir(parents=True, exist_ok=True)
 
     _print_path_summary(
         console,
         config_path=config_path,
         config_changed=not config_existed,
-        chroma_dir=chroma_dir,
+        chroma_dir=chroma_dir if semantic_enabled else None,
         chroma_was_new=not chroma_existed,
         notes_root=notes_root,
         notes_was_new=not notes_existed,
@@ -590,7 +597,7 @@ def _print_path_summary(
     *,
     config_path: Path,
     config_changed: bool,
-    chroma_dir: Path,
+    chroma_dir: Path | None,
     chroma_was_new: bool,
     notes_root: Path,
     notes_was_new: bool,
@@ -603,13 +610,14 @@ def _print_path_summary(
             created_or_changed=config_changed,
         )
     )
-    console.print(
-        _path_line(
-            "initialized chromadb at",
-            chroma_dir,
-            created_or_changed=chroma_was_new,
+    if chroma_dir is not None:
+        console.print(
+            _path_line(
+                "initialized chromadb at",
+                chroma_dir,
+                created_or_changed=chroma_was_new,
+            )
         )
-    )
     console.print(
         _path_line(
             "notes dir:",
