@@ -47,7 +47,7 @@ EXIT_NOT_APPLE_SILICON = exit_codes.NOT_APPLE_SILICON
 
 # Single source of truth for the recommended first model — story 7.2's
 # migration plan and the README sweep (7.5) reference these constants.
-RECOMMENDED_CHAT_REPO = "mlx-community/gemma-4-4b-it-4bit"
+RECOMMENDED_CHAT_REPO = "mlx-community/Qwen2.5-7B-Instruct-4bit"
 SMALLER_CHAT_REPO = "mlx-community/gemma-4-e2b-it-8bit"
 # Recommended embed model registered by `chirp config --semantic`. Must be a
 # repo that exists on HF: the bf16 build is the published mlx-community embed
@@ -261,7 +261,7 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
     if not chat_row.installed:
         console.print(
             f"  next step: [bold]chirp models add {RECOMMENDED_CHAT_REPO}[/bold]"
-            " [dim](~2 GB, balanced quality and speed)[/dim]"
+            " [dim](~4.3 GB, strong quality)[/dim]"
         )
         console.print(
             f"  [dim]smaller alternative: chirp models add {SMALLER_CHAT_REPO}[/dim]"
@@ -700,7 +700,7 @@ def _print_migration_plan(console: Console, detection: dict[str, bool]) -> None:
     console.print(" To finish the migration:")
     console.print("   1. Pick an MLX model [dim](GGUF models do not work)[/dim]:")
     console.print(f"        [bold]chirp models add {RECOMMENDED_CHAT_REPO}[/bold]")
-    console.print("      [dim](~2 GB, balanced quality and speed)[/dim]")
+    console.print("      [dim](~4.3 GB, strong quality)[/dim]")
     console.print()
     console.print("      Tight on RAM? Use the smaller-footprint variant:")
     console.print(f"        [bold]chirp models add {SMALLER_CHAT_REPO}[/bold]")

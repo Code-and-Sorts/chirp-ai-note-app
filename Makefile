@@ -134,7 +134,7 @@ setup: install ## Initial setup for new installations
 	uv run pre-commit install
 	@echo "Chirp setup complete!"
 	@echo "Next steps:"
-	@echo "  1. Register a chat model: uv run chirp models add mlx-community/gemma-4-4b-it-4bit"
+	@echo "  1. Register a chat model: uv run chirp models add mlx-community/Qwen2.5-7B-Instruct-4bit"
 	@echo "  2. Run 'make verify-deps' to verify setup"
 
 # Build commands

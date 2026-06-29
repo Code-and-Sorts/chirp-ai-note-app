@@ -92,7 +92,7 @@ def _complete_alias(incomplete: str) -> list[str]:
 @app.command("add")
 def add_command(
     hf_repo: str = typer.Argument(
-        ..., help="HuggingFace repo id, e.g. mlx-community/gemma-4-4b-it-4bit."
+        ..., help="HuggingFace repo id, e.g. mlx-community/Qwen2.5-7B-Instruct-4bit."
     ),
     alias: str | None = typer.Option(
         None, "--alias", help="Override the alias inferred from the repo name."

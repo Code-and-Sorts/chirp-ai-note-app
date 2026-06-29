@@ -189,7 +189,7 @@ def test_verify_handles_empty_registry(tmp_path, monkeypatch):
     chat = next(s for s in statuses if s.name == "default chat model")
     assert chat.installed is False
     assert chat.required is False
-    assert "chirp models add mlx-community/gemma-4-4b-it-4bit" in chat.detail
+    assert f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in chat.detail
 
 
 def test_verify_handles_missing_registry_file(tmp_path, monkeypatch):
@@ -223,7 +223,7 @@ def test_run_init_prints_models_add_hint_when_registry_empty(tmp_path, monkeypat
 
     assert code == 0
     output = console.file.getvalue()
-    assert "chirp models add mlx-community/gemma-4-4b-it-4bit" in output
+    assert f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in output
     assert "ollama" not in output.lower()
 
 
@@ -241,7 +241,7 @@ def test_switch_model_with_empty_registry_prints_models_add_hint(tmp_path, monke
 
     assert code == 0
     output = console.file.getvalue()
-    assert "chirp models add mlx-community/gemma-4-4b-it-4bit" in output
+    assert f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in output
     assert "pick" not in output.lower()  # no tag picker shown
 
 
@@ -967,7 +967,7 @@ def test_plan_recommends_default_chat_repo(tmp_path, monkeypatch):
     init_flow.run_init(_fake_settings(tmp_path), console, recheck=True)
 
     output = console.file.getvalue()
-    assert "mlx-community/gemma-4-4b-it-4bit" in output
+    assert init_flow.RECOMMENDED_CHAT_REPO in output
     assert init_flow.SMALLER_CHAT_REPO in output
 
 

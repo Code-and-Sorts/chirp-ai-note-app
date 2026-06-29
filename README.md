@@ -163,8 +163,8 @@ If you prefer to set things up manually on macOS:
 2. Register a chat model (downloaded to the local HF cache, served on-device by chirpd):
 
    ```bash
-   # Chat — balanced quality and speed (~2 GB)
-   chirp models add mlx-community/gemma-4-4b-it-4bit
+   # Chat — strong quality (~4.3 GB)
+   chirp models add mlx-community/Qwen2.5-7B-Instruct-4bit
    # ...or a smaller-footprint variant for tighter RAM:
    chirp models add mlx-community/gemma-4-e2b-it-8bit
    ```
