@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
 import tomli_w
 from rich.console import Console
 
@@ -12,9 +13,19 @@ from transcriber.batch_processor import (
     StageState,
     _has_transcript,
     _read_meta,
+    _StageSkipped,
     _write_meta,
 )
 from utils.file_utils import NoteRecord
+
+
+@pytest.fixture(autouse=True)
+def _isolate_resolved_chat_model(monkeypatch):
+    """Pin ``resolved_chat_model`` to its fallback so meta/label assertions don't
+    depend on the host's ``models.toml``."""
+    monkeypatch.setattr(
+        "transcriber.batch_processor.resolved_chat_model", lambda fallback: fallback
+    )
 
 
 def _seed_record_dir(tmp_path: Path, slug: str, with_transcript: bool = False) -> Path:
@@ -76,6 +87,18 @@ class TestChecklistView:
         assert "loaded audio" in output
         assert "00:42" in output
         assert "transcribe" in output
+
+    def test_skip_renders_muted_detail_not_failure(self):
+        from io import StringIO
+
+        view = ChecklistView(header="clip")
+        view.skip(Stage.GENERATE_NOTES, "recording too short to summarize")
+        assert view.statuses[Stage.GENERATE_NOTES].state is StageState.SKIPPED
+        buffer = StringIO()
+        Console(file=buffer, force_terminal=False, width=80).print(view.render())
+        output = buffer.getvalue()
+        assert "recording too short to summarize" in output
+        assert "✗" not in output
 
 
 class TestSelectQueue:
@@ -180,7 +203,7 @@ class TestRunQueueIntegration:
         proc = _processor(tmp_path)
 
         result = proc.run_queue(console=Console(force_terminal=False))
-        assert result == {"ok": 2, "failed": 0, "total": 2}
+        assert result == {"ok": 2, "skipped": 0, "failed": 0, "total": 2}
 
         for slug in ("alpha", "beta"):
             transcript = tmp_path / slug / "transcript.txt"
@@ -210,7 +233,7 @@ class TestRunQueueIntegration:
         proc = _processor(tmp_path)
 
         result = proc.run_queue(console=Console(force_terminal=False))
-        assert result == {"ok": 1, "failed": 1, "total": 2}
+        assert result == {"ok": 1, "skipped": 0, "failed": 1, "total": 2}
         # second one still got its notes file
         assert (tmp_path / "second" / "notes.md").exists()
         # first one did NOT — generation failed
@@ -233,10 +256,26 @@ class TestRunQueueIntegration:
         proc = _processor(tmp_path)
 
         result = proc.run_queue(n=2, console=Console(force_terminal=False))
-        assert result == {"ok": 2, "failed": 0, "total": 2}
+        assert result == {"ok": 2, "skipped": 0, "failed": 0, "total": 2}
         assert (tmp_path / "a" / "notes.md").exists()
         assert (tmp_path / "b" / "notes.md").exists()
         assert not (tmp_path / "c" / "notes.md").exists()
+
+    def test_run_queue_counts_skip_not_failure(self, tmp_path, monkeypatch):
+        _seed_record_dir(tmp_path, "blip")
+        self._stub_stages(monkeypatch)
+
+        def skip_generate(self, ctx):
+            raise _StageSkipped("recording too short to summarize")
+
+        monkeypatch.setattr(BatchProcessor, "_stage_generate_notes", skip_generate)
+        proc = _processor(tmp_path)
+
+        result = proc.run_queue(console=Console(force_terminal=False))
+
+        assert result == {"ok": 0, "skipped": 1, "failed": 0, "total": 1}
+        # A skipped record runs no later stages, so no notes are written.
+        assert not (tmp_path / "blip" / "notes.md").exists()
 
 
 class TestMetaIO:
@@ -350,7 +389,7 @@ class TestResumeFromFailure:
         )
 
         result = proc.run_queue(console=Console(force_terminal=False))
-        assert result == {"ok": 1, "failed": 0, "total": 1}
+        assert result == {"ok": 1, "skipped": 0, "failed": 0, "total": 1}
         assert whisper_called["count"] == 0
         # Transcript untouched
         assert (

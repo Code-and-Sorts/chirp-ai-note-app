@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 # transcript was silently truncated mid-generation, so window it and warn.
 MAX_TRANSCRIPT_CHARS = 24000
 
+# Below this, a transcript has nothing to summarize (a silent/near-empty clip);
+# generating notes would only yield junk that later poisons `ask`. Callers treat
+# this as a benign skip, not a failure.
+MIN_TRANSCRIPT_CHARS = 50
+
 MAX_PARSE_ATTEMPTS = 2
 
 SYSTEM_PROMPT = """You are Chirp, the user's meeting note co-pilot.
@@ -175,6 +180,19 @@ class NoteGenerator:
         if successful:
             return {**successful[-1], "results": results}
 
+        # Distinguish a benign skip (nothing to summarize) from a real failure so
+        # callers can surface it as a skip rather than a hard error. Only when
+        # *every* record was skipped — a single genuine failure makes the batch a
+        # failure.
+        skipped = [r for r in results if r.get("skipped")]
+        if results and len(skipped) == len(results):
+            return {
+                "success": False,
+                "skipped": True,
+                "error": skipped[-1]["error"],
+                "results": results,
+            }
+
         return {
             "success": False,
             "error": "Failed to generate notes for any record",
@@ -221,11 +239,15 @@ class NoteGenerator:
             }
 
         transcript_text = record.transcript.read_text(encoding="utf-8").strip()
-        if len(transcript_text) < 50:
+        if len(transcript_text) < MIN_TRANSCRIPT_CHARS:
             return {
                 "success": False,
+                "skipped": True,
                 "slug": record.slug,
-                "error": "Insufficient transcript content (< 50 characters)",
+                "error": (
+                    f"Insufficient transcript content "
+                    f"(< {MIN_TRANSCRIPT_CHARS} characters)"
+                ),
             }
 
         provided_title = record.title

@@ -17,6 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from config.settings import ChirpSettings
+from llm.registry import resolved_chat_model
 from transcriber.whisper_transcriber import WhisperTranscriber
 from utils.file_utils import (
     META_FILENAME,
@@ -46,7 +47,20 @@ class StageState(Enum):
     PENDING = "pending"
     RUNNING = "running"
     DONE = "done"
+    SKIPPED = "skipped"
     FAILED = "failed"
+
+
+class _StageSkipped(Exception):
+    """Raised by a stage to skip the rest of a record without failing it.
+
+    Carries the user-facing reason (e.g. a too-short recording with nothing to
+    summarize) so the checklist can render a muted skip instead of a red error.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 @dataclass
@@ -70,6 +84,9 @@ class ChecklistView:
 
     def done(self, stage: Stage, detail: str | None = None) -> None:
         self.statuses[stage] = StageStatus(StageState.DONE, detail)
+
+    def skip(self, stage: Stage, detail: str | None = None) -> None:
+        self.statuses[stage] = StageStatus(StageState.SKIPPED, detail)
 
     def fail(self, stage: Stage, error: str) -> None:
         self.statuses[stage] = StageStatus(StageState.FAILED, error)
@@ -96,6 +113,11 @@ class ChecklistView:
         elif status.state is StageState.RUNNING:
             icon = self._running_spinner
             label = Text(stage.label, style="cyan")
+        elif status.state is StageState.SKIPPED:
+            icon = Text("– ", style="yellow")
+            label = Text(stage.label, style="yellow")
+            if status.detail:
+                label.append(f" · {status.detail}", style="dim")
         elif status.state is StageState.FAILED:
             icon = Text("✗ ", style="red bold")
             label = Text(stage.label, style="red")
@@ -194,9 +216,10 @@ class BatchProcessor:
                 "[yellow]No notes to transcribe. Run `chirp record` first, or "
                 "pass --force to re-run completed notes.[/yellow]"
             )
-            return {"ok": 0, "failed": 0, "total": 0}
+            return {"ok": 0, "skipped": 0, "failed": 0, "total": 0}
 
         ok = 0
+        skipped = 0
         failed = 0
         total = len(records)
         for index, record in enumerate(records, start=1):
@@ -204,9 +227,11 @@ class BatchProcessor:
             view = ChecklistView(header)
             ctx = _PipelineContext(record=record, view=view)
             with Live(view.render(), console=console, refresh_per_second=12) as live:
-                success = self._process_one(ctx, live)
-            if success:
+                status = self._process_one(ctx, live)
+            if status == "ok":
                 ok += 1
+            elif status == "skipped":
+                skipped += 1
             else:
                 failed += 1
 
@@ -214,15 +239,14 @@ class BatchProcessor:
             self.popup_manager.show_transcription_complete(ok)
 
         console.print()
+        parts = [f"[green]{ok} ok[/green]"]
+        if skipped:
+            parts.append(f"[yellow]{skipped} skipped[/yellow]")
         if failed:
-            console.print(
-                f"[bold]done[/bold] · [green]{ok} ok[/green] · "
-                f"[red]{failed} failed[/red]"
-            )
-        else:
-            console.print(f"[bold]done[/bold] · [green]{ok} ok[/green]")
+            parts.append(f"[red]{failed} failed[/red]")
+        console.print("[bold]done[/bold] · " + " · ".join(parts))
 
-        return {"ok": ok, "failed": failed, "total": total}
+        return {"ok": ok, "skipped": skipped, "failed": failed, "total": total}
 
     def _select_queue(self, n: int | None, force: bool) -> list[NoteRecord]:
         records = list_notes(self.settings.directories.notes_root)
@@ -241,7 +265,8 @@ class BatchProcessor:
             return f"{index} of {total} · {title}"
         return title
 
-    def _process_one(self, ctx: _PipelineContext, live: Live) -> bool:
+    def _process_one(self, ctx: _PipelineContext, live: Live) -> str:
+        """Run a record through every stage; return ``"ok"``/``"skipped"``/``"failed"``."""
         steps: list[tuple[Stage, Callable[[_PipelineContext], None]]] = [
             (Stage.LOAD_AUDIO, self._stage_load_audio),
             (Stage.TRANSCRIBE, self._stage_transcribe),
@@ -249,18 +274,24 @@ class BatchProcessor:
             (Stage.INDEX, self._stage_index),
             (Stage.SAVE, self._stage_save),
         ]
-        for stage, runner in steps:
+        for position, (stage, runner) in enumerate(steps):
             ctx.view.start(stage)
             live.update(ctx.view.render())
             try:
                 runner(ctx)
+            except _StageSkipped as skip:
+                ctx.view.skip(stage, skip.detail)
+                for later_stage, _ in steps[position + 1 :]:
+                    ctx.view.skip(later_stage)
+                live.update(ctx.view.render())
+                return "skipped"
             except Exception as exc:  # noqa: BLE001 - pipeline stage; any stage can fail for many reasons
                 logger.debug("Pipeline stage %s failed: %s", stage, exc)
                 ctx.view.fail(stage, str(exc))
                 live.update(ctx.view.render())
-                return False
+                return "failed"
             live.update(ctx.view.render())
-        return True
+        return "ok"
 
     def _stage_load_audio(self, ctx: _PipelineContext) -> None:
         audio = ctx.record.audio
@@ -311,9 +342,13 @@ class BatchProcessor:
         result = NoteGenerator(
             self.settings, console=quiet_console
         ).generate_for_records([refreshed], force=True)
+        if result.get("skipped"):
+            raise _StageSkipped("recording too short to summarize")
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "note generation failed")
-        ctx.view.done(Stage.GENERATE_NOTES, self.settings.models.llm)
+        ctx.view.done(
+            Stage.GENERATE_NOTES, resolved_chat_model(self.settings.models.llm)
+        )
 
     def _stage_index(self, ctx: _PipelineContext) -> None:
         if not self.settings.notes_chat.auto_index:
@@ -340,7 +375,7 @@ class BatchProcessor:
         meta_path = ctx.record.dir / META_FILENAME
         meta = _read_meta(meta_path)
         meta["whisper_model"] = self.settings.models.whisper
-        meta["llm_model"] = self.settings.models.llm
+        meta["llm_model"] = resolved_chat_model(self.settings.models.llm)
         meta["indexed_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
         if ctx.duration_seconds is not None:
             meta["duration_s"] = round(ctx.duration_seconds, 2)

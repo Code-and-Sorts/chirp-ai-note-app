@@ -207,6 +207,23 @@ class TestNoteGenerator:
             result = generator._generate_for_record(record, force=False)
 
         assert result["success"] is False
+        assert result["skipped"] is True
+        assert "Insufficient" in result["error"]
+
+    def test_generate_for_records_marks_all_short_as_skipped(
+        self, mock_settings, tmp_path
+    ):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(tmp_path, title="Quick", transcript="hi")
+
+            result = generator.generate_for_records([record])
+
+        assert result["success"] is False
+        assert result["skipped"] is True
         assert "Insufficient" in result["error"]
 
     def test_parse_failure_retries_once(self, mock_settings):
