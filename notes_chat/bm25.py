@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from rank_bm25 import BM25Okapi
 
@@ -11,7 +12,15 @@ logger = logging.getLogger(__name__)
 # (mtime, size). `chirp ask` builds a BM25Index per query; without this each
 # query re-tokenizes and rebuilds BM25Okapi — O(corpus) on a ~5k-note corpus.
 _MODEL_CACHE: dict[
-    str, tuple[tuple[float, int], "BM25Okapi", list[str], list[list[str]]]
+    str,
+    tuple[
+        tuple[float, int],
+        "BM25Okapi",
+        list[str],
+        list[list[str]],
+        list[str],
+        list[dict[str, Any]],
+    ],
 ] = {}
 
 
@@ -28,8 +37,11 @@ class BM25Index:
         self.bm25_file = bm25_file
         self.bm25 = None
         self.doc_ids: list[str] = []
+        self.documents: list[str] = []
+        self.metadatas: list[dict[str, Any]] = []
         self._tokenized_corpus: list[list[str]] = []
         self._vocabulary: dict[str, int] | None = None
+        self._hydration: dict[str, tuple[str, dict[str, Any]]] | None = None
         self.load()
 
     def load(self):
@@ -41,7 +53,14 @@ class BM25Index:
         cache_key = str(self.bm25_file)
         cached = _MODEL_CACHE.get(cache_key)
         if cached is not None and fingerprint is not None and cached[0] == fingerprint:
-            _, self.bm25, self.doc_ids, self._tokenized_corpus = cached
+            (
+                _,
+                self.bm25,
+                self.doc_ids,
+                self._tokenized_corpus,
+                self.documents,
+                self.metadatas,
+            ) = cached
             return
 
         try:
@@ -49,6 +68,8 @@ class BM25Index:
                 data = json.load(f)
 
             self.doc_ids = data.get("doc_ids", [])
+            self.documents = data.get("documents", []) or []
+            self.metadatas = data.get("metadatas", []) or []
 
             if data.get("corpus"):
                 corpus = [doc.split() for doc in data["corpus"]]
@@ -60,6 +81,8 @@ class BM25Index:
                         self.bm25,
                         self.doc_ids,
                         corpus,
+                        self.documents,
+                        self.metadatas,
                     )
         except (
             OSError,
@@ -105,6 +128,22 @@ class BM25Index:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:k]
 
+    def hydrate(self, chunk_id: str) -> tuple[str, dict[str, Any]] | None:
+        """Return the raw ``(content, metadata)`` stored for ``chunk_id``.
+
+        Content + metadata live in ``bm25.json`` itself, so a lexical hit can
+        build context with no Chroma round-trip. Returns ``None`` for ids without
+        stored content (old-schema index awaiting a rebuild).
+        """
+        if self._hydration is None:
+            self._hydration = {
+                doc_id: (document, metadata)
+                for doc_id, document, metadata in zip(
+                    self.doc_ids, self.documents, self.metadatas, strict=False
+                )
+            }
+        return self._hydration.get(chunk_id)
+
     def _tokenize(self, text: str) -> list[str]:
         """Tokenize text for BM25."""
         text = text.lower()
@@ -112,25 +151,29 @@ class BM25Index:
         return [token for token in text.split() if len(token) > 1]
 
 
-def rebuild_bm25_index(chroma_collection, bm25_file: Path):
-    """Rebuild BM25 index from Chroma collection."""
-    try:
-        results = chroma_collection.get()
+def rebuild_bm25_index(
+    doc_ids: list[str],
+    documents: list[str],
+    metadatas: list[dict[str, Any]],
+    bm25_file: Path,
+) -> None:
+    """Rewrite ``bm25.json`` as a self-sufficient lexical store.
 
-        if not results["ids"]:
+    Stores the tokenized ``corpus`` for scoring plus the raw chunk ``documents``
+    and ``metadatas``, so retrieval can build context from this file alone — no
+    Chroma round-trip even when semantic search is enabled.
+    """
+    try:
+        if not doc_ids:
             return
 
-        doc_ids = results["ids"]
-        documents = results["documents"]
-
-        tokenized_corpus = []
-        for doc in documents:
-            tokens = _tokenize_document(doc)
-            tokenized_corpus.append(tokens)
+        tokenized_corpus = [_tokenize_document(doc) for doc in documents]
 
         bm25_data = {
             "doc_ids": doc_ids,
             "corpus": [" ".join(tokens) for tokens in tokenized_corpus],
+            "documents": documents,
+            "metadatas": metadatas,
         }
 
         bm25_file.parent.mkdir(parents=True, exist_ok=True)
@@ -141,7 +184,7 @@ def rebuild_bm25_index(chroma_collection, bm25_file: Path):
         # mtime resolution, so the fingerprint alone wouldn't invalidate it.
         _MODEL_CACHE.pop(str(bm25_file), None)
 
-    except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes
+    except OSError as e:
         logger.warning("Failed to rebuild BM25 index: %s", e)
 
 
@@ -149,15 +192,17 @@ def append_bm25_index(
     bm25_file: Path,
     doc_ids: list[str],
     documents: list[str],
+    metadatas: list[dict[str, Any]],
     stale_id_prefix: str | None = None,
 ) -> None:
     """Merge a single note's chunks into ``bm25.json`` without a full re-tokenize.
 
     Auto-indexing one saved note used to trigger a whole-corpus rebuild
-    (``rebuild_bm25_index`` pulls the entire Chroma collection and re-tokenizes
-    it). A burst of N saves then cost N full rebuilds. Appending just the
-    changed chunks — replacing any existing entries for the same ids so a
-    re-save updates in place — keeps a save O(note) instead of O(corpus).
+    (``rebuild_bm25_index`` re-tokenizes every chunk). A burst of N saves then
+    cost N full rebuilds. Appending just the changed chunks — replacing any
+    existing entries for the same ids so a re-save updates in place — keeps a
+    save O(note) instead of O(corpus). The raw ``documents`` and ``metadatas``
+    are merged alongside the tokenized corpus so the store stays self-sufficient.
 
     ``stale_id_prefix`` (the note's ``{slug}_`` id prefix) drops any existing
     entry that belongs to this note but is no longer present — i.e. ghost ids
@@ -166,24 +211,46 @@ def append_bm25_index(
     """
     existing_ids: list[str] = []
     existing_corpus: list[str] = []
+    existing_documents: list[str] = []
+    existing_metadatas: list[dict[str, Any]] = []
     if bm25_file.exists():
         try:
             with bm25_file.open() as f:
                 data = json.load(f)
             existing_ids = data.get("doc_ids", []) or []
             existing_corpus = data.get("corpus", []) or []
+            existing_documents = data.get("documents", []) or []
+            existing_metadatas = data.get("metadatas", []) or []
         except (OSError, json.JSONDecodeError, ValueError, TypeError):
             existing_ids = []
             existing_corpus = []
+            existing_documents = []
+            existing_metadatas = []
+
+    # Pad so the parallel-array merge below can't truncate to the shortest list
+    # and silently drop ids — an old-schema file carries no documents/metadatas.
+    n = len(existing_ids)
+    if len(existing_documents) != n:
+        existing_documents = [""] * n
+    if len(existing_metadatas) != n:
+        existing_metadatas = [{} for _ in range(n)]
 
     incoming = {
-        doc_id: " ".join(_tokenize_document(doc))
-        for doc_id, doc in zip(doc_ids, documents, strict=False)
+        doc_id: (" ".join(_tokenize_document(doc)), doc, meta)
+        for doc_id, doc, meta in zip(doc_ids, documents, metadatas, strict=False)
     }
 
     merged_ids: list[str] = []
     merged_corpus: list[str] = []
-    for doc_id, corpus_entry in zip(existing_ids, existing_corpus, strict=False):
+    merged_documents: list[str] = []
+    merged_metadatas: list[dict[str, Any]] = []
+    for doc_id, corpus_entry, document, metadata in zip(
+        existing_ids,
+        existing_corpus,
+        existing_documents,
+        existing_metadatas,
+        strict=False,
+    ):
         if doc_id in incoming:
             continue
         # Drop ghost ids: a chunk that vanished when this note was re-chunked.
@@ -191,13 +258,26 @@ def append_bm25_index(
             continue
         merged_ids.append(doc_id)
         merged_corpus.append(corpus_entry)
-    for doc_id, corpus_entry in incoming.items():
+        merged_documents.append(document)
+        merged_metadatas.append(metadata)
+    for doc_id, (corpus_entry, document, metadata) in incoming.items():
         merged_ids.append(doc_id)
         merged_corpus.append(corpus_entry)
+        merged_documents.append(document)
+        merged_metadatas.append(metadata)
 
     bm25_file.parent.mkdir(parents=True, exist_ok=True)
     with bm25_file.open("w") as f:
-        json.dump({"doc_ids": merged_ids, "corpus": merged_corpus}, f, indent=2)
+        json.dump(
+            {
+                "doc_ids": merged_ids,
+                "corpus": merged_corpus,
+                "documents": merged_documents,
+                "metadatas": merged_metadatas,
+            },
+            f,
+            indent=2,
+        )
 
     _MODEL_CACHE.pop(str(bm25_file), None)
 

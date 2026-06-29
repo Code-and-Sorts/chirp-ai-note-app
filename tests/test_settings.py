@@ -42,6 +42,7 @@ class TestChirpSettings:
         settings = ChirpSettings()
         settings.directories.notes_root = tmp_path / "notes"
         settings.notes_chat.index_dir = tmp_path / "home"
+        settings.notes_chat.semantic_enabled = True
 
         with patch(
             "config.settings.default_chirp_home", return_value=tmp_path / "home"
@@ -51,6 +52,21 @@ class TestChirpSettings:
         assert (tmp_path / "notes").is_dir()
         assert (tmp_path / "home").is_dir()
         assert (tmp_path / "home" / "chroma").is_dir()
+
+    def test_ensure_directories_exist_skips_chroma_when_lexical_only(self, tmp_path):
+        """A lexical-only install must not create an empty chroma/ directory."""
+        settings = ChirpSettings()
+        settings.directories.notes_root = tmp_path / "notes"
+        settings.notes_chat.index_dir = tmp_path / "home"
+        settings.notes_chat.semantic_enabled = False
+
+        with patch(
+            "config.settings.default_chirp_home", return_value=tmp_path / "home"
+        ):
+            settings.ensure_directories_exist()
+
+        assert (tmp_path / "home").is_dir()
+        assert not (tmp_path / "home" / "chroma").exists()
 
     def test_config_path_lives_under_chirp_home(self):
         assert ChirpSettings.get_config_path() == Path.home() / ".chirp" / "config.toml"

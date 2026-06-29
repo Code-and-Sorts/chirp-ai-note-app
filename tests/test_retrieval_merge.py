@@ -223,26 +223,19 @@ class TestRetrievalMerge:
     def test_dedupe_across_sources_keeps_best_rank(self):
         """A chunk found by BOTH retrievers collapses and sums its RRF terms.
 
-        Drives the REAL `_search_bm25` hydration: bm25 raw results carry no
+        Drives the REAL `_search_bm25` hydration: a bare bm25 result carries no
         metadata, so without hydration the same physical chunk would key by bare
         chunk_id (bm25) vs `path::content_hash` (chroma) and NOT dedupe — getting
-        1/60 twice instead of a summed 2/60 and wasting a top-k slot. With
-        hydration both sources carry `path::content_hash` and collapse.
+        1/60 twice instead of a summed 2/60 and wasting a top-k slot. Hydrating
+        from the self-sufficient BM25 store (no Chroma) gives both sources
+        `path::content_hash`, so they collapse.
         """
         import json
-        from unittest.mock import MagicMock
 
         from notes_chat.retrieval import _search_bm25
 
         chunk_id = "team-sync-2025-01-15_000"
         shared_meta = {"path": "/n/team-sync-2025-01-15/notes.md", "content_hash": "h1"}
-
-        manager = MagicMock()
-        manager.collection.get.return_value = {
-            "ids": [chunk_id],
-            "documents": ["budget timeline discussion"],
-            "metadatas": [shared_meta],
-        }
 
         import tempfile
         from pathlib import Path
@@ -251,13 +244,18 @@ class TestRetrievalMerge:
             bm25_file = Path(tmp) / "bm25.json"
             bm25_file.write_text(
                 json.dumps(
-                    {"doc_ids": [chunk_id], "corpus": ["budget timeline discussion"]}
+                    {
+                        "doc_ids": [chunk_id],
+                        "corpus": ["budget timeline discussion"],
+                        "documents": ["budget timeline discussion"],
+                        "metadatas": [shared_meta],
+                    }
                 )
             )
             from notes_chat import bm25 as bm25_module
 
             bm25_module._MODEL_CACHE.pop(str(bm25_file), None)
-            bm25_results = _search_bm25(bm25_file, "budget", k=5, index_manager=manager)
+            bm25_results = _search_bm25(bm25_file, "budget", k=5)
 
         assert len(bm25_results) == 1
         assert bm25_results[0][2]["metadata"] == shared_meta
@@ -300,14 +298,14 @@ class TestRetrievalMerge:
     def test_bm25_only_hit_surfaces_content_after_hydration(self):
         """M3: a lexical-only hit (not in chroma results) reaches the context.
 
-        Before hydration a BM25-only hit had no `content`, so `_build_context`
-        dropped it — the lexical half of "hybrid" could never surface unique
-        content. After hydration the hit carries its document and survives.
+        Without in-store hydration a BM25-only hit had no `content`, so
+        `_build_context` dropped it — the lexical half could never surface
+        unique content. Hydrating from the BM25 store (no Chroma) lets the hit
+        carry its document and survive even with the vector half disabled.
         """
         import json
         import tempfile
         from pathlib import Path
-        from unittest.mock import MagicMock
 
         from notes_chat.retrieval import _search_bm25
 
@@ -317,12 +315,6 @@ class TestRetrievalMerge:
             "content_hash": "hx",
             "date": "2025-02-01",
         }
-        manager = MagicMock()
-        manager.collection.get.return_value = {
-            "ids": [chunk_id],
-            "documents": ["JIRA-1234 must ship before the release cutoff."],
-            "metadatas": [meta],
-        }
 
         with tempfile.TemporaryDirectory() as tmp:
             bm25_file = Path(tmp) / "bm25.json"
@@ -331,15 +323,15 @@ class TestRetrievalMerge:
                     {
                         "doc_ids": [chunk_id],
                         "corpus": ["jira 1234 must ship before the release cutoff"],
+                        "documents": ["JIRA-1234 must ship before the release cutoff."],
+                        "metadatas": [meta],
                     }
                 )
             )
             from notes_chat import bm25 as bm25_module
 
             bm25_module._MODEL_CACHE.pop(str(bm25_file), None)
-            bm25_results = _search_bm25(
-                bm25_file, "jira 1234", k=5, index_manager=manager
-            )
+            bm25_results = _search_bm25(bm25_file, "jira 1234", k=5)
 
         context, _sources, ids = _build_context(bm25_results, char_budget=10000)
         assert chunk_id in ids

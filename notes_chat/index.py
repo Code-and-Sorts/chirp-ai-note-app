@@ -36,17 +36,39 @@ class IndexManager:
         self.notes_root = config.directories.notes_root
         self._llm_client = llm_client
 
-        self.chroma_client = chromadb.PersistentClient(
-            path=str(self.settings.index_dir / "chroma"),
-            settings=ChromaSettings(allow_reset=True),
-        )
-        self.collection = self.chroma_client.get_or_create_collection(
-            name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
-        )
+        self._chroma_client: chromadb.ClientAPI | None = None
+        self._collection: chromadb.Collection | None = None
         self._temp_collection = None
 
         self.manifest_file = self.settings.index_dir / "manifest.json"
         self.bm25_file = self.settings.index_dir / "bm25.json"
+
+    @property
+    def chroma_client(self) -> chromadb.ClientAPI:
+        """Lazily open the Chroma client (and so the ``chroma/`` dir) on first use.
+
+        A lexical-only install (``semantic_enabled=False``) never touches the
+        vector half, so this stays unopened and no ``chroma/`` directory is
+        created. Only the gated semantic paths reach it.
+        """
+        if self._chroma_client is None:
+            self._chroma_client = chromadb.PersistentClient(
+                path=str(self.settings.index_dir / "chroma"),
+                settings=ChromaSettings(allow_reset=True),
+            )
+        return self._chroma_client
+
+    @property
+    def collection(self) -> chromadb.Collection:
+        if self._collection is None:
+            self._collection = self.chroma_client.get_or_create_collection(
+                name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
+            )
+        return self._collection
+
+    @collection.setter
+    def collection(self, value: chromadb.Collection) -> None:
+        self._collection = value
 
     def build_index(
         self,
@@ -59,7 +81,8 @@ class IndexManager:
 
         try:
             self.config.ensure_directories_exist()
-            self._ensure_embed_fingerprint()
+            if self.settings.semantic_enabled:
+                self._ensure_embed_fingerprint()
 
             manifest = self._load_manifest()
             current_files = self._scan_notes_files()
@@ -90,7 +113,8 @@ class IndexManager:
             failed_files: list[str] = []
 
             for file_path in removed_files:
-                self._remove_from_index(file_path)
+                if self.settings.semantic_enabled:
+                    self._remove_from_index(file_path)
                 manifest.pop(file_path, None)
                 processed_count += 1
                 if progress_callback:
@@ -110,7 +134,8 @@ class IndexManager:
 
             self._save_manifest(manifest)
             self._rebuild_bm25()
-            self._stamp_fingerprint_if_missing()
+            if self.settings.semantic_enabled:
+                self._stamp_fingerprint_if_missing()
             self._report_failures(failed_files)
 
             return {
@@ -142,7 +167,7 @@ class IndexManager:
         note's chunks instead of rebuilding the whole BM25 index, keeping a
         burst of saves O(note) per save.
         """
-        if guard_embed_fingerprint:
+        if guard_embed_fingerprint and self.settings.semantic_enabled:
             self._ensure_embed_fingerprint()
         if not self._add_to_index(notes_path):
             return False
@@ -156,7 +181,8 @@ class IndexManager:
 
         if incremental_bm25:
             self.append_bm25_for_file(file_path)
-            self._stamp_fingerprint_if_missing()
+            if self.settings.semantic_enabled:
+                self._stamp_fingerprint_if_missing()
         else:
             self._rebuild_bm25()
         return True
@@ -164,7 +190,8 @@ class IndexManager:
     def remove_note(self, notes_path: str | Path) -> None:
         """Drop a single note from the vector index, manifest, and BM25."""
         file_path = str(notes_path)
-        self._remove_from_index(file_path)
+        if self.settings.semantic_enabled:
+            self._remove_from_index(file_path)
         manifest = self._load_manifest()
         manifest.pop(file_path, None)
         self._save_manifest(manifest)
@@ -185,28 +212,24 @@ class IndexManager:
             self.config.ensure_directories_exist()
 
             current_files = self._scan_notes_files()
-            temp_collection = self._reset_temp_collection()
 
-            new_manifest: dict[str, Any] = {}
-            failed_files: list[str] = []
-            processed_count = 0
+            if self.settings.semantic_enabled:
+                temp_collection = self._reset_temp_collection()
+                active_collection = self.collection
+                self.collection = temp_collection
+                try:
+                    new_manifest, failed_files, processed_count = self._index_files(
+                        current_files, progress_callback
+                    )
+                finally:
+                    self.collection = active_collection
+                self._promote_temp_collection()
+                self._write_fingerprint_metadata(self.collection)
+            else:
+                new_manifest, failed_files, processed_count = self._index_files(
+                    current_files, progress_callback
+                )
 
-            active_collection = self.collection
-            self.collection = temp_collection
-            try:
-                for file_path in current_files:
-                    if self._add_to_index(Path(file_path)):
-                        new_manifest[file_path] = current_files[file_path]
-                        processed_count += 1
-                        if progress_callback:
-                            progress_callback()
-                    else:
-                        failed_files.append(file_path)
-            finally:
-                self.collection = active_collection
-
-            self._promote_temp_collection()
-            self._write_fingerprint_metadata(self.collection)
             self._save_manifest(new_manifest)
             self._rebuild_bm25()
             self._report_failures(failed_files)
@@ -222,8 +245,28 @@ class IndexManager:
 
         except Exception as e:  # noqa: BLE001 - force rebuild orchestrates many subsystems
             logger.debug("Index force-rebuild failed: %s", e, exc_info=True)
-            self._discard_temp_collection()
+            if self.settings.semantic_enabled:
+                self._discard_temp_collection()
             return {"success": False, "error": str(e)}
+
+    def _index_files(
+        self,
+        current_files: dict[str, dict[str, Any]],
+        progress_callback: Callable | None,
+    ) -> tuple[dict[str, Any], list[str], int]:
+        """Add each note file to the index, returning (manifest, failed, count)."""
+        new_manifest: dict[str, Any] = {}
+        failed_files: list[str] = []
+        processed_count = 0
+        for file_path in current_files:
+            if self._add_to_index(Path(file_path)):
+                new_manifest[file_path] = current_files[file_path]
+                processed_count += 1
+                if progress_callback:
+                    progress_callback()
+            else:
+                failed_files.append(file_path)
+        return new_manifest, failed_files, processed_count
 
     def _report_failures(self, failed_files: list[str]) -> None:
         if not failed_files:
@@ -399,22 +442,40 @@ class IndexManager:
 
     def _save_manifest(self, manifest: dict[str, Any]):
         """Save the index manifest."""
+        # A lexical-only add_note never opens Chroma (which used to create
+        # index_dir as a side effect), so ensure the directory exists here.
+        self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
         with self.manifest_file.open("w") as f:
             json.dump(manifest, f, indent=2)
 
+    def _chunks_for_file(self, file_path: Path) -> list[Chunk]:
+        """Read a note file and split it into chunks (no embedding / Chroma touch).
+
+        Shared by the embed path and the file-sourced BM25 build so both derive
+        identical chunk ids from the same content.
+        """
+        content = file_path.read_text(encoding="utf-8")
+        meta = self._extract_metadata(file_path, content)
+        if not meta:
+            return []
+        return self._chunk_content(file_path, content, meta)
+
     def _add_to_index(self, file_path: Path) -> bool:
-        """Add a notes file to the index."""
+        """Add a notes file to the index.
+
+        With ``semantic_enabled=False`` the lexical store is the only index, so
+        this just validates the file chunks and returns success without loading
+        the embed model or touching Chroma; ``_rebuild_bm25`` / the BM25 append
+        path persist the lexical entries.
+        """
         try:
-            content = file_path.read_text(encoding="utf-8")
-            meta = self._extract_metadata(file_path, content)
-
-            if not meta:
-                return False
-
-            chunks = self._chunk_content(file_path, content, meta)
+            chunks = self._chunks_for_file(file_path)
 
             if not chunks:
                 return False
+
+            if not self.settings.semantic_enabled:
+                return True
 
             self._remove_from_index(str(file_path))
 
@@ -615,12 +676,26 @@ class IndexManager:
         }
 
     def _rebuild_bm25(self):
-        """Rebuild BM25 index from Chroma data."""
+        """Rebuild the BM25 lexical store from the note files on disk.
+
+        Sourced from the files (not Chroma) so the lexical index is fully
+        self-sufficient — it exists and answers queries even when the vector
+        half is disabled and no ``chroma/`` directory has been created.
+        """
         try:
             from notes_chat.bm25 import rebuild_bm25_index
 
-            rebuild_bm25_index(self.collection, self.bm25_file)
-        except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes
+            doc_ids: list[str] = []
+            documents: list[str] = []
+            metadatas: list[dict[str, Any]] = []
+            for file_path in self._scan_notes_files():
+                for chunk in self._chunks_for_file(Path(file_path)):
+                    doc_ids.append(chunk.id)
+                    documents.append(chunk.content)
+                    metadatas.append(self._chunk_to_metadata(chunk))
+
+            rebuild_bm25_index(doc_ids, documents, metadatas, self.bm25_file)
+        except Exception as e:  # noqa: BLE001 - IO / parse; many failure modes
             logger.debug("Failed to rebuild BM25 index: %s", e)
             console.print(f"[yellow]Failed to rebuild BM25 index: {e}[/yellow]")
 
@@ -629,14 +704,16 @@ class IndexManager:
 
         Used by the auto-index-on-save path so a single save doesn't trigger a
         full-corpus re-tokenize (a burst of N saves would otherwise cost N full
-        rebuilds — see AC-6).
+        rebuilds). Chunks come from the file itself, so this works with the
+        vector half disabled.
         """
         try:
             from notes_chat.bm25 import append_bm25_index
 
-            records = self.collection.get(where={"path": file_path})
-            doc_ids = records.get("ids") or []
-            documents = records.get("documents") or []
+            chunks = self._chunks_for_file(Path(file_path))
+            doc_ids = [chunk.id for chunk in chunks]
+            documents = [chunk.content for chunk in chunks]
+            metadatas = [self._chunk_to_metadata(chunk) for chunk in chunks]
             if doc_ids:
                 # Purge {slug}_NNN ghost ids for this note that vanished when it
                 # was re-chunked into fewer chunks.
@@ -645,9 +722,10 @@ class IndexManager:
                     self.bm25_file,
                     doc_ids,
                     documents,
+                    metadatas,
                     stale_id_prefix=slug_prefix,
                 )
-        except Exception as e:  # noqa: BLE001 - chromadb or IO; many failure modes
+        except Exception as e:  # noqa: BLE001 - IO / parse; many failure modes
             logger.debug("Failed to append BM25 index for %s: %s", file_path, e)
 
 
