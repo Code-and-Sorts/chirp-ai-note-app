@@ -27,6 +27,7 @@ from config.settings import (
     resolve_max_resident_embed,
 )
 from llm.registry import read_registry
+from utils.tls import enable_system_trust_store
 
 _logger = logging.getLogger("chirpd")
 
@@ -47,6 +48,7 @@ def main() -> int:
         return 2
 
     configure_logging(to_stderr=sys.stdout.isatty())
+    enable_system_trust_store()
     ensure_runtime_dirs()
 
     socket_path = _resolve_socket_path()
