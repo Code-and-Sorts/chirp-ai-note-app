@@ -1,24 +1,24 @@
-"""`chirp init` — smart first-run setup: an architecture gate plus three phases.
+"""`chirp init` — smart first-run setup: an architecture gate plus a few steps.
 
 Gate: require Apple Silicon. Everything downstream (the bundled
 chirpd daemon, MLX inference) is arm64-only, so a non-arm64 machine fails
 fast with exit code 7 before any other work.
 
-Phase 1: verify homebrew, ffmpeg, daemon readiness (via `llm.client`'s
+Verify: check homebrew, ffmpeg, daemon readiness (via `llm.client`'s
 health handshake, which lazy-spawns chirpd), the registered default chat
 model (via `llm.registry`), and the screen-recording permission. Print a
 check table and ask whether to install what's missing.
 
-Phase 2: install missing dependencies via Homebrew (macOS only) and rebuild
+Install: install missing dependencies via Homebrew (macOS only) and rebuild
 the capture_audio helper when needed. The daemon is part of the pip package
 and is never "installed" here; model registration is the user's own
 `chirp models add` step.
 
-Phase 3: finalize — create the config/chroma/notes directories and print
-the "your nest is ready" panel.
+Finalize: create the config/chroma/notes directories and print the "your nest
+is ready" panel.
 
-Re-running is idempotent: each phase is skipped cleanly when nothing is
-missing. ``--recheck`` stops after phase 1; ``--switch-model`` flips the
+Re-running is idempotent: each step is skipped cleanly when nothing is
+missing. ``--recheck`` stops after verify; ``--switch-model`` flips the
 registry's default chat alias.
 """
 
@@ -45,8 +45,8 @@ from config.settings import ChirpSettings, _stringify_paths
 
 EXIT_NOT_APPLE_SILICON = exit_codes.NOT_APPLE_SILICON
 
-# Single source of truth for the recommended first model — story 7.2's
-# migration plan and the README sweep (7.5) reference these constants.
+# Single source of truth for the recommended first models; the README and
+# Makefile mirror these strings.
 RECOMMENDED_CHAT_REPO = "mlx-community/Qwen2.5-7B-Instruct-4bit"
 SMALLER_CHAT_REPO = "mlx-community/gemma-4-e2b-it-8bit"
 # Recommended embed model registered by `chirp config --semantic`. Must be a
@@ -81,7 +81,7 @@ def _run(args: list[str], timeout: float = 10.0) -> tuple[int, str]:
 
 
 def require_apple_silicon(console: Console) -> int | None:
-    """Phase 0 gate — returns EXIT_NOT_APPLE_SILICON on non-arm64, else None."""
+    """Architecture gate — returns EXIT_NOT_APPLE_SILICON on non-arm64, else None."""
     machine = platform.machine()
     if machine == "arm64":
         return None
@@ -130,8 +130,8 @@ def _daemon_ready() -> DependencyStatus:
     """Probe daemon readiness through `llm.client`'s health handshake.
 
     The client owns lazy-spawn and the version handshake — no daemon-process
-    logic lives here (architecture §Cross-Component Dependencies). Imports are
-    lazy so a broken `llm` module can't make init un-importable.
+    logic lives here. Imports are lazy so a broken `llm` module can't make init
+    un-importable.
     """
     from llm.client import LLMClient
     from llm.exceptions import LLMDaemonSpawnFailed, LLMTransportError
@@ -230,7 +230,7 @@ def _screen_recording_permission() -> DependencyStatus:
 
 
 def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
-    """Run phase 1 — returns the ordered status list and prints the table."""
+    """Run the verify step — returns the ordered status list and prints the table."""
     console.print()
     console.print(" [bold]Welcome to Chirp.[/bold] Let's set up your nest.")
     console.print()
@@ -300,7 +300,7 @@ def _confirm(console: Console, prompt: str, default: bool = True) -> bool:
 
 
 def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
-    """Phase 2 — install what's missing via Homebrew.
+    """Install what's missing via Homebrew.
 
     Returns True when every actionable task succeeded. Returns False on
     non-macOS hosts, when Homebrew itself is missing, when a brew/build task
@@ -429,7 +429,7 @@ def _run_switch_model(settings: ChirpSettings, console: Console) -> int:
 
 
 def _finalize_paths(settings: ChirpSettings, console: Console) -> None:
-    """Phase 3 — ensure config/notes (and chroma only when semantic) paths exist.
+    """Ensure config/notes (and chroma only when semantic) paths exist.
 
     Lexical-first: the Chroma vector store is created only when semantic search
     is enabled, mirroring ``ChirpSettings.ensure_directories_exist``. A fresh,
@@ -674,10 +674,9 @@ _DETECTION_LABELS = {
 def _print_migration_plan(console: Console, detection: dict[str, bool]) -> None:
     """Print the loud, informational-only Ollama migration plan.
 
-    PRD §Project Scoping → Out of Scope forbids auto-uninstalling Ollama —
-    cleanup commands are shown for the user to run, never executed. OQ6 is
-    resolved to a loud multi-line plan (Devon's journey): offline-friendly
-    and explicit beats a one-line pointer at an external URL.
+    chirp must never auto-uninstall Ollama — cleanup commands are shown for the
+    user to run, never executed. A loud multi-line plan is deliberate:
+    offline-friendly and explicit beats a one-line pointer at an external URL.
     """
     rule = " [dim]──────────────────────────────────────────────────────────[/dim]"
     console.print()
@@ -732,7 +731,7 @@ def run_init(
     recheck: bool = False,
     switch_model: bool = False,
 ) -> int:
-    """Top-level entry — orchestrates the phases. Returns exit code."""
+    """Top-level entry — orchestrates the steps. Returns exit code."""
     code = require_apple_silicon(console)
     if code is not None:
         return code

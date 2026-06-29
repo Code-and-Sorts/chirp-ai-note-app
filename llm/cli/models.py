@@ -6,12 +6,12 @@ top-level CLI (``chirp/cli.py``). They share the same plumbing: HuggingFace
 validation/download/cache lookup (:mod:`llm.hf`), atomic registry writes
 (:mod:`llm.registry`), and daemon warm (:class:`llm.client.LLMClient`).
 
-``add``'s execution order is fixed (epic §3 decision 8): validate → resolve
-role → resolve alias → download → read registry → mutate → write → warm. Any
-failure before the registry write aborts without touching ``models.toml``. A
-failed warm leaves the registry write intact — the model is registered the
-moment its weights land, and the user retries the warm with ``chirp models
-pull``. The 4.5 commands share that read → mutate-or-display → optional-write
+``add``'s execution order is fixed: validate → resolve role → resolve alias →
+download → read registry → mutate → write → warm. Any failure before the
+registry write aborts without touching ``models.toml``. A failed warm leaves
+the registry write intact — the model is registered the moment its weights
+land, and the user retries the warm with ``chirp models pull``. The
+read/display commands share that read → mutate-or-display → optional-write
 shape and route every failure through the same error-mapping helpers.
 """
 
@@ -127,12 +127,11 @@ def register_model(
     """Validate, download, register, and optionally warm a model; return its alias.
 
     Shared by ``chirp models add`` and the ``chirp config --semantic`` enable
-    flow so both register through one path (epic §3 decision 8 ordering:
-    validate → resolve role → resolve alias → download → read → mutate → write
-    → warm). ``require_semantic_for_embed`` gates the user-facing ``models add``
-    path: an embed model can't be added while semantic search is off. The enable
-    flow leaves it ``False`` because it is mid-flight turning semantic on and
-    registers the embed model *before* flipping the flag.
+    flow so both register through one path. ``require_semantic_for_embed`` gates
+    the user-facing ``models add`` path: an embed model can't be added while
+    semantic search is off. The enable flow leaves it ``False`` because it is
+    mid-flight turning semantic on and registers the embed model *before*
+    flipping the flag.
     """
     metadata = _validate_repo(hf_repo)
     resolved_role = _resolve_role(hf_repo, metadata, role)
@@ -517,7 +516,7 @@ def _purge_cache(hf_repo: str) -> str | None:
     Returns the resolved path on success, or ``None`` when the directory is
     missing or unreadable (a warning is printed and the caller continues — the
     registry mutation already succeeded). A resolved path outside the hub cache
-    root is treated as a hard failure (exit 1) per AC-11.
+    root is treated as a hard failure (exit 1).
     """
     cache_dir = hf.cache_dir_for_repo(hf_repo).resolve()
     hub_root = hf.hf_hub_cache_root().resolve()

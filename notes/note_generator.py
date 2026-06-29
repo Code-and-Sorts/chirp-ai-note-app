@@ -463,8 +463,8 @@ Return ONLY the XML document, no additional text before or after."""
 
     def _call_llm(self, prompt: str) -> str:
         # Single user message so the chat template wraps SYSTEM_PROMPT + prompt
-        # verbatim — preserving the prompt shape the 6.1 regression baseline was
-        # captured against (story 6.6 compares against it).
+        # verbatim — preserving the prompt shape the regression baseline was
+        # captured against.
         messages = [{"role": "user", "content": prompt}]
         options = {"max_tokens": self.settings.models.num_predict}
         # Reuse one client across records in a batch — LLMClient() resolves the

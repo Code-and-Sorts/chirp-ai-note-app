@@ -161,7 +161,7 @@ def run_about(
     speed: float = 1.0,
     sleeper: Callable[[float], None] | None = None,
 ) -> None:
-    """Run the full 3-phase about animation.
+    """Run the about animation.
 
     Parameters mirror the design's live preview. ``sleeper`` defaults to
     ``time.sleep`` so tests can pass a no-op.
@@ -178,7 +178,6 @@ def run_about(
     lines: list[Text] = [_prompt_line(), Text("")]
 
     with Live(Group(*lines), console=console, refresh_per_second=20) as live:
-        # Phase 1 — paint the entire bird in one go
         logo_start = len(lines)
         lines.extend(_logo_line(idx, beak_open=False) for idx in range(len(LOGO_ROWS)))
         live.update(Group(*lines))
@@ -188,7 +187,6 @@ def run_about(
 
         sleep(0.3 * scale)
 
-        # Phase 2 — spinner + status lines while chirp "wakes up"
         status_start = len(lines)
         for spinner_msg, done_template, dwell in PHASE_ONE:
             done_msg = done_template.format(
@@ -212,7 +210,6 @@ def run_about(
 
         sleep(0.3 * scale)
 
-        # Phase 3 — clear the status lines and reveal info while the beak chirps
         del lines[status_start:]
         live.update(Group(*lines))
 
