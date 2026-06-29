@@ -1,5 +1,6 @@
 import logging
 import tomllib
+import wave
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
@@ -284,7 +285,10 @@ class NoteGenerator:
             "decisions": structured_notes.get("decisions", []),
             "open_questions": structured_notes.get("open_questions", []),
             "discussion_highlights": structured_notes.get("discussion_highlights", []),
-            "metadata": {"date": record.created_at.isoformat()},
+            "metadata": {
+                "date": record.created_at.isoformat(),
+                "duration_s": self._resolve_duration_seconds(record),
+            },
         }
 
         body = self.template_engine.render_meeting_section(meeting_notes)
@@ -300,6 +304,45 @@ class NoteGenerator:
             "filename": notes_path.name,
             "path": str(notes_path),
         }
+
+    def _resolve_duration_seconds(self, record: NoteRecord) -> float:
+        """Best-effort clip length for the note's Duration field.
+
+        Prefers ``duration_s`` from meta.toml (written by the recorder and the
+        transcribe save stage), falls back to the legacy ``duration`` key, then
+        to the WAV header — so a real duration shows even for imported audio
+        whose meta predates the field. Returns 0.0 when unknown (renders as
+        "Unknown"). Previously the generator passed no duration at all, so every
+        generated note read "Duration: Unknown" despite meta carrying it.
+        """
+        meta_path = record.dir / META_FILENAME
+        if meta_path.exists():
+            try:
+                with meta_path.open("rb") as fh:
+                    meta = tomllib.load(fh)
+            except (OSError, tomllib.TOMLDecodeError):
+                meta = {}
+            for key in ("duration_s", "duration"):
+                value = meta.get(key)
+                if value is None:
+                    continue
+                try:
+                    seconds = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if seconds > 0:
+                    return seconds
+        audio = record.audio
+        if audio is not None and audio.exists():
+            try:
+                with wave.open(str(audio), "rb") as handle:
+                    frames = handle.getnframes()
+                    rate = handle.getframerate()
+                if rate > 0:
+                    return frames / float(rate)
+            except (OSError, wave.Error):
+                pass
+        return 0.0
 
     def _update_meta(self, note_dir: Path) -> None:
         meta_path = note_dir / META_FILENAME

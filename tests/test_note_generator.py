@@ -226,6 +226,31 @@ class TestNoteGenerator:
         assert result["skipped"] is True
         assert "Insufficient" in result["error"]
 
+    def test_resolve_duration_reads_duration_s_from_meta(self, mock_settings, tmp_path):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(tmp_path, title="X", transcript="hi")
+            meta_path = record.dir / "meta.toml"
+            with meta_path.open("rb") as fh:
+                meta = tomllib.load(fh)
+            meta["duration_s"] = 91.99
+            with meta_path.open("wb") as fh:
+                tomli_w.dump(meta, fh)
+
+            assert generator._resolve_duration_seconds(record) == pytest.approx(91.99)
+
+    def test_resolve_duration_zero_when_no_meta_or_audio(self, mock_settings, tmp_path):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(tmp_path, title="X", transcript="hi")  # audio=None
+            assert generator._resolve_duration_seconds(record) == 0.0
+
     def test_parse_failure_retries_once(self, mock_settings):
         """Unparsable output is retried once before giving up (AC-12)."""
         with (

@@ -71,7 +71,7 @@ class TemplateEngine:
     def render_meeting_section(self, meeting_data: dict[str, Any]) -> str:
         metadata = meeting_data.get("metadata", {})
         meeting_time = _extract_meeting_time(metadata)
-        duration = metadata.get("duration", 0)
+        duration = metadata.get("duration_s") or metadata.get("duration") or 0
         duration_str = format_duration(duration) if duration else "Unknown"
 
         variables = {

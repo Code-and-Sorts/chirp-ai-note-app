@@ -201,3 +201,20 @@ class TestRenderMeetingSection:
     def test_formats_duration_from_metadata(self, engine):
         result = engine.render_meeting_section(self._full_meeting_data())
         assert "1h 0m" in result
+
+    def test_formats_duration_from_duration_s_key(self, engine):
+        # meta.toml stores the recording length under `duration_s`.
+        data = self._full_meeting_data()
+        data["metadata"] = {
+            "date": datetime(2026, 4, 20, 10, 0, 0),
+            "duration_s": 91.99,
+        }
+        result = engine.render_meeting_section(data)
+        assert "1m 31s" in result
+        assert "Unknown" not in result.split("**Duration:**")[1].splitlines()[0]
+
+    def test_duration_s_takes_precedence_over_legacy_duration(self, engine):
+        data = self._full_meeting_data()
+        data["metadata"] = {"duration_s": 90.0, "duration": 0}
+        result = engine.render_meeting_section(data)
+        assert "1m 30s" in result
