@@ -340,8 +340,8 @@ class NoteGenerator:
                     rate = handle.getframerate()
                 if rate > 0:
                     return frames / float(rate)
-            except (OSError, wave.Error):
-                pass
+            except (OSError, wave.Error) as exc:
+                logger.debug("Could not read duration from %s: %s", audio, exc)
         return 0.0
 
     def _update_meta(self, note_dir: Path) -> None:
