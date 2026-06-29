@@ -1,5 +1,6 @@
 import logging
 import tomllib
+import wave
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +22,11 @@ logger = logging.getLogger(__name__)
 # Bounds the prompt INPUT, not just num_predict (the OUTPUT): an unbounded
 # transcript was silently truncated mid-generation, so window it and warn.
 MAX_TRANSCRIPT_CHARS = 24000
+
+# Below this, a transcript has nothing to summarize (a silent/near-empty clip);
+# generating notes would only yield junk that later poisons `ask`. Callers treat
+# this as a benign skip, not a failure.
+MIN_TRANSCRIPT_CHARS = 50
 
 MAX_PARSE_ATTEMPTS = 2
 
@@ -175,6 +181,19 @@ class NoteGenerator:
         if successful:
             return {**successful[-1], "results": results}
 
+        # Distinguish a benign skip (nothing to summarize) from a real failure so
+        # callers can surface it as a skip rather than a hard error. Only when
+        # *every* record was skipped — a single genuine failure makes the batch a
+        # failure.
+        skipped = [r for r in results if r.get("skipped")]
+        if results and len(skipped) == len(results):
+            return {
+                "success": False,
+                "skipped": True,
+                "error": skipped[-1]["error"],
+                "results": results,
+            }
+
         return {
             "success": False,
             "error": "Failed to generate notes for any record",
@@ -221,11 +240,15 @@ class NoteGenerator:
             }
 
         transcript_text = record.transcript.read_text(encoding="utf-8").strip()
-        if len(transcript_text) < 50:
+        if len(transcript_text) < MIN_TRANSCRIPT_CHARS:
             return {
                 "success": False,
+                "skipped": True,
                 "slug": record.slug,
-                "error": "Insufficient transcript content (< 50 characters)",
+                "error": (
+                    f"Insufficient transcript content "
+                    f"(< {MIN_TRANSCRIPT_CHARS} characters)"
+                ),
             }
 
         provided_title = record.title
@@ -262,7 +285,10 @@ class NoteGenerator:
             "decisions": structured_notes.get("decisions", []),
             "open_questions": structured_notes.get("open_questions", []),
             "discussion_highlights": structured_notes.get("discussion_highlights", []),
-            "metadata": {"date": record.created_at.isoformat()},
+            "metadata": {
+                "date": record.created_at.isoformat(),
+                "duration_s": self._resolve_duration_seconds(record),
+            },
         }
 
         body = self.template_engine.render_meeting_section(meeting_notes)
@@ -278,6 +304,45 @@ class NoteGenerator:
             "filename": notes_path.name,
             "path": str(notes_path),
         }
+
+    def _resolve_duration_seconds(self, record: NoteRecord) -> float:
+        """Best-effort clip length for the note's Duration field.
+
+        Prefers ``duration_s`` from meta.toml (written by the recorder and the
+        transcribe save stage), falls back to the legacy ``duration`` key, then
+        to the WAV header — so a real duration shows even for imported audio
+        whose meta predates the field. Returns 0.0 when unknown (renders as
+        "Unknown"). Previously the generator passed no duration at all, so every
+        generated note read "Duration: Unknown" despite meta carrying it.
+        """
+        meta_path = record.dir / META_FILENAME
+        if meta_path.exists():
+            try:
+                with meta_path.open("rb") as fh:
+                    meta = tomllib.load(fh)
+            except (OSError, tomllib.TOMLDecodeError):
+                meta = {}
+            for key in ("duration_s", "duration"):
+                value = meta.get(key)
+                if value is None:
+                    continue
+                try:
+                    seconds = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if seconds > 0:
+                    return seconds
+        audio = record.audio
+        if audio is not None and audio.exists():
+            try:
+                with wave.open(str(audio), "rb") as handle:
+                    frames = handle.getnframes()
+                    rate = handle.getframerate()
+                if rate > 0:
+                    return frames / float(rate)
+            except (OSError, wave.Error) as exc:
+                logger.debug("Could not read duration from %s: %s", audio, exc)
+        return 0.0
 
     def _update_meta(self, note_dir: Path) -> None:
         meta_path = note_dir / META_FILENAME
@@ -398,8 +463,8 @@ Return ONLY the XML document, no additional text before or after."""
 
     def _call_llm(self, prompt: str) -> str:
         # Single user message so the chat template wraps SYSTEM_PROMPT + prompt
-        # verbatim — preserving the prompt shape the 6.1 regression baseline was
-        # captured against (story 6.6 compares against it).
+        # verbatim — preserving the prompt shape the regression baseline was
+        # captured against.
         messages = [{"role": "user", "content": prompt}]
         options = {"max_tokens": self.settings.models.num_predict}
         # Reuse one client across records in a batch — LLMClient() resolves the

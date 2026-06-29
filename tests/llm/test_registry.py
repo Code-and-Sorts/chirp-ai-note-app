@@ -19,6 +19,7 @@ from llm.registry import (
     read_registry,
     remove_model,
     resolve_alias,
+    resolved_embed_model,
     set_default_for_role,
     upsert_model,
     write_registry,
@@ -182,6 +183,37 @@ def _embed_entry() -> RegistryEntry:
         hf_repo="mlx-community/bge-small-en-v1.5",
         role="embed",
     )
+
+
+def test_resolved_embed_model_returns_registry_default(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    write_registry(
+        Registry(
+            schema_version=1,
+            default_embed="bge-small-en-v1.5",
+            models={"bge-small-en-v1.5": _embed_entry()},
+        ),
+        path=target,
+    )
+    assert resolved_embed_model("fallback", target) == "bge-small-en-v1.5"
+
+
+def test_resolved_embed_model_falls_back_when_unset(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    write_registry(Registry(schema_version=1), path=target)
+    assert resolved_embed_model("fallback", target) == "fallback"
+
+
+def test_resolved_embed_model_falls_back_when_alias_missing(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    write_registry(
+        Registry(schema_version=1, default_embed="ghost", models={}), path=target
+    )
+    assert resolved_embed_model("fallback", target) == "fallback"
+
+
+def test_resolved_embed_model_none_when_no_fallback(tmp_path: Path) -> None:
+    assert resolved_embed_model(path=tmp_path / "absent.toml") == "none"
 
 
 def test_registry_round_trip_empty(tmp_path: Path) -> None:

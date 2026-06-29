@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -40,6 +41,22 @@ EMBED_REPO = "mlx-community/bge-small-en-v1.5"
 AMBIGUOUS_REPO = "mlx-community/mystery-model"
 
 runner = CliRunner()
+
+
+def _settings_with_semantic(enabled: bool):
+    """Factory standing in for ``get_settings`` with semantic toggled."""
+    return lambda: SimpleNamespace(notes_chat=SimpleNamespace(semantic_enabled=enabled))
+
+
+@pytest.fixture(autouse=True)
+def _semantic_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default every models-CLI test to the lexical-first state (semantic off).
+
+    The embed-hiding (``list``) and embed-gating (``add``) paths read config via
+    ``get_settings``; pinning it here keeps those tests off the host's real
+    ``~/.chirp/config.toml``. Tests that need semantic on re-set it themselves.
+    """
+    monkeypatch.setattr(models_module, "get_settings", _settings_with_semantic(False))
 
 
 def _chat_metadata(repo: str = CHAT_REPO) -> hf.HfRepoMetadata:
@@ -165,6 +182,7 @@ def test_add_with_alias_flag_overrides_inferred(
 def test_add_with_role_flag_overrides_inferred(
     registry_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(models_module, "get_settings", _settings_with_semantic(True))
     _mock_hf(monkeypatch, validate=_ambiguous_metadata(), download=MagicMock())
     _mock_client(monkeypatch)
 
@@ -177,6 +195,37 @@ def test_add_with_role_flag_overrides_inferred(
     alias = alias_for_repo(AMBIGUOUS_REPO)
     assert registry.models[alias].role == "embed"
     assert registry.default_embed == alias
+
+
+def test_add_embed_rejected_when_semantic_off(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    download = _mock_hf(
+        monkeypatch, validate=_ambiguous_metadata(), download=MagicMock()
+    )
+    _mock_client(monkeypatch)
+
+    result = runner.invoke(
+        models_module.app, ["add", AMBIGUOUS_REPO, "--role", "embed"]
+    )
+
+    assert result.exit_code == 2
+    assert "chirp config --semantic" in result.stderr
+    assert not registry_path.exists()
+    download.assert_not_called()
+
+
+def test_add_chat_unaffected_when_semantic_off(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_hf(monkeypatch, validate=_chat_metadata(), download=MagicMock())
+    _mock_client(monkeypatch)
+
+    result = runner.invoke(models_module.app, ["add", CHAT_REPO])
+
+    assert result.exit_code == 0
+    registry = read_registry(path=registry_path)
+    assert alias_for_repo(CHAT_REPO) in registry.models
 
 
 def test_add_no_warm_skips_model_load(
@@ -316,6 +365,7 @@ def test_add_idempotent_second_run(
 def test_add_role_change_warning(
     registry_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(models_module, "get_settings", _settings_with_semantic(True))
     alias = alias_for_repo(CHAT_REPO)
     _seed_registry(
         registry_path,
@@ -612,6 +662,7 @@ def test_list_one_chat_model_json(
 def test_list_chat_and_embed_tty(
     registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
 ) -> None:
+    monkeypatch.setattr(models_module, "get_settings", _settings_with_semantic(True))
     _seed_chat_and_embed(registry_path)
     _mock_list_client(
         monkeypatch, models=[{"alias": "bge-small-en-v1.5", "loaded": True}]
@@ -628,6 +679,7 @@ def test_list_chat_and_embed_tty(
 def test_list_chat_and_embed_json(
     registry_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(models_module, "get_settings", _settings_with_semantic(True))
     _seed_chat_and_embed(registry_path)
     _mock_list_client(
         monkeypatch, models=[{"alias": "bge-small-en-v1.5", "loaded": True}]
@@ -641,6 +693,62 @@ def test_list_chat_and_embed_json(
     assert by_alias["gemma-4-4b-it-4bit"]["loaded"] is False
     assert by_alias["bge-small-en-v1.5"]["loaded"] is True
     assert by_alias["bge-small-en-v1.5"]["role"] == "embed"
+    assert payload["default_embed"] == "bge-small-en-v1.5"
+
+
+def test_list_hides_embed_when_semantic_off(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list"])
+
+    assert result.exit_code == 0
+    assert "gemma-4-4b-it-4bit" in result.stdout
+    assert "bge-small-en-v1.5" not in result.stdout
+
+
+def test_list_all_shows_embed_when_semantic_off(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch, wide_table: None
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list", "--all"])
+
+    assert result.exit_code == 0
+    assert "gemma-4-4b-it-4bit" in result.stdout
+    assert "bge-small-en-v1.5" in result.stdout
+
+
+def test_list_json_hides_embed_when_semantic_off(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    aliases = {model["alias"] for model in payload["models"]}
+    assert aliases == {"gemma-4-4b-it-4bit"}
+    assert payload["default_embed"] is None
+
+
+def test_list_all_json_shows_embed_when_semantic_off(
+    registry_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_chat_and_embed(registry_path)
+    _mock_list_client(monkeypatch, models=[])
+
+    result = runner.invoke(models_module.app, ["list", "--all", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    aliases = {model["alias"] for model in payload["models"]}
+    assert aliases == {"gemma-4-4b-it-4bit", "bge-small-en-v1.5"}
     assert payload["default_embed"] == "bge-small-en-v1.5"
 
 

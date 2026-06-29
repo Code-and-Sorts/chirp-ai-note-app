@@ -1,10 +1,17 @@
 # Embedding Backend
 
+> **Applies only when semantic search is enabled.** Embeddings are opt-in
+> (`notes_chat.semantic_enabled`, default `False`). With the default lexical-first
+> setup, retrieval is BM25-only and nothing in this document runs — no embed
+> model is registered, no Chroma store is created, and the query path never calls
+> `embed_sync`. Turn it on with `chirp config --semantic` (which registers the
+> embed model and rebuilds the index). See [Retrieval](./hybrid-retrieval.md).
+
 This document explains how embeddings are generated and used in Chirp’s RAG pipeline.
 
 - Code references: `notes_chat/index.py`, `notes_chat/retrieval.py`, `config/settings.py`, `llm/client.py`
 - Backend: the bundled **chirpd** daemon, running an embedding model on-device via **MLX** (`llm.client.LLMClient.embed_sync`)
-- Embedding model: whatever is registered as the `default_embed` alias in the model registry (`chirp models add <hf-repo> --role embed`, e.g. `mlx-community/bge-small-en-v1.5`)
+- Embedding model: whatever is registered as the `default_embed` alias in the model registry (`chirp models add <hf-repo> --role embed`, e.g. `mlx-community/bge-small-en-v1.5-bf16`). `chirp config --semantic` registers this for you.
 
 ## Overview
 
@@ -60,8 +67,8 @@ Key method signatures:
 
 - Embedding calls are stateless and do not stream; `embed_sync` returns one
   vector per input.
-- A small general-purpose English model such as `bge-small-en-v1.5` is suitable
-  for note-sized chunks.
+- A small general-purpose English model such as `bge-small-en-v1.5-bf16` is
+  suitable for note-sized chunks.
 - Swap the embedding model by registering a different one and setting it as the
   default embed alias (`chirp models add <repo> --role embed` →
   `chirp models default <alias>`).

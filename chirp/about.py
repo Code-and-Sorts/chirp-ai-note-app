@@ -30,7 +30,7 @@ from chirp.branding import (
     REPO,
     TAGLINE,
 )
-from llm.registry import resolved_chat_model
+from llm.registry import resolved_chat_model, resolved_embed_model
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -143,13 +143,25 @@ def _model_label(value: str | None) -> str:
     return "<not set>"
 
 
+def _index_backend_label(settings) -> str:
+    """Describe what powers the search index for the about panel.
+
+    Lexical-first: with semantic retrieval off (the default) the index is
+    BM25-only, so naming an embed model would mislead. When it's on, show the
+    resolved embed alias the vector half actually uses.
+    """
+    if not settings.notes_chat.semantic_enabled:
+        return "lexical (BM25)"
+    return resolved_embed_model(settings.notes_chat.recommended_embed_model)
+
+
 def run_about(
     console: Console,
     settings,
     speed: float = 1.0,
     sleeper: Callable[[float], None] | None = None,
 ) -> None:
-    """Run the full 3-phase about animation.
+    """Run the about animation.
 
     Parameters mirror the design's live preview. ``sleeper`` defaults to
     ``time.sleep`` so tests can pass a no-op.
@@ -160,13 +172,12 @@ def run_about(
     notes_root = settings.directories.notes_root
     notes_count = _count_notes(notes_root)
     chat_model = resolved_chat_model(settings.models.llm)
-    embed_model = settings.notes_chat.emb_model
+    embed_model = _index_backend_label(settings)
     version = _installed_version()
 
     lines: list[Text] = [_prompt_line(), Text("")]
 
     with Live(Group(*lines), console=console, refresh_per_second=20) as live:
-        # Phase 1 — paint the entire bird in one go
         logo_start = len(lines)
         lines.extend(_logo_line(idx, beak_open=False) for idx in range(len(LOGO_ROWS)))
         live.update(Group(*lines))
@@ -176,7 +187,6 @@ def run_about(
 
         sleep(0.3 * scale)
 
-        # Phase 2 — spinner + status lines while chirp "wakes up"
         status_start = len(lines)
         for spinner_msg, done_template, dwell in PHASE_ONE:
             done_msg = done_template.format(
@@ -200,7 +210,6 @@ def run_about(
 
         sleep(0.3 * scale)
 
-        # Phase 3 — clear the status lines and reveal info while the beak chirps
         del lines[status_start:]
         live.update(Group(*lines))
 
@@ -230,7 +239,7 @@ def render_about_plain(console: Console, settings) -> None:
     notes_root = settings.directories.notes_root
     notes_count = _count_notes(notes_root)
     chat_model = resolved_chat_model(settings.models.llm)
-    embed_model = settings.notes_chat.emb_model
+    embed_model = _index_backend_label(settings)
     version = _installed_version()
 
     for line in _info_lines(version, notes_count, chat_model, embed_model, notes_root):

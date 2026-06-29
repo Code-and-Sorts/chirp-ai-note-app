@@ -207,7 +207,94 @@ class TestNoteGenerator:
             result = generator._generate_for_record(record, force=False)
 
         assert result["success"] is False
+        assert result["skipped"] is True
         assert "Insufficient" in result["error"]
+
+    def test_generate_for_records_marks_all_short_as_skipped(
+        self, mock_settings, tmp_path
+    ):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(tmp_path, title="Quick", transcript="hi")
+
+            result = generator.generate_for_records([record])
+
+        assert result["success"] is False
+        assert result["skipped"] is True
+        assert "Insufficient" in result["error"]
+
+    def test_resolve_duration_reads_duration_s_from_meta(self, mock_settings, tmp_path):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(tmp_path, title="X", transcript="hi")
+            meta_path = record.dir / "meta.toml"
+            with meta_path.open("rb") as fh:
+                meta = tomllib.load(fh)
+            meta["duration_s"] = 91.99
+            with meta_path.open("wb") as fh:
+                tomli_w.dump(meta, fh)
+
+            assert generator._resolve_duration_seconds(record) == pytest.approx(91.99)
+
+    def test_resolve_duration_zero_when_no_meta_or_audio(self, mock_settings, tmp_path):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = _seed_record(tmp_path, title="X", transcript="hi")  # audio=None
+            assert generator._resolve_duration_seconds(record) == 0.0
+
+    def _record_with_audio(self, tmp_path, audio) -> NoteRecord:
+        note_dir = audio.parent
+        (note_dir / "meta.toml").write_text('title = "W"\n', encoding="utf-8")
+        return NoteRecord(
+            slug=note_dir.name,
+            dir=note_dir,
+            audio=audio,
+            transcript=None,
+            notes=None,
+            meta=note_dir / "meta.toml",
+            created_at=datetime(2026, 4, 20),
+        )
+
+    def test_resolve_duration_falls_back_to_wav_header(self, mock_settings, tmp_path):
+        import wave
+
+        note_dir = tmp_path / "wav-note"
+        note_dir.mkdir()
+        audio = note_dir / "audio.wav"
+        with wave.open(str(audio), "wb") as fh:
+            fh.setnchannels(1)
+            fh.setsampwidth(2)
+            fh.setframerate(16000)
+            fh.writeframes(b"\x00\x00" * 8000)  # 8000 frames @ 16 kHz = 0.5s
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = self._record_with_audio(tmp_path, audio)
+            assert generator._resolve_duration_seconds(record) == pytest.approx(0.5)
+
+    def test_resolve_duration_zero_on_unreadable_audio(self, mock_settings, tmp_path):
+        note_dir = tmp_path / "bad-audio"
+        note_dir.mkdir()
+        audio = note_dir / "audio.wav"
+        audio.write_bytes(b"not a wav file")  # triggers wave.Error → logged, falls to 0
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            record = self._record_with_audio(tmp_path, audio)
+            assert generator._resolve_duration_seconds(record) == 0.0
 
     def test_parse_failure_retries_once(self, mock_settings):
         """Unparsable output is retried once before giving up (AC-12)."""

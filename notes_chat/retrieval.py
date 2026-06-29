@@ -23,6 +23,14 @@ LEXICAL_ONLY = (1.0, 0.0)
 LITERAL_WEIGHTS = (1.0, 0.3)
 CONCEPTUAL_WEIGHTS = (1.0, 1.0)
 
+# Retrieval returns a fixed top-k, so a query that truly matches one note still
+# comes back padded with weak/zero-score filler. RRF fuses by rank (not score),
+# discarding the raw-score gap, so that filler would otherwise ride into the
+# context and the `sources` line. Drop hits that scored <= 0 (matched nothing)
+# or below this fraction of the top hit's score, applied to raw scores BEFORE
+# the merge. The top hit is always kept (top >= top * ratio).
+RELEVANCE_FLOOR_RATIO = 0.2
+
 _ACRONYM_RE = re.compile(r"\b[A-Z]{2,}\b")
 
 
@@ -207,7 +215,7 @@ def _search_chroma(
                     (chunk_id, score, {"content": document, "metadata": metadata})
                 )
 
-        return chroma_results
+        return _apply_relevance_floor(chroma_results)
 
     except Exception as e:  # noqa: BLE001 - chromadb raises various internal exceptions
         logger.debug("Chroma search failed: %s", e, exc_info=True)
@@ -251,7 +259,7 @@ def _search_bm25(
                 content, metadata = hydrated
                 data = {"content": content, "metadata": metadata, "source": "bm25"}
             results.append((chunk_id, score, data))
-        return results
+        return _apply_relevance_floor(results)
 
     except Exception as e:  # noqa: BLE001 - BM25 can raise many types on corrupt index
         logger.debug("BM25 search failed: %s", e, exc_info=True)
@@ -266,6 +274,30 @@ def _signature(chunk_id: str, data: dict[str, Any]) -> str:
         content_hash = metadata.get("content_hash", "")
         return f"{path}::{content_hash}"
     return chunk_id
+
+
+def _apply_relevance_floor(
+    results: list[tuple[str, float, dict[str, Any]]],
+    ratio: float = RELEVANCE_FLOOR_RATIO,
+) -> list[tuple[str, float, dict[str, Any]]]:
+    """Drop weak/zero-score filler from a single retriever's ranked hits.
+
+    Keeps only hits scoring above 0 AND at least ``ratio`` of the top hit's
+    score, so the strongest match is always retained while padding that matched
+    nothing (or barely anything) is cut before it can pollute the context and
+    the ``sources`` line.
+    """
+    if not results:
+        return results
+    top_score = max(score for _id, score, _data in results)
+    if top_score <= 0:
+        # Degenerate/tiny corpus: BM25's IDF can push even a genuine match to
+        # <= 0 (e.g. a term present in most of a handful of notes), so there's
+        # no positive top to measure filler against. Keep everything rather than
+        # drop a real, low-scored hit and answer "no documents found".
+        return results
+    threshold = top_score * ratio
+    return [hit for hit in results if hit[1] > 0 and hit[1] >= threshold]
 
 
 def _route_query(question: str) -> tuple[float, float]:

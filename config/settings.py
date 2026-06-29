@@ -179,7 +179,7 @@ class LLMSettings(BaseModel):
 
 class NotesChatConfig(BaseModel):
     semantic_enabled: bool = False
-    emb_model: str = "nomic-embed-text"
+    recommended_embed_model: str = "bge-small-en-v1.5-bf16"
     chunk_size: int = 1000
     overlap: int = 200
     k: int = 10

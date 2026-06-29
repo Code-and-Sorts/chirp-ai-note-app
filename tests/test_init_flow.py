@@ -189,7 +189,7 @@ def test_verify_handles_empty_registry(tmp_path, monkeypatch):
     chat = next(s for s in statuses if s.name == "default chat model")
     assert chat.installed is False
     assert chat.required is False
-    assert "chirp models add mlx-community/gemma-4-4b-it-4bit" in chat.detail
+    assert f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in chat.detail
 
 
 def test_verify_handles_missing_registry_file(tmp_path, monkeypatch):
@@ -223,7 +223,7 @@ def test_run_init_prints_models_add_hint_when_registry_empty(tmp_path, monkeypat
 
     assert code == 0
     output = console.file.getvalue()
-    assert "chirp models add mlx-community/gemma-4-4b-it-4bit" in output
+    assert f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in output
     assert "ollama" not in output.lower()
 
 
@@ -241,7 +241,7 @@ def test_switch_model_with_empty_registry_prints_models_add_hint(tmp_path, monke
 
     assert code == 0
     output = console.file.getvalue()
-    assert "chirp models add mlx-community/gemma-4-4b-it-4bit" in output
+    assert f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in output
     assert "pick" not in output.lower()  # no tag picker shown
 
 
@@ -799,8 +799,38 @@ def test_finalize_paths_preserves_existing_config(tmp_path, monkeypatch):
     init_flow._finalize_paths(settings, _console())
 
     assert config_path.stat().st_mtime == original_mtime
-    assert (settings.notes_chat.index_dir / "chroma").exists()
     assert settings.directories.notes_root.exists()
+
+
+def test_finalize_paths_skips_chroma_when_lexical_only(tmp_path, monkeypatch):
+    """A fresh lexical-only install must not get an empty chroma/ directory."""
+    settings = _fake_settings(tmp_path)
+    settings.notes_chat.semantic_enabled = False
+    monkeypatch.setattr(
+        init_flow.ChirpSettings, "get_config_path", lambda: tmp_path / "config.toml"
+    )
+    monkeypatch.setattr(init_flow, "_offer_launch_agent", lambda *a, **k: None)
+
+    console = _console()
+    init_flow._finalize_paths(settings, console)
+
+    assert not (settings.notes_chat.index_dir / "chroma").exists()
+    assert "chromadb" not in console.file.getvalue()
+
+
+def test_finalize_paths_creates_chroma_when_semantic_on(tmp_path, monkeypatch):
+    settings = _fake_settings(tmp_path)
+    settings.notes_chat.semantic_enabled = True
+    monkeypatch.setattr(
+        init_flow.ChirpSettings, "get_config_path", lambda: tmp_path / "config.toml"
+    )
+    monkeypatch.setattr(init_flow, "_offer_launch_agent", lambda *a, **k: None)
+
+    console = _console()
+    init_flow._finalize_paths(settings, console)
+
+    assert (settings.notes_chat.index_dir / "chroma").exists()
+    assert "chromadb" in console.file.getvalue()
 
 
 # --- --recheck Ollama migration plan (story 7.2) ---------------------------------
@@ -937,7 +967,7 @@ def test_plan_recommends_default_chat_repo(tmp_path, monkeypatch):
     init_flow.run_init(_fake_settings(tmp_path), console, recheck=True)
 
     output = console.file.getvalue()
-    assert "mlx-community/gemma-4-4b-it-4bit" in output
+    assert init_flow.RECOMMENDED_CHAT_REPO in output
     assert init_flow.SMALLER_CHAT_REPO in output
 
 
