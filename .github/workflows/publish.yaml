@@ -52,6 +52,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write
     steps:
       - name: ⤵️ Checkout main
         uses: actions/checkout@v7
@@ -112,6 +113,9 @@ jobs:
           Updates \`pyproject.toml\`'s \`[project].version\` to \`${NORMALIZED_VERSION}\` and regenerates \`uv.lock\` so future PR dev builds derive their version from the latest released base. Without this, PR builds would continue versioning off the previous \`pyproject.toml\`, and PEP 440 ordering could prevent \`pip install --upgrade chirp-notes-ai\` from picking up new releases.
           EOF
           )
+
+          gh label create automation --color ededed --description "Automated maintenance PRs" --force
+          gh label create release-sync --color 0e8a16 --description "Post-release version sync to main" --force
 
           if EXISTING=$(gh pr view "$BRANCH" --json number --jq .number 2>/dev/null); then
             echo "PR #${EXISTING} already exists for ${BRANCH}; updated branch in place."
