@@ -23,7 +23,6 @@ Chirp currently targets **macOS 13.0 (Ventura) or later** for audio capture. The
 
 - macOS 13.0+ on **Apple Silicon** (M1/M2/M3/M4 or newer — chirpd runs models on MLX)
 - Python 3.11+
-- Homebrew if you want `chirp init` to install missing macOS dependencies for you
 
 Note generation and retrieval run on-device through the bundled **chirpd** daemon
 (MLX) — no separate model server to install. You register a model once with
@@ -150,7 +149,7 @@ While semantic search is off, embed models stay hidden from `chirp models list` 
 
 ## Setup details
 
-`chirp init` is the recommended setup path. It checks for Apple Silicon, verifies Homebrew, confirms the bundled chirpd daemon is reachable, reports whether a default chat model is registered, and checks the screen-recording permission — then helps install anything missing and offers to start chirpd at login. The bundled `Chirp.app` helper records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
+`chirp init` is the recommended setup path. It checks for Apple Silicon, confirms the bundled chirpd daemon is reachable, reports whether a default chat model is registered, and checks the screen-recording permission — then helps install anything missing and offers to start chirpd at login. The bundled `Chirp.app` helper records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
 
 If you prefer to set things up manually on macOS (chirp itself is pip-installed; no extra system packages are required):
 

@@ -4,15 +4,14 @@ Gate: require Apple Silicon. Everything downstream (the bundled
 chirpd daemon, MLX inference) is arm64-only, so a non-arm64 machine fails
 fast with exit code 7 before any other work.
 
-Verify: check homebrew, daemon readiness (via `llm.client`'s
-health handshake, which lazy-spawns chirpd), the registered default chat
-model (via `llm.registry`), and the screen-recording permission. Print a
-check table and ask whether to install what's missing.
+Verify: check daemon readiness (via `llm.client`'s health handshake, which
+lazy-spawns chirpd), the registered default chat model (via `llm.registry`),
+and the screen-recording permission. Print a check table and ask whether to
+install what's missing.
 
-Install: install missing dependencies via Homebrew (macOS only) and rebuild
-the capture_audio helper when needed. The daemon is part of the pip package
-and is never "installed" here; model registration is the user's own
-`chirp models add` step.
+Install: rebuild the capture_audio helper when needed (macOS only). The daemon
+is part of the pip package and is never "installed" here; model registration
+is the user's own `chirp models add` step.
 
 Finalize: create the config/chroma/notes directories and print the "your nest
 is ready" panel.
@@ -94,18 +93,6 @@ def require_apple_silicon(console: Console) -> int | None:
         "Python under Rosetta — install an arm64 Python and reinstall chirp.[/dim]"
     )
     return EXIT_NOT_APPLE_SILICON
-
-
-def _brew_installed() -> DependencyStatus:
-    path = _which("brew")
-    if path:
-        return DependencyStatus("homebrew", True, path)
-    return DependencyStatus(
-        "homebrew",
-        False,
-        "not found — install from https://brew.sh",
-        required=platform.system() == "Darwin",
-    )
 
 
 def _daemon_ready() -> DependencyStatus:
@@ -220,7 +207,6 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
     console.print()
 
     statuses = [
-        _brew_installed(),
         _daemon_ready(),
         _default_chat_registered(),
         _screen_recording_permission(),
@@ -281,12 +267,11 @@ def _confirm(console: Console, prompt: str, default: bool = True) -> bool:
 
 
 def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
-    """Install what's missing via Homebrew.
+    """Rebuild the capture_audio helper when it's missing.
 
     Returns True when every actionable task succeeded. Returns False on
-    non-macOS hosts, when Homebrew itself is missing, when a brew/build task
-    fails, or when manual user action remains (denied screen-recording
-    permission, a daemon that won't start)."""
+    non-macOS hosts, when a build task fails, or when manual user action
+    remains (denied screen-recording permission, a daemon that won't start)."""
     if platform.system() != "Darwin":
         console.print(
             " [yellow]automatic install is macOS-only.[/yellow] "
@@ -294,15 +279,6 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
         )
         return False
 
-    brew = _which("brew")
-    if not brew:
-        console.print(
-            " [red]homebrew not found[/red] — install from https://brew.sh, then re-run."
-        )
-        return False
-
-    console.print()
-    console.print(" [dim]installing dependencies via homebrew...[/dim]")
     console.print()
 
     user_action_required = False
