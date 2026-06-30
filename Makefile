@@ -8,22 +8,10 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # Installation commands
-install-deps: ## Install system dependencies (macOS)
-	@echo "Installing system dependencies..."
-	@if command -v brew >/dev/null 2>&1; then \
-		echo "Installing PortAudio for PyAudio..."; \
-		brew install portaudio; \
-	else \
-		echo "Homebrew not found. Please install manually:"; \
-		echo "  - PortAudio: https://portaudio.com/"; \
-		echo "  - Or install Homebrew: https://brew.sh/"; \
-		exit 1; \
-	fi
-
-install: install-deps ## Install production dependencies with uv
+install: ## Install production dependencies with uv
 	uv sync
 
-dev-install: install-deps ## Install development dependencies
+dev-install: ## Install development dependencies
 	uv sync --all-extras
 	uv pip install -e .
 	uv run pre-commit install

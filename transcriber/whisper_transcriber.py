@@ -9,6 +9,7 @@ from typing import Any
 from chirp.exceptions import WhisperModelLoadError
 from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
+from transcriber.audio_loader import load_audio
 from utils.file_utils import META_FILENAME, get_file_size_mb
 from utils.hf_quiet import quiet_huggingface_output
 from utils.time_utils import derive_recording_id, parse_timestamp_from_filename
@@ -38,7 +39,6 @@ def _import_mlx_whisper():
     # Imported lazily: mlx-whisper only installs on macOS arm64, so a top-level
     # import would break imports/tests on every other platform.
     import mlx_whisper
-    import mlx_whisper.audio
     import mlx_whisper.load_models
 
     return mlx_whisper
@@ -123,7 +123,7 @@ class WhisperTranscriber:
             hallucination_silence_threshold = 2.0
 
         try:
-            audio = mlx_whisper.audio.load_audio(str(audio_file_path))
+            audio = load_audio(audio_file_path)
             duration = len(audio) / SAMPLE_RATE
 
             # mlx-whisper has no built-in VAD. We feed silero-detected speech
