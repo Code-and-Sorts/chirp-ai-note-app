@@ -208,6 +208,9 @@ Check the daemon with `chirp daemon status` and your registered models with `chi
 **No notes found**
 Run `chirp transcribe` first, or check `chirp config --list` to confirm the notes root you are using.
 
+**Model download fails with `CERTIFICATE_VERIFY_FAILED` / `self-signed certificate in certificate chain`**
+Your network has a TLS-intercepting proxy (common on corporate machines). Chirp verifies downloads against your operating system trust store, which already trusts that proxy's root CA, so this usually resolves itself. If you still hit it, set `CHIRP_DISABLE_TRUSTSTORE=1` to fall back to the bundled CA list, or point `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` at your proxy's root CA.
+
 ## Development
 
 Contributor docs live in `AGENTS.md` and `.docs/DEVELOPMENT.md`.
