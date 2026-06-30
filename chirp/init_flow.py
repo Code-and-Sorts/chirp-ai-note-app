@@ -4,7 +4,7 @@ Gate: require Apple Silicon. Everything downstream (the bundled
 chirpd daemon, MLX inference) is arm64-only, so a non-arm64 machine fails
 fast with exit code 7 before any other work.
 
-Verify: check homebrew, ffmpeg, daemon readiness (via `llm.client`'s
+Verify: check homebrew, daemon readiness (via `llm.client`'s
 health handshake, which lazy-spawns chirpd), the registered default chat
 model (via `llm.registry`), and the screen-recording permission. Print a
 check table and ask whether to install what's missing.
@@ -106,24 +106,6 @@ def _brew_installed() -> DependencyStatus:
         "not found — install from https://brew.sh",
         required=platform.system() == "Darwin",
     )
-
-
-def _ffmpeg_installed() -> DependencyStatus:
-    path = _which("ffmpeg")
-    if not path:
-        return DependencyStatus("ffmpeg", False, "not found")
-    code, out = _run([path, "-version"])
-    if code != 0:
-        return DependencyStatus(
-            "ffmpeg",
-            False,
-            f"found at {path} but `ffmpeg -version` failed — try `brew reinstall ffmpeg`",
-        )
-    detail = path
-    first_line = out.splitlines()[0] if out else ""
-    if first_line.startswith("ffmpeg version"):
-        detail = first_line.split()[2]
-    return DependencyStatus("ffmpeg", True, detail)
 
 
 def _daemon_ready() -> DependencyStatus:
@@ -239,7 +221,6 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
 
     statuses = [
         _brew_installed(),
-        _ffmpeg_installed(),
         _daemon_ready(),
         _default_chat_registered(),
         _screen_recording_permission(),
@@ -335,8 +316,6 @@ def install_missing(console: Console, statuses: list[DependencyStatus]) -> bool:
             console.print(f" [red]✗[/red] the daemon failed to start — {status.detail}")
             console.print("   run [bold]chirp daemon logs[/bold] for details.")
             user_action_required = True
-        elif status.name == "ffmpeg":
-            tasks.append(("ffmpeg", [brew, "install", "ffmpeg"]))
         elif status.name == "screen recording permission" and status.detail.startswith(
             "denied"
         ):
