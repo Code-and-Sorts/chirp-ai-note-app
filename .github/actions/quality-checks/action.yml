@@ -25,13 +25,6 @@ runs:
         version: ${{ inputs.uv-version }}
         enable-cache: true
 
-    - name: Install system dependencies (macOS)
-      shell: bash
-      run: |
-        if [[ "$RUNNER_OS" == "macOS" ]]; then
-          brew install portaudio
-        fi
-
     - name: Install Python dependencies
       shell: bash
       run: |

@@ -194,9 +194,13 @@ class NoteGenerator:
                 "results": results,
             }
 
+        last_error = next(
+            (r["error"] for r in reversed(results) if r.get("error")),
+            "Failed to generate notes for any record",
+        )
         return {
             "success": False,
-            "error": "Failed to generate notes for any record",
+            "error": last_error,
             "results": results,
         }
 
@@ -252,9 +256,17 @@ class NoteGenerator:
             }
 
         provided_title = record.title
-        structured_notes = self._generate_structured_notes(
-            transcript_text, provided_title
-        )
+        try:
+            structured_notes = self._generate_structured_notes(
+                transcript_text, provided_title
+            )
+        except Exception as exc:  # noqa: BLE001 - surface the real daemon/LLM failure
+            logger.warning("Note generation failed for %s: %s", record.slug, exc)
+            return {
+                "success": False,
+                "slug": record.slug,
+                "error": f"note generation failed — {exc}",
+            }
         if not structured_notes:
             # Never write or auto-index unparsable output — a junk note would
             # later poison `ask` (AC-12).
@@ -441,11 +453,7 @@ Return ONLY the XML document, no additional text before or after."""
         # Returns None on persistent parse failure so the caller skips writing
         # and indexing a junk note (AC-12).
         for attempt in range(1, MAX_PARSE_ATTEMPTS + 1):
-            try:
-                response = self._call_llm(prompt)
-            except Exception as exc:  # noqa: BLE001 - generation is best-effort; many failure modes
-                logger.debug("Note generation call failed: %s", exc)
-                return None
+            response = self._call_llm(prompt)
 
             parsed = self._parse_xml_response(response)
             if parsed is not None:
