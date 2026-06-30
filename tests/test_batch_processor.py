@@ -84,7 +84,7 @@ class TestChecklistView:
         Console(file=buffer, force_terminal=False, width=80).print(view.render())
         output = buffer.getvalue()
         assert "hello" in output
-        assert "loaded audio" in output
+        assert "load audio" in output
         assert "00:42" in output
         assert "transcribe" in output
 

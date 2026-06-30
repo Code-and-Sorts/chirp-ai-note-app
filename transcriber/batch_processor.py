@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class Stage(Enum):
-    LOAD_AUDIO = ("loaded audio", 0)
+    LOAD_AUDIO = ("load audio", 0)
     TRANSCRIBE = ("transcribe", 1)
     GENERATE_NOTES = ("generate notes", 2)
     INDEX = ("index notes", 3)
@@ -72,7 +72,7 @@ class StageStatus:
 class ChecklistView:
     """Renders the 5-stage checklist plus an optional batch header line."""
 
-    def __init__(self, header: str | None = None) -> None:
+    def __init__(self, header: str | Text | None = None) -> None:
         self.header = header
         self.statuses: dict[Stage, StageStatus] = {
             stage: StageStatus() for stage in Stage
@@ -95,8 +95,13 @@ class ChecklistView:
         body = Table.grid(padding=(0, 0))
         body.add_column(no_wrap=True, width=2)
         body.add_column(no_wrap=False)
-        if self.header:
-            body.add_row(Text(""), Text(self.header, style="bold white"))
+        if self.header is not None:
+            head = (
+                self.header
+                if isinstance(self.header, Text)
+                else Text(self.header, style="bold white")
+            )
+            body.add_row(Text(""), head)
             body.add_row(Text(""), Text(""))
         for stage in Stage:
             icon, label = self._render_stage_row(stage)
@@ -259,11 +264,14 @@ class BatchProcessor:
             candidates = candidates[:n]
         return candidates
 
-    def _format_header(self, index: int, total: int, record: NoteRecord) -> str:
+    def _format_header(self, index: int, total: int, record: NoteRecord) -> Text:
         title = record.title or record.slug
+        head = Text()
         if total > 1:
-            return f"{index} of {total} · {title}"
-        return title
+            head.append(f"{index} of {total}", style="cyan")
+            head.append(" · ", style="dim")
+        head.append(title, style="bold white")
+        return head
 
     def _process_one(self, ctx: _PipelineContext, live: Live) -> str:
         """Run a record through every stage; return ``"ok"``/``"skipped"``/``"failed"``."""
