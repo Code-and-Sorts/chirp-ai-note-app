@@ -725,6 +725,55 @@ def _print_migration_plan(console: Console, detection: dict[str, bool]) -> None:
     console.print(rule)
 
 
+def _ensure_default_chat_ready(console: Console) -> None:
+    """Download + warm the registered default chat model so the first transcribe
+    is instant. No-op when no default chat model is registered (the verify table
+    already points those users at `chirp models add`). Best-effort: a download or
+    warm failure is surfaced and init continues — the model would otherwise
+    download lazily on first use anyway."""
+    from llm import hf
+    from llm.cli._progress import RichProgressCallback
+    from llm.client import LLMClient
+    from llm.exceptions import LLMError
+    from llm.registry import read_registry
+
+    try:
+        registry = read_registry()
+    except LLMError:
+        return
+    alias = registry.default_chat
+    if not alias or alias not in registry.models:
+        return
+    entry = registry.models[alias]
+
+    console.print()
+    console.print(f" [dim]preparing chat model {alias} (one-time download)...[/dim]")
+    callback = RichProgressCallback(entry.hf_repo, console=console)
+    try:
+        hf.download_model(entry.hf_repo, progress=callback)
+    except KeyboardInterrupt:
+        console.print(
+            " [yellow]![/yellow] skipped — the model will download on first use."
+        )
+        return
+    except hf.HfError as exc:
+        console.print(
+            f" [yellow]![/yellow] could not pre-download {entry.hf_repo}: {exc}"
+        )
+        console.print("   it will download on first use instead.")
+        return
+    finally:
+        callback.close()
+
+    try:
+        LLMClient().model_load_sync(alias, entry.role)
+    except LLMError as exc:
+        console.print(f" [yellow]![/yellow] model downloaded but warm failed: {exc}")
+        console.print("   run [bold]chirp daemon logs[/bold] if it persists.")
+        return
+    console.print(f" [green]{glyphs.SUCCESS}[/green] chat model ready · {alias}")
+
+
 def run_init(
     settings: ChirpSettings,
     console: Console,
@@ -761,5 +810,6 @@ def run_init(
             " [dim]phase 2 · everything's already installed — skipping.[/dim]"
         )
 
+    _ensure_default_chat_ready(console)
     _finalize_paths(settings, console)
     return 0

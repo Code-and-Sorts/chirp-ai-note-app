@@ -65,6 +65,7 @@ def _stub_verify_deps(monkeypatch, registry=None, arm64=True):
         lambda: init_flow.DependencyStatus("ffmpeg", True, "7.1.1"),
     )
     _stub_healthy_daemon(monkeypatch)
+    monkeypatch.setattr(init_flow, "_ensure_default_chat_ready", lambda console: None)
     monkeypatch.setattr(
         "llm.registry.read_registry",
         lambda path=None: (
@@ -1245,3 +1246,98 @@ def test_cli_init_gates_before_loading_settings(monkeypatch):
 
     assert result.exit_code == 7
     assert settings_loads == []  # config.toml must not be created pre-gate
+
+
+class _FakeProgressCallback:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_ensure_chat_ready_downloads_and_warms(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    downloaded: list[str] = []
+    monkeypatch.setattr(
+        "llm.hf.download_model",
+        lambda repo, progress=None: downloaded.append(repo),
+    )
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    warmed: list[tuple[str, str]] = []
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            warmed.append((alias, role))
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+
+    init_flow._ensure_default_chat_ready(_console())
+
+    assert downloaded == ["mlx-community/qwen"]
+    assert warmed == [("qwen", "chat")]
+
+
+def test_ensure_chat_ready_noop_when_unregistered(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    downloaded: list[str] = []
+    monkeypatch.setattr(
+        "llm.hf.download_model",
+        lambda repo, progress=None: downloaded.append(repo),
+    )
+
+    init_flow._ensure_default_chat_ready(_console())
+
+    assert downloaded == []
+
+
+def test_ensure_chat_ready_download_failure_skips_warm(monkeypatch):
+    from llm.hf import HfError
+
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+
+    def _boom(repo, progress=None):
+        raise HfError("network down")
+
+    monkeypatch.setattr("llm.hf.download_model", _boom)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    warmed: list[tuple[str, str]] = []
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            warmed.append((alias, role))
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+    console = _console()
+
+    init_flow._ensure_default_chat_ready(console)
+
+    assert warmed == []
+    assert "download on first use" in console.file.getvalue()
+
+
+def test_ensure_chat_ready_warm_failure_is_graceful(monkeypatch):
+    from llm.exceptions import LLMModelError
+
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    monkeypatch.setattr("llm.hf.download_model", lambda repo, progress=None: None)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            raise LLMModelError("warm failed")
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+    console = _console()
+
+    init_flow._ensure_default_chat_ready(console)
+
+    assert "warm failed" in console.file.getvalue()
