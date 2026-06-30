@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import logging
 import os
+import ssl
 
 logger = logging.getLogger(__name__)
 
 DISABLE_ENV_VAR = "CHIRP_DISABLE_TRUSTSTORE"
-
-_injected = False
 
 
 def enable_system_trust_store() -> None:
@@ -27,12 +26,13 @@ def enable_system_trust_store() -> None:
     failure leaves the default certifi-backed verification in place rather than
     breaking startup.
     """
-    global _injected
-    if _injected or os.environ.get(DISABLE_ENV_VAR):
+    if os.environ.get(DISABLE_ENV_VAR):
         return
     try:
         import truststore
     except ImportError:
+        return
+    if ssl.SSLContext is truststore.SSLContext:
         return
     try:
         truststore.inject_into_ssl()
@@ -41,5 +41,3 @@ def enable_system_trust_store() -> None:
             "truststore injection failed; using default certifi bundle",
             exc_info=True,
         )
-        return
-    _injected = True
