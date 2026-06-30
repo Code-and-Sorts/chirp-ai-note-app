@@ -44,6 +44,21 @@ def _import_mlx_whisper():
     return mlx_whisper
 
 
+def _release_mlx_cache() -> None:
+    # mlx-whisper parks freed Metal buffers in MLX's allocator cache; gc only
+    # drops the Python references. Without clearing the cache between recordings
+    # the CLI's resident memory climbs unbounded across a batch (the daemon does
+    # the same on model unload, see chirpd/backend.py).
+    import gc
+
+    gc.collect()
+    try:
+        import mlx.core as mx
+    except ImportError:
+        return
+    mx.clear_cache()
+
+
 class WhisperTranscriber:
     def __init__(self, settings: ChirpSettings):
         self.settings = settings
@@ -245,6 +260,9 @@ class WhisperTranscriber:
                 "metadata": error_metadata,
                 "error": str(e),
             }
+
+        finally:
+            _release_mlx_cache()
 
     def _speech_clip_timestamps(self, audio) -> str | list[float]:
         """Build mlx-whisper clip_timestamps from a silero VAD pass.

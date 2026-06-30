@@ -128,6 +128,25 @@ class TestWhisperTranscriber:
         assert result["error"] == "Transcription failed"
         assert "transcription_time" in result["metadata"]
 
+    def test_transcribe_file_releases_mlx_cache(self, transcriber):
+        with (
+            patch("transcriber.whisper_transcriber._release_mlx_cache") as release,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            transcriber.transcribe_file(Path("test.wav"))
+
+        release.assert_called_once()
+
+    def test_transcribe_file_releases_mlx_cache_on_error(self, transcriber, mlx_module):
+        mlx_module.transcribe.side_effect = Exception("Transcription failed")
+        with (
+            patch("transcriber.whisper_transcriber._release_mlx_cache") as release,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            transcriber.transcribe_file(Path("test.wav"))
+
+        release.assert_called_once()
+
     def test_transcribe_file_includes_enhanced_metadata(
         self, tmp_path, mock_settings, mlx_module
     ):
