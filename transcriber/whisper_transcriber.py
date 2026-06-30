@@ -11,6 +11,7 @@ from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
 from transcriber.audio_loader import load_audio
 from utils.file_utils import META_FILENAME, get_file_size_mb
+from utils.hf_quiet import quiet_huggingface_output
 from utils.time_utils import derive_recording_id, parse_timestamp_from_filename
 
 logger = logging.getLogger(__name__)
@@ -43,12 +44,28 @@ def _import_mlx_whisper():
     return mlx_whisper
 
 
+def _release_mlx_cache() -> None:
+    # mlx-whisper parks freed Metal buffers in MLX's allocator cache; gc only
+    # drops the Python references. Without clearing the cache between recordings
+    # the CLI's resident memory climbs unbounded across a batch (the daemon does
+    # the same on model unload, see chirpd/backend.py).
+    import gc
+
+    gc.collect()
+    try:
+        import mlx.core as mx
+    except ImportError:
+        return
+    mx.clear_cache()
+
+
 class WhisperTranscriber:
     def __init__(self, settings: ChirpSettings):
         self.settings = settings
         self.model = None
         self._vad_model = None
         self.model_repo = _resolve_model_repo(settings.models.whisper)
+        quiet_huggingface_output()
         self._load_model()
 
     def _load_model(self):
@@ -243,6 +260,9 @@ class WhisperTranscriber:
                 "metadata": error_metadata,
                 "error": str(e),
             }
+
+        finally:
+            _release_mlx_cache()
 
     def _speech_clip_timestamps(self, audio) -> str | list[float]:
         """Build mlx-whisper clip_timestamps from a silero VAD pass.
