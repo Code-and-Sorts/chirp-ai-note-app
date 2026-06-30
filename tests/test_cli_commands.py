@@ -569,11 +569,11 @@ class TestNotesReviewPatches:
         assert "simulated permission denied" in flat
 
 
-class TestDevicesReleasesHandle:
-    """AC-1a: `chirp devices` must release the PortAudio handle deterministically."""
+class TestDevicesCommand:
+    """`chirp devices` lists audio devices via sounddevice."""
 
-    def test_devices_closes_pyaudio_handle(self, tmp_path, monkeypatch):
-        from unittest.mock import Mock, patch
+    def test_devices_lists_without_error(self, tmp_path, monkeypatch):
+        from unittest.mock import patch
 
         from typer.testing import CliRunner
 
@@ -582,17 +582,25 @@ class TestDevicesReleasesHandle:
         monkeypatch.setattr("chirp.cli.get_settings", lambda: _make_settings(tmp_path))
         monkeypatch.setattr("chirp.cli.platform.system", lambda: "Linux")
 
-        with patch("recorder.device_manager.pyaudio.PyAudio") as mock_pyaudio:
-            mock_audio = Mock()
-            mock_audio.get_device_count.return_value = 0
-            mock_audio.get_default_input_device_info.return_value = {"index": 0}
-            mock_audio.get_default_output_device_info.return_value = {"index": 0}
-            mock_pyaudio.return_value = mock_audio
+        devices = [
+            {
+                "index": 0,
+                "name": "Built-in Microphone",
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+                "default_samplerate": 48000.0,
+                "hostapi": 0,
+            }
+        ]
 
+        def _query(*args, **kwargs):
+            return devices[0] if kwargs.get("kind") else devices
+
+        with patch("recorder.device_manager.sd.query_devices", side_effect=_query):
             result = CliRunner().invoke(chirp.cli.app, ["devices"])
 
         assert result.exit_code == 0
-        mock_audio.terminate.assert_called_once()
+        assert "Built-in Microphone" in result.stdout
 
 
 class TestTranscribeSurfacesModelLoadError:

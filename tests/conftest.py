@@ -12,14 +12,6 @@ import pytest
 
 from llm.exceptions import LLMError
 
-# Stub `pyaudio` before any recorder modules are imported so that
-# `recorder.device_manager` (which does `import pyaudio` at module level)
-# can be safely imported on hosts that don't have PortAudio installed.
-# Using MagicMock so tests that patch recorder.device_manager.pyaudio.PyAudio
-# can set attributes on the stub without AttributeError.
-if "pyaudio" not in sys.modules:
-    sys.modules["pyaudio"] = mock.MagicMock()
-
 
 @pytest.fixture(autouse=True)
 def _force_darwin_platform(request: pytest.FixtureRequest) -> Iterator[None]:
