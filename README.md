@@ -23,7 +23,6 @@ Chirp currently targets **macOS 13.0 (Ventura) or later** for audio capture. The
 
 - macOS 13.0+ on **Apple Silicon** (M1/M2/M3/M4 or newer — chirpd runs models on MLX)
 - Python 3.11+
-- Homebrew if you want `chirp init` to install missing macOS dependencies for you
 
 Note generation and retrieval run on-device through the bundled **chirpd** daemon
 (MLX) — no separate model server to install. You register a model once with
@@ -150,17 +149,11 @@ While semantic search is off, embed models stay hidden from `chirp models list` 
 
 ## Setup details
 
-`chirp init` is the recommended setup path. It checks for Apple Silicon, verifies Homebrew and `ffmpeg`, confirms the bundled chirpd daemon is reachable, reports whether a default chat model is registered, and checks the screen-recording permission — then helps install anything missing and offers to start chirpd at login. The bundled `Chirp.app` helper records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
+`chirp init` is the recommended setup path. It checks for Apple Silicon, confirms the bundled chirpd daemon is reachable, reports whether a default chat model is registered, and checks the screen-recording permission — then helps install anything missing and offers to start chirpd at login. The bundled `Chirp.app` helper records system audio and microphone directly via ScreenCaptureKit; no virtual audio driver is required.
 
-If you prefer to set things up manually on macOS:
+If you prefer to set things up manually on macOS (chirp itself is pip-installed; no extra system packages are required):
 
-1. Install the only system dependency (chirp itself is pip-installed):
-
-   ```bash
-   brew install ffmpeg
-   ```
-
-2. Register a chat model (downloaded to the local HF cache, served on-device by chirpd):
+1. Register a chat model (downloaded to the local HF cache, served on-device by chirpd):
 
    ```bash
    # Chat — strong quality (~4.3 GB)
@@ -175,7 +168,7 @@ If you prefer to set things up manually on macOS:
    chirp config --semantic
    ```
 
-3. Re-check your environment:
+2. Re-check your environment:
 
    ```bash
    chirp init --recheck
@@ -214,6 +207,9 @@ Check the daemon with `chirp daemon status` and your registered models with `chi
 
 **No notes found**
 Run `chirp transcribe` first, or check `chirp config --list` to confirm the notes root you are using.
+
+**Model download fails with `CERTIFICATE_VERIFY_FAILED` / `self-signed certificate in certificate chain`**
+Your network has a TLS-intercepting proxy (common on corporate machines). Chirp verifies downloads against your operating system trust store, which already trusts that proxy's root CA, so this usually resolves itself. If you still hit it, set `CHIRP_DISABLE_TRUSTSTORE=1` to fall back to the bundled CA list, or point `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` at your proxy's root CA.
 
 ## Development
 

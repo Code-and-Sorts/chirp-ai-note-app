@@ -28,6 +28,7 @@ from llm.cli.daemon import daemon_app
 from llm.cli.models import app as models_app
 from llm.registry import resolved_chat_model, resolved_embed_model
 from utils.file_utils import NoteRecord, list_notes
+from utils.tls import enable_system_trust_store
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,7 @@ def main(
     """Chirp · AI notes for your terminal."""
     _configure_cli_logging(verbose)
     apply_color_mode(no_color)
+    enable_system_trust_store()
 
 
 def _prompt_title() -> str:
