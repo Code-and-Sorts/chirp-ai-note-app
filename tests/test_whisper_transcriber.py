@@ -11,13 +11,14 @@ from transcriber.whisper_transcriber import (
 )
 
 MLX_IMPORT = "transcriber.whisper_transcriber._import_mlx_whisper"
+LOAD_AUDIO_IMPORT = "transcriber.whisper_transcriber.load_audio"
+_FAKE_AUDIO_SAMPLES = 80000
 
 
-def _make_mlx_module(*, segments=None, language="en", audio_len=80000):
+def _make_mlx_module(*, segments=None, language="en"):
     """Build a stand-in for the lazily-imported mlx_whisper module."""
     module = Mock()
     module.load_models.load_model.return_value = Mock(name="whisper_model")
-    module.audio.load_audio.return_value = np.zeros(audio_len, dtype=np.float32)
     module.transcribe.return_value = {
         "text": "".join(s.get("text", "") for s in (segments or [])),
         "language": language,
@@ -27,6 +28,14 @@ def _make_mlx_module(*, segments=None, language="en", audio_len=80000):
 
 
 class TestWhisperTranscriber:
+    @pytest.fixture(autouse=True)
+    def _stub_load_audio(self):
+        with patch(
+            LOAD_AUDIO_IMPORT,
+            return_value=np.zeros(_FAKE_AUDIO_SAMPLES, dtype=np.float32),
+        ):
+            yield
+
     @pytest.fixture
     def mock_settings(self):
         settings = Mock(spec=ChirpSettings)
@@ -127,6 +136,25 @@ class TestWhisperTranscriber:
         assert result["segments"] == []
         assert result["error"] == "Transcription failed"
         assert "transcription_time" in result["metadata"]
+
+    def test_transcribe_file_releases_mlx_cache(self, transcriber):
+        with (
+            patch("transcriber.whisper_transcriber._release_mlx_cache") as release,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            transcriber.transcribe_file(Path("test.wav"))
+
+        release.assert_called_once()
+
+    def test_transcribe_file_releases_mlx_cache_on_error(self, transcriber, mlx_module):
+        mlx_module.transcribe.side_effect = Exception("Transcription failed")
+        with (
+            patch("transcriber.whisper_transcriber._release_mlx_cache") as release,
+            patch("pathlib.Path.exists", return_value=True),
+        ):
+            transcriber.transcribe_file(Path("test.wav"))
+
+        release.assert_called_once()
 
     def test_transcribe_file_includes_enhanced_metadata(
         self, tmp_path, mock_settings, mlx_module

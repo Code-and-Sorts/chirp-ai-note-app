@@ -1,10 +1,11 @@
 """Unit tests for the chirp init flow.
 
-The external pieces (homebrew, the chirpd daemon, the model registry, audio
+The external pieces (the chirpd daemon, the model registry, audio
 permission probes, subprocess calls) are mocked out so the tests stay fast,
 platform-agnostic, and never spawn a real daemon or write a real models.toml.
 """
 
+import sys
 from io import StringIO
 
 from rich.console import Console
@@ -54,17 +55,8 @@ def _stub_verify_deps(monkeypatch, registry=None, arm64=True):
         init_flow.platform, "machine", lambda: "arm64" if arm64 else "x86_64"
     )
     monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
-    monkeypatch.setattr(
-        init_flow,
-        "_brew_installed",
-        lambda: init_flow.DependencyStatus("homebrew", True, "/usr/bin/brew"),
-    )
-    monkeypatch.setattr(
-        init_flow,
-        "_ffmpeg_installed",
-        lambda: init_flow.DependencyStatus("ffmpeg", True, "7.1.1"),
-    )
     _stub_healthy_daemon(monkeypatch)
+    monkeypatch.setattr(init_flow, "_ensure_chat_model_ready", lambda console: None)
     monkeypatch.setattr(
         "llm.registry.read_registry",
         lambda path=None: (
@@ -94,7 +86,7 @@ def test_run_init_fails_fast_on_intel(tmp_path, monkeypatch):
     output = console.file.getvalue()
     assert "Apple Silicon" in output
     assert "x86_64" in output
-    assert "homebrew" not in output  # no verify table printed
+    assert "checking what you've already got" not in output  # no verify table printed
     assert health_calls == []  # daemon never lazy-spawned
     assert not settings.directories.notes_root.exists()  # no filesystem mutation
     assert not settings.notes_chat.index_dir.exists()
@@ -115,7 +107,6 @@ def test_run_init_apple_silicon_passes_through(tmp_path, monkeypatch):
     assert code == 0
     output = console.file.getvalue()
     assert "checking what you've already got" in output
-    assert "homebrew" in output
 
 
 # --- verify() rows (AC-2, AC-3, AC-4) ----------------------------------------
@@ -129,19 +120,17 @@ def test_verify_includes_daemon_and_registry_rows_no_ollama(tmp_path, monkeypatc
 
     names = [s.name for s in statuses]
     assert names == [
-        "homebrew",
-        "ffmpeg",
         "chirpd",
         "default chat model",
         "screen recording permission",
     ]
     assert not any(n == "Ollama" or n.startswith("model:") for n in names)
 
-    chirpd = statuses[2]
+    chirpd = statuses[0]
     assert chirpd.installed is True
     assert chirpd.detail == "healthy · v0.1.0"
 
-    chat = statuses[3]
+    chat = statuses[1]
     assert chat.installed is True
     assert chat.detail == "default chat: gemma-4-4b-it-4bit"
 
@@ -313,7 +302,7 @@ def test_install_missing_surfaces_daemon_failure_without_installing(monkeypatch)
     result = init_flow.install_missing(console, statuses)
 
     assert result is False
-    assert run_calls == []  # nothing brew-installable for the daemon
+    assert run_calls == []  # nothing installable for the daemon
     output = console.file.getvalue()
     assert "chirp daemon logs" in output
 
@@ -412,7 +401,11 @@ def test_run_init_phases_run_in_order(tmp_path, monkeypatch):
         "verify",
         lambda settings, console: (
             calls.append("verify")
-            or [init_flow.DependencyStatus("homebrew", False, "missing")]
+            or [
+                init_flow.DependencyStatus(
+                    "screen recording permission", False, "missing"
+                )
+            ]
         ),
     )
     monkeypatch.setattr(init_flow, "_confirm", lambda *args, **kwargs: True)
@@ -650,34 +643,6 @@ def test_run_returns_127_on_missing_binary():
     assert out
 
 
-def test_brew_missing_is_required_on_darwin(monkeypatch):
-    monkeypatch.setattr(init_flow, "_which", lambda _cmd: None)
-    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
-
-    status = init_flow._brew_installed()
-
-    assert status.installed is False
-    assert status.required is True
-    assert "brew.sh" in status.detail
-
-
-def test_ffmpeg_version_parsed_from_output(monkeypatch):
-    monkeypatch.setattr(init_flow, "_which", lambda _cmd: "/usr/bin/ffmpeg")
-    monkeypatch.setattr(
-        init_flow, "_run", lambda args, timeout=10.0: (0, "ffmpeg version 7.1.1 etc\n")
-    )
-
-    status = init_flow._ffmpeg_installed()
-
-    assert status.installed is True
-    assert status.detail == "7.1.1"
-
-
-def test_ffmpeg_missing(monkeypatch):
-    monkeypatch.setattr(init_flow, "_which", lambda _cmd: None)
-    assert init_flow._ffmpeg_installed().installed is False
-
-
 def test_confirm_answers(monkeypatch):
     console = _console()
 
@@ -702,13 +667,7 @@ def test_install_missing_is_macos_only(monkeypatch):
     assert init_flow.install_missing(_console(), []) is False
 
 
-def test_install_missing_requires_brew(monkeypatch):
-    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(init_flow, "_which", lambda _cmd: None)
-    assert init_flow.install_missing(_console(), []) is False
-
-
-def test_install_missing_brew_installs_ffmpeg(monkeypatch):
+def test_install_missing_rebuilds_capture_audio(monkeypatch):
     monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
 
@@ -719,19 +678,27 @@ def test_install_missing_brew_installs_ffmpeg(monkeypatch):
         lambda args, timeout=10.0: run_calls.append(list(args)) or (0, ""),
     )
 
-    statuses = [init_flow.DependencyStatus("ffmpeg", False, "not found")]
+    statuses = [
+        init_flow.DependencyStatus(
+            "screen recording permission", False, "binary not built"
+        )
+    ]
     assert init_flow.install_missing(_console(), statuses) is True
-    assert run_calls == [["/usr/bin/brew", "install", "ffmpeg"]]
+    assert run_calls == [[sys.executable, "-m", "audio_capture.build"]]
 
 
-def test_install_missing_surfaces_brew_failure(monkeypatch):
+def test_install_missing_surfaces_task_failure(monkeypatch):
     monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
     monkeypatch.setattr(
         init_flow, "_run", lambda args, timeout=10.0: (1, "Error: install exploded")
     )
 
-    statuses = [init_flow.DependencyStatus("ffmpeg", False, "not found")]
+    statuses = [
+        init_flow.DependencyStatus(
+            "screen recording permission", False, "binary not built"
+        )
+    ]
     console = _console()
     assert init_flow.install_missing(console, statuses) is False
     assert "install exploded" in console.file.getvalue()
@@ -775,7 +742,9 @@ def test_run_init_user_declines_install(tmp_path, monkeypatch):
         init_flow,
         "verify",
         lambda settings, console: [
-            init_flow.DependencyStatus("ffmpeg", False, "not found")
+            init_flow.DependencyStatus(
+                "screen recording permission", False, "not found"
+            )
         ],
     )
     monkeypatch.setattr(init_flow, "_confirm", lambda *a, **k: False)
@@ -1216,18 +1185,6 @@ def test_merge_config_replaces_non_table_section_value(tmp_path):
     assert merged["user_custom"] == {"theme": "midnight"}
 
 
-def test_ffmpeg_on_path_but_broken_reports_not_installed(monkeypatch):
-    monkeypatch.setattr(init_flow, "_which", lambda _cmd: "/usr/bin/ffmpeg")
-    monkeypatch.setattr(
-        init_flow, "_run", lambda args, timeout=10.0: (1, "dyld: library missing")
-    )
-
-    status = init_flow._ffmpeg_installed()
-
-    assert status.installed is False
-    assert "brew reinstall ffmpeg" in status.detail
-
-
 def test_cli_init_gates_before_loading_settings(monkeypatch):
     from typer.testing import CliRunner
 
@@ -1245,3 +1202,270 @@ def test_cli_init_gates_before_loading_settings(monkeypatch):
 
     assert result.exit_code == 7
     assert settings_loads == []  # config.toml must not be created pre-gate
+
+
+class _FakeProgressCallback:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_ensure_chat_ready_downloads_and_warms(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    downloaded: list[str] = []
+    monkeypatch.setattr(
+        "llm.hf.download_model",
+        lambda repo, progress=None: downloaded.append(repo),
+    )
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    warmed: list[tuple[str, str]] = []
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            warmed.append((alias, role))
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+
+    init_flow._ensure_default_chat_ready(_console())
+
+    assert downloaded == ["mlx-community/qwen"]
+    assert warmed == [("qwen", "chat")]
+
+
+def test_ensure_chat_ready_noop_when_unregistered(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    downloaded: list[str] = []
+    monkeypatch.setattr(
+        "llm.hf.download_model",
+        lambda repo, progress=None: downloaded.append(repo),
+    )
+
+    init_flow._ensure_default_chat_ready(_console())
+
+    assert downloaded == []
+
+
+def test_ensure_chat_ready_download_failure_skips_warm(monkeypatch):
+    from llm.hf import HfError
+
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+
+    def _boom(repo, progress=None):
+        raise HfError("network down")
+
+    monkeypatch.setattr("llm.hf.download_model", _boom)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    warmed: list[tuple[str, str]] = []
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            warmed.append((alias, role))
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+    console = _console()
+
+    init_flow._ensure_default_chat_ready(console)
+
+    assert warmed == []
+    assert "download on first use" in console.file.getvalue()
+
+
+def test_ensure_chat_ready_warm_failure_is_graceful(monkeypatch):
+    from llm.exceptions import LLMModelError
+
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    monkeypatch.setattr("llm.hf.download_model", lambda repo, progress=None: None)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            raise LLMModelError("warm failed")
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+    console = _console()
+
+    init_flow._ensure_default_chat_ready(console)
+
+    assert "warm failed" in console.file.getvalue()
+
+
+# --- chat-model setup / picker / first-run gate -----------------------------
+
+
+def test_setup_chat_model_registers_downloads_warms(monkeypatch):
+    monkeypatch.setattr("llm.hf.download_model", lambda repo, progress=None: None)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    written = []
+    monkeypatch.setattr(
+        "llm.registry.write_registry", lambda reg, path=None: written.append(reg)
+    )
+    warmed = []
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            warmed.append((alias, role))
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+
+    ok = init_flow._setup_chat_model(
+        _console(), "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    )
+
+    assert ok is True
+    assert len(written) == 1
+    assert written[0].default_chat == "qwen2.5-7b-instruct-4bit"
+    assert "qwen2.5-7b-instruct-4bit" in written[0].models
+    assert warmed == [("qwen2.5-7b-instruct-4bit", "chat")]
+
+
+def test_setup_chat_model_download_failure_returns_false(monkeypatch):
+    from llm.hf import HfError
+
+    def _boom(repo, progress=None):
+        raise HfError("network down")
+
+    monkeypatch.setattr("llm.hf.download_model", _boom)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    written = []
+    monkeypatch.setattr(
+        "llm.registry.write_registry", lambda reg, path=None: written.append(reg)
+    )
+
+    ok = init_flow._setup_chat_model(
+        _console(), "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    )
+
+    assert ok is False
+    assert written == []
+
+
+def test_offer_chat_model_setup_picks_recommended(monkeypatch):
+    chosen = []
+    monkeypatch.setattr(
+        init_flow,
+        "_setup_chat_model",
+        lambda console, repo: chosen.append(repo) or True,
+    )
+    console = _console()
+    monkeypatch.setattr(console, "input", lambda *a, **k: "1")
+
+    init_flow._offer_chat_model_setup(console)
+
+    assert chosen == [init_flow.RECOMMENDED_CHAT_REPO]
+
+
+def test_offer_chat_model_setup_picks_smaller(monkeypatch):
+    chosen = []
+    monkeypatch.setattr(
+        init_flow,
+        "_setup_chat_model",
+        lambda console, repo: chosen.append(repo) or True,
+    )
+    console = _console()
+    monkeypatch.setattr(console, "input", lambda *a, **k: "2")
+
+    init_flow._offer_chat_model_setup(console)
+
+    assert chosen == [init_flow.SMALLER_CHAT_REPO]
+
+
+def test_offer_chat_model_setup_skip_does_nothing(monkeypatch):
+    chosen = []
+    monkeypatch.setattr(
+        init_flow,
+        "_setup_chat_model",
+        lambda console, repo: chosen.append(repo) or True,
+    )
+    console = _console()
+    monkeypatch.setattr(console, "input", lambda *a, **k: "3")
+
+    init_flow._offer_chat_model_setup(console)
+
+    assert chosen == []
+
+
+def test_ensure_chat_model_ready_warms_registered(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    called = []
+    monkeypatch.setattr(
+        init_flow, "_ensure_default_chat_ready", lambda console: called.append("warm")
+    )
+    monkeypatch.setattr(
+        init_flow, "_offer_chat_model_setup", lambda console: called.append("offer")
+    )
+
+    init_flow._ensure_chat_model_ready(_console())
+
+    assert called == ["warm"]
+
+
+def test_ensure_chat_model_ready_offers_when_unregistered(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: True)
+    called = []
+    monkeypatch.setattr(
+        init_flow, "_ensure_default_chat_ready", lambda console: called.append("warm")
+    )
+    monkeypatch.setattr(
+        init_flow, "_offer_chat_model_setup", lambda console: called.append("offer")
+    )
+
+    init_flow._ensure_chat_model_ready(_console())
+
+    assert called == ["offer"]
+
+
+def test_offer_first_run_noninteractive_proceeds(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: False)
+    assert init_flow.offer_first_run_setup(_fake_settings(tmp_path), _console()) is None
+
+
+def test_offer_first_run_registered_proceeds(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    assert init_flow.offer_first_run_setup(_fake_settings(tmp_path), _console()) is None
+
+
+def test_offer_first_run_decline_returns_zero(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    monkeypatch.setattr(init_flow, "_confirm", lambda *a, **k: False)
+    assert init_flow.offer_first_run_setup(_fake_settings(tmp_path), _console()) == 0
+
+
+def test_offer_first_run_accept_runs_init(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    monkeypatch.setattr(init_flow, "_confirm", lambda *a, **k: True)
+    ran = []
+    monkeypatch.setattr(
+        init_flow, "run_init", lambda settings, console: ran.append(True) or 0
+    )
+
+    result = init_flow.offer_first_run_setup(_fake_settings(tmp_path), _console())
+
+    assert result is None
+    assert ran == [True]

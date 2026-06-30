@@ -68,11 +68,6 @@ jobs:
       - name: 🚀 Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: 🔧 Install system dependencies (portaudio for pyaudio)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev python3-dev
-
       - name: 🏷️ Update pyproject.toml to released version
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}

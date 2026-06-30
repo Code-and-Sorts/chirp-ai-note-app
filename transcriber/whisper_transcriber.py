@@ -9,7 +9,9 @@ from typing import Any
 from chirp.exceptions import WhisperModelLoadError
 from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
+from transcriber.audio_loader import load_audio
 from utils.file_utils import META_FILENAME, get_file_size_mb
+from utils.hf_quiet import quiet_huggingface_output
 from utils.time_utils import derive_recording_id, parse_timestamp_from_filename
 
 logger = logging.getLogger(__name__)
@@ -37,10 +39,24 @@ def _import_mlx_whisper():
     # Imported lazily: mlx-whisper only installs on macOS arm64, so a top-level
     # import would break imports/tests on every other platform.
     import mlx_whisper
-    import mlx_whisper.audio
     import mlx_whisper.load_models
 
     return mlx_whisper
+
+
+def _release_mlx_cache() -> None:
+    # mlx-whisper parks freed Metal buffers in MLX's allocator cache; gc only
+    # drops the Python references. Without clearing the cache between recordings
+    # the CLI's resident memory climbs unbounded across a batch (the daemon does
+    # the same on model unload, see chirpd/backend.py).
+    import gc
+
+    gc.collect()
+    try:
+        import mlx.core as mx
+    except ImportError:
+        return
+    mx.clear_cache()
 
 
 class WhisperTranscriber:
@@ -49,6 +65,7 @@ class WhisperTranscriber:
         self.model = None
         self._vad_model = None
         self.model_repo = _resolve_model_repo(settings.models.whisper)
+        quiet_huggingface_output()
         self._load_model()
 
     def _load_model(self):
@@ -106,7 +123,7 @@ class WhisperTranscriber:
             hallucination_silence_threshold = 2.0
 
         try:
-            audio = mlx_whisper.audio.load_audio(str(audio_file_path))
+            audio = load_audio(audio_file_path)
             duration = len(audio) / SAMPLE_RATE
 
             # mlx-whisper has no built-in VAD. We feed silero-detected speech
@@ -243,6 +260,9 @@ class WhisperTranscriber:
                 "metadata": error_metadata,
                 "error": str(e),
             }
+
+        finally:
+            _release_mlx_cache()
 
     def _speech_clip_timestamps(self, audio) -> str | list[float]:
         """Build mlx-whisper clip_timestamps from a silero VAD pass.

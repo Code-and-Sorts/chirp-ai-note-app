@@ -1,6 +1,12 @@
 # 🎬 Chirp Demo Script for README GIFs
 
-This script provides step-by-step demos to showcase Chirp's key features for README.md video recordings.
+Step-by-step demos for recording the GIFs in `README.md`. Commands here track
+the current CLI surface (`record`, `transcribe`, `notes`, `ask`, `search`,
+`init`, `about`, plus the hidden `config`, `devices`, `index`, `daemon`,
+`models`). Run `chirp COMMAND --help` if anything looks off.
+
+Notes live under `~/Documents/chirp/<note-slug>/`, each a directory containing
+`audio.wav`, `transcript.txt`, `notes.md`, and `meta.toml`.
 
 ---
 
@@ -10,148 +16,120 @@ This script provides step-by-step demos to showcase Chirp's key features for REA
 
 ### Setup
 ```bash
-# Clear terminal
 clear
-
-# Show we're ready
-chirp status
+chirp notes        # show the current (empty) note list
 ```
 
 ### Recording
 ```bash
-# Start a short recording (30 seconds for demo)
-chirp record --duration 30 --title "Product Demo Discussion"
+# Auto-stop after 30 seconds. --timeframe takes 30s / 5m / 1h.
+# (--duration is in MINUTES, so use --timeframe for a short demo.)
+chirp record --timeframe 30s --title "Product Demo Discussion"
 
-# Show recording in progress with:
-# - Timer counting up
-# - Audio level indicators
-# - File size growing
+# On screen while recording:
+# - elapsed timer
+# - live audio level meter
+# - press Ctrl+C to stop early
 
-# Let it run for ~15 seconds, then Ctrl+C to stop early
-# Or let it complete the 30 seconds
+# Variant worth showing: live transcription as you speak
+chirp record --timeframe 30s --title "Product Demo Discussion" --live-transcribe
 ```
 
 ### Verification
 ```bash
-# Show the new recording was created
-chirp status
-
-# Optional: Show the audio file directly
-ls -lh audio-in/
+# The new note now appears in the list (still "untranscribed")
+chirp notes
 ```
 
 **Key Highlights**:
-- Clean, simple command
-- Real-time feedback (timer, audio levels)
-- Graceful interruption with Ctrl+C
+- One clean command, no flags required
+- Real-time timer and audio levels
+- Optional live transcription with `--live-transcribe`
+- Graceful Ctrl+C stop
 
 ---
 
-## 🎥 Demo 2: Full Processing Pipeline (45-60 seconds)
+## 🎥 Demo 2: Transcribe → Notes (45-60 seconds)
 
-**Goal**: Show the end-to-end workflow from audio → transcription → notes.
+**Goal**: Show the end-to-end pipeline from audio → transcript → AI notes.
 
 ### Setup
 ```bash
 clear
-chirp status
+chirp notes        # pending note(s) waiting to be transcribed
 ```
 
-### Process Everything
+### Transcribe
 ```bash
-# Run the full pipeline
-chirp process
+# Transcribe pending recordings and generate notes (and index them).
+# Optionally cap how many: `chirp transcribe 1` does just the oldest.
+chirp transcribe
 
-# This will show:
-# 1. Transcribing audio files (progress bar)
-# 2. Generating meeting notes (progress bar)
-# 3. Building search index (progress indicator)
+# On screen:
+# 1. transcription progress (mlx-whisper, on-device)
+# 2. note generation via the local chirpd model
+# 3. search index update
 ```
 
 ### View Results
 ```bash
-# Show generated notes
-ls -lh notes-out/
-
-# Display a note file (pick one with nice formatting)
-cat notes-out/2024-01-15_Product_Demo_Discussion.md
+# Browse, then open the freshly generated note read-only
+chirp notes
+chirp notes view 1
 ```
 
 **Key Highlights**:
-- One command does everything
-- Clear progress indicators
-- Beautiful output formatting
+- One command: transcript + summary + index
+- Fully on-device (mlx-whisper + chirpd)
+- `--regen` rebuilds notes from existing transcripts after switching models
 
 ---
 
-## 🎥 Demo 3: Interactive Chat Mode (60-90 seconds)
+## 🎥 Demo 3: Interactive Chat (60-90 seconds)
 
-**Goal**: Showcase the beautiful interactive chat interface - the star feature!
+**Goal**: Showcase the interactive chat interface — the star feature.
 
 ### Setup
 ```bash
 clear
-
-# Ensure index exists
-chirp notes index
 ```
 
 ### Interactive Session
 ```bash
-# Start interactive chat
-chirp notes ask
+# No question = interactive chat
+chirp ask
 
-# The welcome panel appears:
-# ╭──────────────────────────────────╮
-# │     Notes Chat                   │
-# │ Ask questions about your         │
-# │ meeting notes.                   │
-# │                                  │
-# │ Press Ctrl+C twice to exit       │
-# ╰──────────────────────────────────╯
+# A welcome panel appears; type questions at the prompt.
+# Ctrl+C handling is shown in the toolbar (press again to exit).
 ```
 
 ### Ask Questions
-```bash
-# Question 1: Show search in action
+```text
 > what were the key decisions from recent meetings?
 
-# Wait for:
-# - Spinner: "Searching meeting notes..."
-# - Spinner: "Generating answer..."
-# - Streaming response from chirp 🐣
-# - Sources displayed at bottom
-# - "cached" indicator if applicable
+# Watch for:
+# - "searching your notes..." then "thinking..." spinners
+# - streamed answer from chirp 🐣
+# - source notes listed under the answer
 
-# Question 2: Follow-up question
-> who is responsible for implementing those decisions?
+> who owns the follow-ups from those decisions?
+# Conversational follow-up reuses the retrieved context
 
-# Shows conversation flow
-
-# Question 3: Try Ctrl+C behavior
-> this is a test to show ctr<Ctrl+C>
-# Shows: "Press Ctrl+C again to exit" in toolbar
-# Buffer clears, hint disappears after 2 seconds
-
-# Exit with double Ctrl+C or type and submit
-<Ctrl+C>
-<Ctrl+C>
-# Shows: "Goodbye!"
+> press Ctrl+C once  → toolbar shows "press Ctrl+C again to exit"
+> press Ctrl+C again → "Goodbye!"
 ```
 
 **Key Highlights**:
-- Beautiful bordered interface
-- Real-time search feedback
-- Streaming AI responses
-- Source attribution
-- Smart Ctrl+C handling
-- Professional CLI experience
+- Clean bordered interface
+- Live retrieval + streaming responses
+- Source attribution under every answer
+- Smart two-step Ctrl+C exit
 
 ---
 
 ## 🎥 Demo 4: One-Shot Questions (30-45 seconds)
 
-**Goal**: Show quick question answering without entering interactive mode.
+**Goal**: Quick answers without entering interactive mode.
 
 ### Setup
 ```bash
@@ -160,116 +138,100 @@ clear
 
 ### Quick Questions
 ```bash
-# Ask a specific question
-chirp notes ask --question "what action items were assigned this week?"
+# A positional question runs once and exits
+chirp ask "what action items were assigned this week?"
 
-# Shows:
-# - Search indicator
-# - Answer streaming in
-# - Source files listed
+# Shows the retrieval step, a streamed answer, and source notes
 ```
 
 ### Advanced Queries
 ```bash
-# Time-filtered search
-chirp notes ask -q "budget discussions" --when "last week"
+# Time-range filter
+chirp ask -q "budget discussions" --when "last week"
 
-# Dry run to see search results
-chirp notes ask -q "project timeline" --dry-run
+# Inspect the prompt/retrieval without calling the model
+chirp ask -q "project timeline" --dry-run
+
+# Machine-readable output (one-shot only)
+chirp ask -q "open risks" --json
 ```
 
 **Key Highlights**:
-- Fast answers without interactive mode
-- Time range filtering
-- Dry-run debugging option
+- Instant answers, no interactive mode
+- Time-range filtering with `--when`
+- `--dry-run` to debug retrieval; `--json` for scripting
 
 ---
 
-## 🎥 Demo 5: Status & Diagnostics (30-45 seconds)
+## 🎥 Demo 5: Search & Browse (30-45 seconds)
 
-**Goal**: Show system status and health checks.
+**Goal**: Show fast keyword search and note browsing.
 
-### Setup
+### Keyword Search
 ```bash
 clear
+
+# Lexical (BM25) search across transcripts and notes — no model needed
+chirp search "timeline" --since 14d
+
+# Regex search
+chirp search "owner: .*" --regex
 ```
 
-### Status Check
+### Browse Notes
 ```bash
-# Comprehensive status
-chirp status
+# Filter the note list by tag
+chirp notes --tag roadmap,planning
 
-# Shows:
-# - Audio files count
-# - Transcriptions count
-# - Notes count
-# - Index status
-# - Total duration
+# Open one
+chirp notes view 1
 ```
 
-### Device Information
+**Key Highlights**:
+- Keyword search works out of the box (no embedding model)
+- `--since` time filtering and `--regex` power search
+- Tag-filtered browsing; `view` / `edit` / `delete` subcommands
+
+---
+
+## 🎥 Demo 6: Setup, Config & Diagnostics (30-45 seconds)
+
+**Goal**: Show first-run setup, configuration, and health checks.
+
+### Verify the environment
 ```bash
-# Show audio devices
+clear
+
+# Re-run only the verify phase of init (Apple Silicon, daemon, model, perms)
+chirp init --recheck
+
+# Daemon health: PID, uptime, version, loaded models
+chirp daemon status
+
+# Registered models and which is the default
+chirp models list
+
+# Audio input devices
 chirp devices
-
-# Lists:
-# - Available input devices
-# - Recommended device
 ```
 
-### Health Check
+### Configuration
 ```bash
-# Run full diagnostic
-chirp test
+# Show current configuration
+chirp config --list
 
-# Tests:
-# ✓ chirpd daemon readiness
-# ✓ Registered default chat model
-# ✓ Embedding model (nomic-embed-text)
-# ✓ Notes index
+# Point the notes root somewhere else
+chirp config --notes-root ~/chirp-demo
+
+# Opt into semantic (vector) search — registers an embed model and
+# rebuilds the index so `chirp ask` blends keyword + meaning
+chirp config --semantic
 ```
 
 **Key Highlights**:
-- Clear system overview
-- Easy diagnostics
-- Helpful status messages
-
----
-
-## 🎥 Demo 6: Configuration Management (20-30 seconds)
-
-**Goal**: Show how easy it is to configure Chirp.
-
-### Setup
-```bash
-clear
-```
-
-### View Config
-```bash
-# List current configuration
-chirp config --list
-
-# Shows table with:
-# - All settings
-# - Current values
-# - Organized by category
-```
-
-### Update Settings
-```bash
-# Update directories
-chirp config --audio-dir ./my-recordings
-chirp config --notes-dir ./my-notes
-
-# Verify changes
-chirp config --list
-```
-
-**Key Highlights**:
-- Simple configuration
-- Beautiful table display
-- Easy to customize
+- `chirp init --recheck` as a one-shot health check
+- Clear daemon/model/device diagnostics
+- Lexical by default; semantic search is one opt-in command away
 
 ---
 
@@ -298,6 +260,9 @@ gifski -o demo.gif frame*.png --fps 15
 rm frame*.png
 ```
 
+> Note: `ffmpeg` here is just a local tool for making demo GIFs — Chirp itself
+> has no ffmpeg dependency.
+
 ### Optimize GIFs
 ```bash
 # Use gifsicle to optimize
@@ -312,16 +277,16 @@ ls -lh demo-optimized.gif
 ## 🎯 Feature Priority for GIFs
 
 ### Must-Have (Top Priority)
-1. **Interactive Chat Mode** - The star feature! Show streaming, sources, Ctrl+C behavior
-2. **Full Pipeline** - One command to rule them all (`chirp process`)
-3. **Recording** - Show simplicity of starting/stopping
+1. **Interactive Chat** — the star feature; streaming, sources, Ctrl+C handling
+2. **Transcribe → Notes** — one command: `chirp transcribe`
+3. **Recording** — show how simple start/stop is
 
 ### Nice-to-Have
-4. **One-Shot Questions** - Quick queries without interactive mode
-5. **Status & Diagnostics** - System health at a glance
+4. **One-Shot Questions** — quick queries without interactive mode
+5. **Search & Browse** — keyword search and note list
 
 ### Optional
-6. **Configuration** - If you have extra space/time
+6. **Setup, Config & Diagnostics** — if you have extra time
 
 ---
 
@@ -330,17 +295,17 @@ ls -lh demo-optimized.gif
 ### Demo 1: Recording
 > "Start recording in seconds with real-time feedback"
 
-### Demo 2: Processing
-> "One command processes everything: transcribe → notes → search index"
+### Demo 2: Transcribe → Notes
+> "One command turns audio into a transcript, AI notes, and a search index"
 
 ### Demo 3: Interactive Chat
-> "Beautiful interactive chat with streaming AI responses and source attribution"
+> "Interactive chat with streaming answers and source attribution"
 
 ### Demo 4: Quick Questions
 > "Get instant answers with time-filtered search"
 
-### Demo 5: Status
-> "Monitor your meeting library and system health"
+### Demo 5: Search & Browse
+> "Fast keyword search across every meeting — no model required"
 
 ---
 
@@ -352,8 +317,8 @@ ls -lh demo-optimized.gif
 ### 🎙️ Record Meetings
 ![Recording Demo](docs/gifs/demo-recording.gif)
 
-### ⚡ Process Everything
-![Processing Demo](docs/gifs/demo-process.gif)
+### ⚡ Transcribe → Notes
+![Transcribe Demo](docs/gifs/demo-transcribe.gif)
 
 ### 💬 Interactive Chat (Our Favorite!)
 ![Chat Demo](docs/gifs/demo-chat.gif)
@@ -368,11 +333,12 @@ ls -lh demo-optimized.gif
 
 Before recording:
 
-- [ ] Clear all previous recordings/transcriptions for clean demo
+- [ ] Point the notes root at a throwaway dir so demos never touch real notes
+      (`chirp config --notes-root ~/chirp-demo`)
 - [ ] Ensure the daemon is healthy (`chirp daemon status`)
-- [ ] Verify a model is registered (`chirp models list`)
-- [ ] Test audio recording works (`chirp devices`)
-- [ ] Build search index (`chirp notes index`)
+- [ ] Verify a chat model is registered (`chirp models list`)
+- [ ] Test audio input is detected (`chirp devices`)
+- [ ] Build the search index if needed (`chirp index`)
 - [ ] Increase terminal font size
 - [ ] Set terminal dimensions (100x30)
 - [ ] Clear command history
@@ -383,25 +349,27 @@ Before recording:
 
 ## 🚀 Quick Reset Script
 
-Use this between takes to reset the demo environment:
+Reset a **demo** notes root between takes. Set it first so this never deletes
+real notes:
+
+```bash
+chirp config --notes-root ~/chirp-demo
+```
 
 ```bash
 #!/bin/bash
-# reset-demo.sh
+# reset-demo.sh — only ever run against a throwaway demo notes root.
+set -euo pipefail
 
-# Clear terminal
+DEMO_ROOT="${HOME}/chirp-demo"
+
 clear
+rm -rf "${DEMO_ROOT:?}/"*   # the :? guard refuses to run on an empty path
 
-# Remove all demo files (CAUTION: backup first!)
-rm -rf audio-in/*
-rm -rf transcriptions/*
-rm -rf notes-out/*
-rm -rf search-index/*
-
-# Verify clean state
-chirp status
-
-echo "✅ Demo environment reset"
+chirp notes                 # verify the clean state
+echo "✅ Demo environment reset (${DEMO_ROOT})"
 ```
 
-**⚠️ WARNING**: Only run this in a demo/test environment, not on production data!
+> **⚠️ WARNING**: Chirp's default notes root is `~/Documents/chirp`. Never point
+> this script there — keep demos on a separate `--notes-root` so a reset can't
+> touch real recordings.
