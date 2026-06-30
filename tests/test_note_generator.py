@@ -226,6 +226,32 @@ class TestNoteGenerator:
         assert result["skipped"] is True
         assert "Insufficient" in result["error"]
 
+    def test_generate_for_records_surfaces_real_llm_error(
+        self, mock_settings, tmp_path, fake_llm_client, raise_llm_error
+    ):
+        from llm.exceptions import LLMModelError
+
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            client = fake_llm_client(
+                chat_stream_sync=raise_llm_error(LLMModelError, "model fell over")
+            )
+            generator = NoteGenerator(mock_settings, llm_client=client)
+            record = _seed_record(
+                tmp_path,
+                title="Sync",
+                transcript=(
+                    "a transcript comfortably longer than the fifty character floor"
+                ),
+            )
+
+            result = generator.generate_for_records([record], force=True)
+
+        assert result["success"] is False
+        assert "model fell over" in result["error"]
+
     def test_resolve_duration_reads_duration_s_from_meta(self, mock_settings, tmp_path):
         with (
             patch("notes.note_generator.TemplateEngine"),

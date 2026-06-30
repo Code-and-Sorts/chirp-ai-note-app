@@ -2,7 +2,8 @@
 
 `_call_llm` routes note generation through `llm.client` instead of the legacy
 HTTP API. These tests assert the call shape, the streamed-token aggregation,
-and that LLM errors propagate into the existing best-effort `return None` path.
+and that LLM errors propagate to the caller so the real failure is surfaced
+rather than masked as a generic "could not generate notes".
 The client stand-ins are the shared fixtures from `tests/conftest.py` (story
 6.5), injected through `NoteGenerator(..., llm_client=)`.
 """
@@ -82,7 +83,7 @@ def test_call_llm_reprints_progress_every_twenty_tokens(
     assert result == "x" * 45  # all 45 tokens aggregated, none dropped
 
 
-def test_generate_structured_notes_returns_none_on_llm_error(
+def test_generate_structured_notes_propagates_llm_error(
     mock_settings, fake_llm_client, raise_llm_error
 ):
     client = fake_llm_client(
@@ -90,20 +91,19 @@ def test_generate_structured_notes_returns_none_on_llm_error(
     )
     generator = _make_generator(mock_settings, client)
 
-    result = generator._generate_structured_notes(
-        "a transcript that is comfortably longer than the fifty character floor",
-        "Some Title",
-    )
-
-    assert result is None
+    with pytest.raises(LLMModelError, match="model fell over"):
+        generator._generate_structured_notes(
+            "a transcript that is comfortably longer than the fifty character floor",
+            "Some Title",
+        )
     assert len(client.chat_stream_sync.calls) == 1
 
 
-def test_generate_structured_notes_returns_none_on_midstream_error(
+def test_generate_structured_notes_propagates_midstream_error(
     mock_settings, fake_llm_client, fake_chat_tokens
 ):
     # Daemon drops the connection after some tokens have already streamed; the
-    # partial result is discarded and the record yields no note.
+    # error propagates so the caller can report the real cause.
     client = fake_llm_client(
         chat_stream_sync=fake_chat_tokens(
             ["partial ", "content "], error=LLMConnectionLost("daemon went away")
@@ -111,9 +111,8 @@ def test_generate_structured_notes_returns_none_on_midstream_error(
     )
     generator = _make_generator(mock_settings, client)
 
-    result = generator._generate_structured_notes(
-        "a transcript that is comfortably longer than the fifty character floor",
-        "Some Title",
-    )
-
-    assert result is None
+    with pytest.raises(LLMConnectionLost, match="daemon went away"):
+        generator._generate_structured_notes(
+            "a transcript that is comfortably longer than the fifty character floor",
+            "Some Title",
+        )

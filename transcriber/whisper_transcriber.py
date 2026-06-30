@@ -10,6 +10,7 @@ from chirp.exceptions import WhisperModelLoadError
 from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
 from utils.file_utils import META_FILENAME, get_file_size_mb
+from utils.hf_quiet import quiet_huggingface_output
 from utils.time_utils import derive_recording_id, parse_timestamp_from_filename
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class WhisperTranscriber:
         self.model = None
         self._vad_model = None
         self.model_repo = _resolve_model_repo(settings.models.whisper)
+        quiet_huggingface_output()
         self._load_model()
 
     def _load_model(self):
