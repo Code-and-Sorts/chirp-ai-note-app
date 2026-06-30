@@ -680,6 +680,200 @@ def _print_migration_plan(console: Console, detection: dict[str, bool]) -> None:
     console.print(rule)
 
 
+def _ensure_default_chat_ready(console: Console) -> None:
+    """Download + warm the registered default chat model so the first transcribe
+    is instant. No-op when no default chat model is registered (the verify table
+    already points those users at `chirp models add`). Best-effort: a download or
+    warm failure is surfaced and init continues — the model would otherwise
+    download lazily on first use anyway."""
+    from llm import hf
+    from llm.cli._progress import RichProgressCallback
+    from llm.client import LLMClient
+    from llm.exceptions import LLMError
+    from llm.registry import read_registry
+
+    try:
+        registry = read_registry()
+    except LLMError:
+        return
+    alias = registry.default_chat
+    if not alias or alias not in registry.models:
+        return
+    entry = registry.models[alias]
+
+    console.print()
+    console.print(f" [dim]preparing chat model {alias} (one-time download)...[/dim]")
+    callback = RichProgressCallback(entry.hf_repo, console=console)
+    try:
+        hf.download_model(entry.hf_repo, progress=callback)
+    except KeyboardInterrupt:
+        console.print(
+            " [yellow]![/yellow] skipped — the model will download on first use."
+        )
+        return
+    except hf.HfError as exc:
+        console.print(
+            f" [yellow]![/yellow] could not pre-download {entry.hf_repo}: {exc}"
+        )
+        console.print("   it will download on first use instead.")
+        return
+    finally:
+        callback.close()
+
+    try:
+        LLMClient().model_load_sync(alias, entry.role)
+    except LLMError as exc:
+        console.print(f" [yellow]![/yellow] model downloaded but warm failed: {exc}")
+        console.print("   run [bold]chirp daemon logs[/bold] if it persists.")
+        return
+    console.print(f" [green]{glyphs.SUCCESS}[/green] chat model ready · {alias}")
+
+
+def _is_interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _setup_chat_model(console: Console, hf_repo: str) -> bool:
+    """Register, download, and warm ``hf_repo`` as the default chat model.
+
+    A graceful counterpart to ``chirp models add``'s flow (which hard-exits on
+    failure): returns False on a download/registry failure so init can continue
+    and the user can retry with ``chirp models add``.
+    """
+    from llm import hf
+    from llm.cli._progress import RichProgressCallback
+    from llm.client import LLMClient
+    from llm.exceptions import LLMError
+    from llm.registry import (
+        RegistryEntry,
+        alias_for_repo,
+        read_registry,
+        set_default_for_role,
+        upsert_model,
+        write_registry,
+    )
+
+    try:
+        alias = alias_for_repo(hf_repo)
+    except ValueError as exc:
+        console.print(f" [yellow]![/yellow] invalid model repo {hf_repo}: {exc}")
+        return False
+
+    callback = RichProgressCallback(hf_repo, console=console)
+    try:
+        hf.download_model(hf_repo, progress=callback)
+    except KeyboardInterrupt:
+        console.print(" [yellow]![/yellow] skipped.")
+        return False
+    except hf.HfError as exc:
+        console.print(f" [yellow]![/yellow] download failed: {exc}")
+        console.print(f"   run [bold]chirp models add {hf_repo}[/bold] to retry.")
+        return False
+    finally:
+        callback.close()
+
+    try:
+        registry = read_registry()
+        registry = upsert_model(
+            registry, alias, RegistryEntry(hf_repo=hf_repo, role="chat")
+        )
+        registry = set_default_for_role(registry, alias)
+        write_registry(registry)
+    except (LLMError, OSError, ValueError) as exc:
+        console.print(f" [yellow]![/yellow] could not register {alias}: {exc}")
+        return False
+
+    try:
+        LLMClient().model_load_sync(alias, "chat")
+    except LLMError as exc:
+        console.print(f" [yellow]![/yellow] registered but warm failed: {exc}")
+        console.print("   run [bold]chirp daemon logs[/bold] if it persists.")
+        return True
+
+    console.print(f" [green]{glyphs.SUCCESS}[/green] chat model ready · {alias}")
+    return True
+
+
+_CHAT_MODEL_CHOICES = {"1": RECOMMENDED_CHAT_REPO, "2": SMALLER_CHAT_REPO}
+
+
+def _offer_chat_model_setup(console: Console) -> None:
+    """Prompt to register a default chat model when none exists (TTY only)."""
+    console.print()
+    console.print(" [bold]Set up a chat model?[/bold] Notes and `ask` need one.")
+    console.print(
+        f"   [cyan]1[/cyan]. {RECOMMENDED_CHAT_REPO}  "
+        "[dim](recommended · ~4.3 GB)[/dim]"
+    )
+    console.print(
+        f"   [cyan]2[/cyan]. {SMALLER_CHAT_REPO}  [dim](smaller · ~2 GB)[/dim]"
+    )
+    console.print("   [cyan]3[/cyan]. skip  [dim](set up later)[/dim]")
+    try:
+        choice = console.input(" [bold]choose[/bold] [dim][1/2/3][/dim] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return
+    hf_repo = _CHAT_MODEL_CHOICES.get(choice or "1")
+    if hf_repo is None:
+        console.print(
+            f" [dim]skipped — run [bold]chirp models add {RECOMMENDED_CHAT_REPO}"
+            "[/bold] when ready.[/dim]"
+        )
+        return
+    console.print(f" [dim]setting up {hf_repo}...[/dim]")
+    _setup_chat_model(console, hf_repo)
+
+
+def _ensure_chat_model_ready(console: Console) -> None:
+    """Make a chat model ready during init: download + warm an already-registered
+    default, or offer to register one (TTY only) when none is configured."""
+    from llm.exceptions import LLMError
+    from llm.registry import read_registry
+
+    try:
+        registry = read_registry()
+    except LLMError:
+        return
+    alias = registry.default_chat
+    if alias and alias in registry.models:
+        _ensure_default_chat_ready(console)
+    elif _is_interactive():
+        _offer_chat_model_setup(console)
+
+
+def offer_first_run_setup(settings: ChirpSettings, console: Console) -> int | None:
+    """First-run gate for commands that need a chat model.
+
+    Returns an exit code to stop on, or None to proceed. No-ops (returns None)
+    on a non-interactive stream or when a default chat model is registered.
+    Otherwise prompts to run guided setup; on accept runs init and proceeds when
+    it succeeds, on decline points at ``chirp init``.
+    """
+    if not _is_interactive():
+        return None
+    from llm.exceptions import LLMError
+    from llm.registry import read_registry
+
+    try:
+        registry = read_registry()
+    except LLMError:
+        return None
+    if registry.default_chat and registry.default_chat in registry.models:
+        return None
+
+    console.print()
+    console.print(" [bold]Welcome to Chirp![/bold] Looks like this is your first run.")
+    if not _confirm(console, "Run guided setup now?", default=True):
+        console.print(" [dim]run [bold]chirp init[/bold] when you're ready.[/dim]")
+        return 0
+    code = run_init(settings, console)
+    if code != 0:
+        return code
+    console.print()
+    return None
+
+
 def run_init(
     settings: ChirpSettings,
     console: Console,
@@ -716,5 +910,6 @@ def run_init(
             " [dim]phase 2 · everything's already installed — skipping.[/dim]"
         )
 
+    _ensure_chat_model_ready(console)
     _finalize_paths(settings, console)
     return 0

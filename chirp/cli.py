@@ -669,9 +669,14 @@ def transcribe(
     ),
 ):
     """Turn audio into text + summary"""
+    from chirp.init_flow import offer_first_run_setup
     from transcriber.batch_processor import BatchProcessor
 
     settings = get_settings()
+
+    first_run = offer_first_run_setup(settings, console)
+    if first_run is not None:
+        raise typer.Exit(first_run)
 
     if regen:
         if n is not None:
@@ -1194,7 +1199,12 @@ def ask(
     ),
 ):
     """Chat with your notes"""
+    from chirp.init_flow import offer_first_run_setup
     from notes_chat.cli import ask
+
+    first_run = offer_first_run_setup(get_settings(), console)
+    if first_run is not None:
+        raise typer.Exit(first_run)
 
     if question is not None and question_option is not None:
         console.print(

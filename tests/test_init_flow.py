@@ -56,6 +56,7 @@ def _stub_verify_deps(monkeypatch, registry=None, arm64=True):
     )
     monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
     _stub_healthy_daemon(monkeypatch)
+    monkeypatch.setattr(init_flow, "_ensure_chat_model_ready", lambda console: None)
     monkeypatch.setattr(
         "llm.registry.read_registry",
         lambda path=None: (
@@ -1201,3 +1202,270 @@ def test_cli_init_gates_before_loading_settings(monkeypatch):
 
     assert result.exit_code == 7
     assert settings_loads == []  # config.toml must not be created pre-gate
+
+
+class _FakeProgressCallback:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_ensure_chat_ready_downloads_and_warms(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    downloaded: list[str] = []
+    monkeypatch.setattr(
+        "llm.hf.download_model",
+        lambda repo, progress=None: downloaded.append(repo),
+    )
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    warmed: list[tuple[str, str]] = []
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            warmed.append((alias, role))
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+
+    init_flow._ensure_default_chat_ready(_console())
+
+    assert downloaded == ["mlx-community/qwen"]
+    assert warmed == [("qwen", "chat")]
+
+
+def test_ensure_chat_ready_noop_when_unregistered(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    downloaded: list[str] = []
+    monkeypatch.setattr(
+        "llm.hf.download_model",
+        lambda repo, progress=None: downloaded.append(repo),
+    )
+
+    init_flow._ensure_default_chat_ready(_console())
+
+    assert downloaded == []
+
+
+def test_ensure_chat_ready_download_failure_skips_warm(monkeypatch):
+    from llm.hf import HfError
+
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+
+    def _boom(repo, progress=None):
+        raise HfError("network down")
+
+    monkeypatch.setattr("llm.hf.download_model", _boom)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    warmed: list[tuple[str, str]] = []
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            warmed.append((alias, role))
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+    console = _console()
+
+    init_flow._ensure_default_chat_ready(console)
+
+    assert warmed == []
+    assert "download on first use" in console.file.getvalue()
+
+
+def test_ensure_chat_ready_warm_failure_is_graceful(monkeypatch):
+    from llm.exceptions import LLMModelError
+
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    monkeypatch.setattr("llm.hf.download_model", lambda repo, progress=None: None)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            raise LLMModelError("warm failed")
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+    console = _console()
+
+    init_flow._ensure_default_chat_ready(console)
+
+    assert "warm failed" in console.file.getvalue()
+
+
+# --- chat-model setup / picker / first-run gate -----------------------------
+
+
+def test_setup_chat_model_registers_downloads_warms(monkeypatch):
+    monkeypatch.setattr("llm.hf.download_model", lambda repo, progress=None: None)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    written = []
+    monkeypatch.setattr(
+        "llm.registry.write_registry", lambda reg, path=None: written.append(reg)
+    )
+    warmed = []
+
+    class _Client:
+        def model_load_sync(self, alias, role):
+            warmed.append((alias, role))
+
+    monkeypatch.setattr("llm.client.LLMClient", _Client)
+
+    ok = init_flow._setup_chat_model(
+        _console(), "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    )
+
+    assert ok is True
+    assert len(written) == 1
+    assert written[0].default_chat == "qwen2.5-7b-instruct-4bit"
+    assert "qwen2.5-7b-instruct-4bit" in written[0].models
+    assert warmed == [("qwen2.5-7b-instruct-4bit", "chat")]
+
+
+def test_setup_chat_model_download_failure_returns_false(monkeypatch):
+    from llm.hf import HfError
+
+    def _boom(repo, progress=None):
+        raise HfError("network down")
+
+    monkeypatch.setattr("llm.hf.download_model", _boom)
+    monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
+    written = []
+    monkeypatch.setattr(
+        "llm.registry.write_registry", lambda reg, path=None: written.append(reg)
+    )
+
+    ok = init_flow._setup_chat_model(
+        _console(), "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    )
+
+    assert ok is False
+    assert written == []
+
+
+def test_offer_chat_model_setup_picks_recommended(monkeypatch):
+    chosen = []
+    monkeypatch.setattr(
+        init_flow,
+        "_setup_chat_model",
+        lambda console, repo: chosen.append(repo) or True,
+    )
+    console = _console()
+    monkeypatch.setattr(console, "input", lambda *a, **k: "1")
+
+    init_flow._offer_chat_model_setup(console)
+
+    assert chosen == [init_flow.RECOMMENDED_CHAT_REPO]
+
+
+def test_offer_chat_model_setup_picks_smaller(monkeypatch):
+    chosen = []
+    monkeypatch.setattr(
+        init_flow,
+        "_setup_chat_model",
+        lambda console, repo: chosen.append(repo) or True,
+    )
+    console = _console()
+    monkeypatch.setattr(console, "input", lambda *a, **k: "2")
+
+    init_flow._offer_chat_model_setup(console)
+
+    assert chosen == [init_flow.SMALLER_CHAT_REPO]
+
+
+def test_offer_chat_model_setup_skip_does_nothing(monkeypatch):
+    chosen = []
+    monkeypatch.setattr(
+        init_flow,
+        "_setup_chat_model",
+        lambda console, repo: chosen.append(repo) or True,
+    )
+    console = _console()
+    monkeypatch.setattr(console, "input", lambda *a, **k: "3")
+
+    init_flow._offer_chat_model_setup(console)
+
+    assert chosen == []
+
+
+def test_ensure_chat_model_ready_warms_registered(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    called = []
+    monkeypatch.setattr(
+        init_flow, "_ensure_default_chat_ready", lambda console: called.append("warm")
+    )
+    monkeypatch.setattr(
+        init_flow, "_offer_chat_model_setup", lambda console: called.append("offer")
+    )
+
+    init_flow._ensure_chat_model_ready(_console())
+
+    assert called == ["warm"]
+
+
+def test_ensure_chat_model_ready_offers_when_unregistered(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: True)
+    called = []
+    monkeypatch.setattr(
+        init_flow, "_ensure_default_chat_ready", lambda console: called.append("warm")
+    )
+    monkeypatch.setattr(
+        init_flow, "_offer_chat_model_setup", lambda console: called.append("offer")
+    )
+
+    init_flow._ensure_chat_model_ready(_console())
+
+    assert called == ["offer"]
+
+
+def test_offer_first_run_noninteractive_proceeds(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: False)
+    assert init_flow.offer_first_run_setup(_fake_settings(tmp_path), _console()) is None
+
+
+def test_offer_first_run_registered_proceeds(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
+    )
+    assert init_flow.offer_first_run_setup(_fake_settings(tmp_path), _console()) is None
+
+
+def test_offer_first_run_decline_returns_zero(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    monkeypatch.setattr(init_flow, "_confirm", lambda *a, **k: False)
+    assert init_flow.offer_first_run_setup(_fake_settings(tmp_path), _console()) == 0
+
+
+def test_offer_first_run_accept_runs_init(monkeypatch, tmp_path):
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    monkeypatch.setattr(init_flow, "_confirm", lambda *a, **k: True)
+    ran = []
+    monkeypatch.setattr(
+        init_flow, "run_init", lambda settings, console: ran.append(True) or 0
+    )
+
+    result = init_flow.offer_first_run_setup(_fake_settings(tmp_path), _console())
+
+    assert result is None
+    assert ran == [True]
