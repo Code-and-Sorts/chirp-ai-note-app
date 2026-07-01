@@ -612,15 +612,16 @@ Return ONLY the XML document, no additional text before or after."""
         if not parts:
             return ""
         combined = "\n".join(parts)[:target]
-        return self._call_llm(self._summary_prompt(combined)).strip()
+        summary = self._call_llm(self._summary_prompt(combined)).strip()
+        return summary or " ".join(parts)
 
-    def _summary_prompt(self, section_summaries: str) -> str:
+    def _summary_prompt(self, section_notes: str) -> str:
         return (
-            "Below are executive summaries from consecutive parts of ONE meeting. "
-            "Write a single cohesive executive summary of the entire meeting in "
-            "three to five sentences. Return only the summary text — no XML, no "
-            "headers, no preamble.\n\n"
-            f"Section summaries:\n{section_summaries}"
+            "Below are notes from consecutive parts of ONE meeting. Write a single "
+            "cohesive executive summary of the entire meeting in three to five "
+            "sentences. Return only the summary text — no XML, no headers, no "
+            "preamble.\n\n"
+            f"Notes:\n{section_notes}"
         )
 
     def _merge_notes(self, notes: list[dict[str, Any]]) -> dict[str, Any]:

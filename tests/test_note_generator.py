@@ -634,6 +634,24 @@ class TestNoteGenerator:
         call.assert_called_once()
         assert result["executive_summary"] == "synth"
 
+    def test_reduce_summary_never_empty_when_content_exists(self, mock_settings):
+        """No chunk summaries + empty LLM reply still yields a summary from the
+        extracted content — never 'No summary available'."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        notes = [
+            {"decisions": ["Adopt plan X"]},
+            {"action_items": ["Ship it — Owner: Sam"]},
+        ]
+        with patch.object(generator, "_call_llm", return_value="  "):
+            result = generator._reduce_chunk_notes(notes, 95000)
+
+        assert result["executive_summary"] != "No summary available"
+        assert result["executive_summary"].strip()
+
     def test_merge_notes_unions_and_dedups(self, mock_settings):
         with (
             patch("notes.note_generator.TemplateEngine"),
