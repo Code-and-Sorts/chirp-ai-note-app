@@ -16,6 +16,7 @@ def mock_settings():
     models.llm = "llama3.1:8b"
     models.whisper = "large-v3-turbo"
     models.num_predict = 4096
+    models.context_window = 32768
     settings.models = models
     settings.notes_chat = Mock()
     settings.notes_chat.auto_index = False
@@ -138,6 +139,65 @@ class TestNoteGenerator:
             assert result["decisions"] == []
             assert result["open_questions"] == []
             assert len(result["discussion_highlights"]) == 1
+
+    def test_parse_recovers_from_unescaped_special_chars(self, mock_settings):
+        """Unescaped `&`/`<` break ET, but the known tags are still recovered."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+
+            xml_response = (
+                "<MEETING_NOTES>"
+                "<MEETING_TITLE>Q&A / R&D sync</MEETING_TITLE>"
+                "<EXECUTIVE_SUMMARY>Revenue < target; P&L reviewed</EXECUTIVE_SUMMARY>"
+                "<AGENDA><ITEM>Discuss P&L</ITEM></AGENDA>"
+                '<ACTION_ITEMS><ITEM task="Fix Q&A doc" owner="Jo" deadline="Fri"/>'
+                "</ACTION_ITEMS>"
+                "</MEETING_NOTES>"
+            )
+            import xml.etree.ElementTree as ET
+
+            with pytest.raises(ET.ParseError):
+                ET.fromstring(xml_response)
+
+            result = generator._parse_xml_response(xml_response)
+
+        assert result is not None
+        assert result["meeting_title"] == "Q&A / R&D sync"
+        assert result["executive_summary"] == "Revenue < target; P&L reviewed"
+        assert result["agenda"] == ["Discuss P&L"]
+        assert result["action_items"] == ["Fix Q&A doc — Owner: Jo — Deadline: Fri"]
+
+    def test_parse_recovers_truncated_output(self, mock_settings):
+        """Output cut off at the token cap still yields the completed tags."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            truncated = (
+                "<MEETING_NOTES><MEETING_TITLE>Planning</MEETING_TITLE>"
+                "<EXECUTIVE_SUMMARY>We discussed the road"
+            )
+
+            result = generator._parse_xml_response(truncated)
+
+        assert result is not None
+        assert result["meeting_title"] == "Planning"
+
+    def test_parse_returns_none_when_nothing_recoverable(self, mock_settings):
+        """A marker with no usable tags still degrades — no empty shell note."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+
+            result = generator._parse_xml_response("<MEETING_NOTES>&&& < > junk")
+
+        assert result is None
 
     def test_generate_for_record_writes_notes_and_updates_meta(
         self, mock_settings, tmp_path
@@ -366,17 +426,75 @@ class TestNoteGenerator:
         assert not (record.dir / "notes.md").exists()
         mock_index.assert_not_called()
 
-    def test_long_transcript_is_windowed_with_warning(self, mock_settings):
-        """A transcript past the cap is windowed (not silently truncated) (AC-11)."""
-        from notes.note_generator import MAX_TRANSCRIPT_CHARS
+    def test_transcript_char_budget_scales_with_context_window(self, mock_settings):
+        """The transcript budget tracks context_window (not a fixed constant)."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
 
+            mock_settings.models.context_window = 32768
+            big = generator._transcript_char_budget("")
+            mock_settings.models.context_window = 8192
+            small = generator._transcript_char_budget("")
+
+        assert big > small
+        assert big > 24000
+
+    def test_transcript_char_budget_floors_when_no_input_room(self, mock_settings):
+        """num_predict >= context leaves no input room — fall back to the floor,
+        not an inflated budget that would overflow the window."""
+        from notes.note_generator import _MIN_TRANSCRIPT_BUDGET_CHARS
+
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            mock_settings.models.context_window = 4096
+            mock_settings.models.num_predict = 4096
+
+            assert generator._transcript_char_budget("") == _MIN_TRANSCRIPT_BUDGET_CHARS
+
+    def test_whole_transcript_used_single_shot_when_it_fits(self, mock_settings):
+        """A transcript within budget is sent verbatim — no truncation, no warning."""
         with (
             patch("notes.note_generator.TemplateEngine"),
             patch("notes.note_generator.PopupManager"),
         ):
             console = Mock()
             generator = NoteGenerator(mock_settings, console=console)
-            long_transcript = "word " * (MAX_TRANSCRIPT_CHARS)  # well over the cap
+            transcript = "We discussed the quarterly roadmap. " * 500
+
+            with (
+                patch.object(generator, "_call_llm", return_value="") as mock_llm,
+                patch.object(
+                    generator,
+                    "_parse_xml_response",
+                    return_value={"meeting_title": "T"},
+                ),
+            ):
+                generator._generate_structured_notes(transcript)
+
+            sent_prompt = mock_llm.call_args.args[0]
+
+        assert transcript in sent_prompt
+        assert not any(
+            "summarizing the first" in str(call.args[0]).lower()
+            for call in console.print.call_args_list
+        )
+
+    def test_long_transcript_is_windowed_with_warning(self, mock_settings):
+        """A transcript past the (dynamic) budget is windowed, not silently cut."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            console = Mock()
+            generator = NoteGenerator(mock_settings, console=console)
+            budget = generator._transcript_char_budget("")
+            long_transcript = "word " * ((budget // 5) + 1000)
 
             with (
                 patch.object(generator, "_call_llm", return_value=None) as mock_llm,
@@ -390,9 +508,10 @@ class TestNoteGenerator:
 
             sent_prompt = mock_llm.call_args.args[0]
 
+        assert len(long_transcript) > budget
         assert len(sent_prompt) < len(long_transcript)
         warned = any(
-            "truncating" in str(call.args[0]).lower()
+            "summarizing the first" in str(call.args[0]).lower()
             for call in console.print.call_args_list
         )
         assert warned

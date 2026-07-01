@@ -28,6 +28,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -104,6 +105,7 @@ def _daemon_ready() -> DependencyStatus:
     """
     from llm.client import LLMClient
     from llm.exceptions import LLMDaemonSpawnFailed, LLMTransportError
+    from llm.protocol import package_version
 
     try:
         payload = LLMClient().health_sync()
@@ -116,7 +118,62 @@ def _daemon_ready() -> DependencyStatus:
     except LLMTransportError as exc:
         return DependencyStatus("chirpd", False, f"daemon unreachable: {exc}")
     version = payload.get("version", "unknown")
+    installed = package_version()
+    if version not in ("unknown", installed):
+        return DependencyStatus(
+            "chirpd",
+            True,
+            f"healthy · v{version} — running old version, "
+            f"restart to update to v{installed}",
+        )
     return DependencyStatus("chirpd", True, f"healthy · v{version}")
+
+
+def _restart_daemon_if_stale(console: Console) -> None:
+    """Restart a daemon left running stale code after a chirp upgrade.
+
+    A warm daemon survives cosmetic version bumps (the hello handshake only
+    respawns on PROTOCOL_VERSION), so init heals the skew; status/verify warn.
+    """
+    from llm.client import LLMClient, resolve_socket_path
+    from llm.exceptions import LLMError
+    from llm.protocol import package_version
+
+    installed = package_version()
+    try:
+        running = LLMClient().health_sync().get("version")
+    except LLMError:
+        return
+    if not running or running == installed:
+        return
+
+    console.print()
+    console.print(
+        f" [yellow]![/yellow] daemon is running v{running}, but v{installed} is "
+        "installed — restarting to load the new version..."
+    )
+    from llm.cli.daemon import _RESTART_SETTLE_S, _attempt_start, _attempt_stop
+
+    socket_path = resolve_socket_path()
+    stop_result = _attempt_stop(socket_path)
+    if not stop_result["ok"]:
+        console.print(
+            " [red]✗[/red] couldn't stop the old daemon — run "
+            "[bold]chirp daemon restart[/bold] to finish updating."
+        )
+        return
+    if stop_result["was_running"]:
+        time.sleep(_RESTART_SETTLE_S)
+    start_result = _attempt_start(socket_path)
+    if start_result["ok"]:
+        console.print(
+            f" [green]{glyphs.SUCCESS}[/green] daemon restarted · v{installed}"
+        )
+    else:
+        console.print(
+            " [red]✗[/red] daemon stopped but didn't restart — run "
+            "[bold]chirp daemon restart[/bold] to finish updating."
+        )
 
 
 def _default_chat_registered() -> DependencyStatus:
@@ -218,20 +275,11 @@ def verify(settings: ChirpSettings, console: Console) -> list[DependencyStatus]:
     console.print()
     missing_deps = [s for s in statuses if s.required and not s.installed]
     chat_row = next(s for s in statuses if s.name == "default chat model")
-    if missing_deps or not chat_row.installed:
-        console.print(" [dim]──────────────────────────────────────────────[/dim]")
     if missing_deps:
+        console.print(" [dim]──────────────────────────────────────────────[/dim]")
         plural = "s" if len(missing_deps) > 1 else ""
         console.print(
             f"  need to install: [bold]{len(missing_deps)} piece{plural}[/bold]"
-        )
-    if not chat_row.installed:
-        console.print(
-            f"  next step: [bold]chirp models add {RECOMMENDED_CHAT_REPO}[/bold]"
-            " [dim](~4.3 GB, strong quality)[/dim]"
-        )
-        console.print(
-            f"  [dim]smaller alternative: chirp models add {SMALLER_CHAT_REPO}[/dim]"
         )
     if not missing_deps and chat_row.installed:
         console.print(" [green]everything's already in place.[/green]")
@@ -797,6 +845,16 @@ def _setup_chat_model(console: Console, hf_repo: str) -> bool:
 _CHAT_MODEL_CHOICES = {"1": RECOMMENDED_CHAT_REPO, "2": SMALLER_CHAT_REPO}
 
 
+def _print_models_add_hint(console: Console) -> None:
+    console.print(
+        f"  next step: [bold]chirp models add {RECOMMENDED_CHAT_REPO}[/bold]"
+        " [dim](~4.3 GB, strong quality)[/dim]"
+    )
+    console.print(
+        f"  [dim]smaller alternative: chirp models add {SMALLER_CHAT_REPO}[/dim]"
+    )
+
+
 def _offer_chat_model_setup(console: Console) -> None:
     """Prompt to register a default chat model when none exists (TTY only)."""
     console.print()
@@ -840,6 +898,10 @@ def _ensure_chat_model_ready(console: Console) -> None:
         _ensure_default_chat_ready(console)
     elif _is_interactive():
         _offer_chat_model_setup(console)
+    else:
+        console.print()
+        console.print(" [bold]a chat model is needed[/bold] — notes and `ask` use one.")
+        _print_models_add_hint(console)
 
 
 def offer_first_run_setup(settings: ChirpSettings, console: Console) -> int | None:
@@ -893,10 +955,17 @@ def run_init(
         # --recheck is the migration touchpoint (Devon's journey); full init
         # is the fresh-setup flow and stays free of migration noise.
         detection = _detect_ollama_install()
-        if any(detection.values()):
+        show_migration = any(detection.values())
+        chat_row = next(s for s in statuses if s.name == "default chat model")
+        if not chat_row.installed and not show_migration:
+            console.print()
+            _print_models_add_hint(console)
+        if show_migration:
             _print_migration_plan(console, detection)
         _offer_launch_agent(settings, console, force_prompt=True)
         return 0
+
+    _restart_daemon_if_stale(console)
 
     missing = [s for s in statuses if s.required and not s.installed]
     if missing:

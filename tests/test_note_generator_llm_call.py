@@ -25,6 +25,7 @@ def mock_settings():
     models.llm = "default_chat"
     models.whisper = "large-v3-turbo"
     models.num_predict = 4096
+    models.context_window = 32768
     settings.models = models
     return settings
 

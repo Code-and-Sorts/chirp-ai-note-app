@@ -242,6 +242,45 @@ def test_status_notes_version_mismatch_resolved(
     assert "started a new instance" not in result.stderr
 
 
+def test_status_warns_when_daemon_version_is_stale(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _mock_client(monkeypatch)
+    monkeypatch.setattr(daemon_module, "package_version", lambda: "0.9.0")
+
+    result = runner.invoke(daemon_module.daemon_app, ["status"])
+
+    assert result.exit_code == 0
+    assert "running v0.7.0" in result.stderr
+    assert "v0.9.0 is installed" in result.stderr
+    assert "chirp daemon restart" in result.stderr
+
+
+def test_status_no_stale_warning_when_versions_match(
+    monkeypatch: pytest.MonkeyPatch, force_tty: None
+) -> None:
+    _mock_client(monkeypatch)
+    monkeypatch.setattr(daemon_module, "package_version", lambda: "0.7.0")
+
+    result = runner.invoke(daemon_module.daemon_app, ["status"])
+
+    assert result.exit_code == 0
+    assert "chirp daemon restart" not in result.stderr
+
+
+def test_status_suppresses_stale_warning_in_json_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_client(monkeypatch)
+    monkeypatch.setattr(daemon_module, "package_version", lambda: "0.9.0")
+
+    result = runner.invoke(daemon_module.daemon_app, ["status", "--json"])
+
+    assert result.exit_code == 0
+    assert "chirp daemon restart" not in result.stderr
+    assert json.loads(result.stdout)["version"] == "0.7.0"
+
+
 # --- formatters -------------------------------------------------------------
 
 

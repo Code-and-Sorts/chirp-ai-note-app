@@ -68,7 +68,7 @@ from config.settings import CHIRP_DAEMON_SOCKET_ENV
 from llm.cli._console import console, stdout_console
 from llm.client import LLMClient, resolve_socket_path
 from llm.exceptions import LLMDaemonUnreachable, LLMError
-from llm.protocol import new_request_id
+from llm.protocol import new_request_id, package_version
 
 daemon_app = typer.Typer(help="Daemon lifecycle and diagnostics", no_args_is_help=True)
 
@@ -156,6 +156,17 @@ def status(
                 markup=False,
                 soft_wrap=True,
             )
+        else:
+            installed = package_version()
+            running_version = payload.get("version")
+            if running_version and running_version != installed:
+                console.print(
+                    f"daemon is running v{running_version}, but v{installed} is "
+                    "installed — run: chirp daemon restart",
+                    style="yellow",
+                    markup=False,
+                    soft_wrap=True,
+                )
 
     if use_json:
         _render_status_json(payload, sys.stdout)

@@ -129,6 +129,7 @@ class ModelsConfig(BaseModel):
     whisper: str = "large-v3-turbo"
     llm: str = "llama3.1:8b"
     num_predict: int = 4096
+    context_window: int = 32768
 
 
 class VadParameters(BaseModel):
