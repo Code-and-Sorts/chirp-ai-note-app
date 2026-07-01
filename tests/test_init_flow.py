@@ -47,6 +47,7 @@ def _stub_healthy_daemon(monkeypatch):
         "llm.client.LLMClient.health_sync",
         lambda self, **kwargs: {"event": "ready", "status": "ok", "version": "0.1.0"},
     )
+    monkeypatch.setattr("llm.protocol.package_version", lambda: "0.1.0")
 
 
 def _stub_verify_deps(monkeypatch, registry=None, arm64=True):
@@ -57,6 +58,7 @@ def _stub_verify_deps(monkeypatch, registry=None, arm64=True):
     monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
     _stub_healthy_daemon(monkeypatch)
     monkeypatch.setattr(init_flow, "_ensure_chat_model_ready", lambda console: None)
+    monkeypatch.setattr(init_flow, "_restart_daemon_if_stale", lambda console: None)
     monkeypatch.setattr(
         "llm.registry.read_registry",
         lambda path=None: (
@@ -181,6 +183,20 @@ def test_verify_handles_empty_registry(tmp_path, monkeypatch):
     assert f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in chat.detail
 
 
+def test_verify_omits_manual_models_add_hint(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch, registry=_empty_registry())
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+
+    console = _console()
+    statuses = init_flow.verify(_fake_settings(tmp_path), console)
+
+    output = console.file.getvalue()
+    assert "next step:" not in output
+    assert "smaller alternative" not in output
+    chat = next(s for s in statuses if s.name == "default chat model")
+    assert chat.installed is False
+
+
 def test_verify_handles_missing_registry_file(tmp_path, monkeypatch):
     _stub_verify_deps(monkeypatch)
     monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
@@ -198,9 +214,131 @@ def test_verify_handles_missing_registry_file(tmp_path, monkeypatch):
     assert "chirp models add" in chat.detail
 
 
-def test_run_init_prints_models_add_hint_when_registry_empty(tmp_path, monkeypatch):
-    _stub_verify_deps(monkeypatch, registry=_empty_registry())
+def test_verify_flags_stale_daemon_version(tmp_path, monkeypatch):
+    _stub_verify_deps(monkeypatch)
     monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        "llm.client.LLMClient.health_sync", lambda self, **kw: {"version": "0.0.1a0"}
+    )
+    monkeypatch.setattr("llm.protocol.package_version", lambda: "0.0.4a0")
+
+    statuses = init_flow.verify(_fake_settings(tmp_path), _console())
+
+    chirpd = next(s for s in statuses if s.name == "chirpd")
+    assert chirpd.installed is True
+    assert "running old version" in chirpd.detail
+    assert "0.0.4a0" in chirpd.detail
+
+
+def _stub_restart(
+    monkeypatch,
+    *,
+    running_version,
+    installed="0.0.4a0",
+    stop_ok=True,
+    was_running=True,
+    start_ok=True,
+):
+    monkeypatch.setattr(
+        "llm.client.LLMClient.health_sync",
+        lambda self, **kw: {"version": running_version},
+    )
+    monkeypatch.setattr("llm.protocol.package_version", lambda: installed)
+    monkeypatch.setattr("llm.client.resolve_socket_path", lambda: "/tmp/chirpd.sock")
+    monkeypatch.setattr(init_flow.time, "sleep", lambda *_: None)
+    calls = {"stop": [], "start": []}
+    monkeypatch.setattr(
+        "llm.cli.daemon._attempt_stop",
+        lambda p: (
+            calls["stop"].append(p)
+            or {
+                "ok": stop_ok,
+                "was_running": was_running,
+                "pid": 111,
+                "killed": False,
+                "running": False,
+                "error": None if stop_ok else {"code": "X", "message": "stuck"},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "llm.cli.daemon._attempt_start",
+        lambda p: (
+            calls["start"].append(p)
+            or {
+                "ok": start_ok,
+                "pid": 222,
+                "spawned": True,
+                "already": False,
+                "error": None if start_ok else {"code": "Y", "message": "no start"},
+            }
+        ),
+    )
+    return calls
+
+
+def test_restart_daemon_if_stale_restarts_when_version_differs(monkeypatch):
+    calls = _stub_restart(monkeypatch, running_version="0.0.1a0")
+    console = _console()
+
+    init_flow._restart_daemon_if_stale(console)
+
+    assert calls["stop"]
+    assert calls["start"]
+    output = console.file.getvalue()
+    assert "0.0.1a0" in output
+    assert "restarted" in output
+    assert "0.0.4a0" in output
+
+
+def test_restart_daemon_if_stale_noop_when_versions_match(monkeypatch):
+    calls = _stub_restart(monkeypatch, running_version="0.0.4a0")
+    console = _console()
+
+    init_flow._restart_daemon_if_stale(console)
+
+    assert calls["stop"] == []
+    assert calls["start"] == []
+    assert console.file.getvalue() == ""
+
+
+def test_restart_daemon_if_stale_noop_when_daemon_unreachable(monkeypatch):
+    from llm.exceptions import LLMDaemonUnreachable
+
+    def _unreachable(self, **kw):
+        raise LLMDaemonUnreachable("no socket")
+
+    monkeypatch.setattr("llm.client.LLMClient.health_sync", _unreachable)
+    monkeypatch.setattr("llm.protocol.package_version", lambda: "0.0.4a0")
+    touched = []
+    monkeypatch.setattr("llm.cli.daemon._attempt_stop", lambda p: touched.append(p))
+
+    console = _console()
+    init_flow._restart_daemon_if_stale(console)
+
+    assert touched == []
+    assert console.file.getvalue() == ""
+
+
+def test_restart_daemon_if_stale_reports_stop_failure(monkeypatch):
+    _stub_restart(monkeypatch, running_version="0.0.1a0", stop_ok=False)
+    console = _console()
+
+    init_flow._restart_daemon_if_stale(console)
+
+    output = console.file.getvalue()
+    assert "chirp daemon restart" in output
+
+
+def test_run_init_prints_models_add_hint_when_registry_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(init_flow.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(init_flow.platform, "system", lambda: "Linux")
+    _stub_healthy_daemon(monkeypatch)
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: False)
+    monkeypatch.setattr(init_flow, "_restart_daemon_if_stale", lambda console: None)
     monkeypatch.setattr(
         init_flow.ChirpSettings,
         "get_config_path",
@@ -409,6 +547,7 @@ def test_run_init_phases_run_in_order(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(init_flow, "_confirm", lambda *args, **kwargs: True)
+    monkeypatch.setattr(init_flow, "_restart_daemon_if_stale", lambda console: None)
     monkeypatch.setattr(
         init_flow,
         "install_missing",
@@ -748,6 +887,7 @@ def test_run_init_user_declines_install(tmp_path, monkeypatch):
         ],
     )
     monkeypatch.setattr(init_flow, "_confirm", lambda *a, **k: False)
+    monkeypatch.setattr(init_flow, "_restart_daemon_if_stale", lambda console: None)
 
     console = _console()
     code = init_flow.run_init(_fake_settings(tmp_path), console)
@@ -1430,6 +1570,28 @@ def test_ensure_chat_model_ready_offers_when_unregistered(monkeypatch):
     init_flow._ensure_chat_model_ready(_console())
 
     assert called == ["offer"]
+
+
+def test_ensure_chat_model_ready_hints_when_noninteractive(monkeypatch):
+    monkeypatch.setattr(
+        "llm.registry.read_registry", lambda path=None: _empty_registry()
+    )
+    monkeypatch.setattr(init_flow, "_is_interactive", lambda: False)
+    called = []
+    monkeypatch.setattr(
+        init_flow, "_ensure_default_chat_ready", lambda console: called.append("warm")
+    )
+    monkeypatch.setattr(
+        init_flow, "_offer_chat_model_setup", lambda console: called.append("offer")
+    )
+
+    console = _console()
+    init_flow._ensure_chat_model_ready(console)
+
+    assert called == []
+    assert (
+        f"chirp models add {init_flow.RECOMMENDED_CHAT_REPO}" in console.file.getvalue()
+    )
 
 
 def test_offer_first_run_noninteractive_proceeds(monkeypatch, tmp_path):
