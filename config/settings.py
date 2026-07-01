@@ -129,9 +129,6 @@ class ModelsConfig(BaseModel):
     whisper: str = "large-v3-turbo"
     llm: str = "llama3.1:8b"
     num_predict: int = 4096
-    # Chat-model context window in tokens. Sizes how much transcript fits in a
-    # single-shot notes prompt (alongside the prompt and the reserved
-    # num_predict output). Lower it for a smaller-context model.
     context_window: int = 32768
 
 

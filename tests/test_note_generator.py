@@ -160,7 +160,7 @@ class TestNoteGenerator:
             import xml.etree.ElementTree as ET
 
             with pytest.raises(ET.ParseError):
-                ET.fromstring(xml_response)  # confirm the strict parser rejects it
+                ET.fromstring(xml_response)
 
             result = generator._parse_xml_response(xml_response)
 
@@ -440,7 +440,7 @@ class TestNoteGenerator:
             small = generator._transcript_char_budget("")
 
         assert big > small
-        assert big > 24000  # the old fixed cap; a 32k model now fits far more
+        assert big > 24000
 
     def test_whole_transcript_used_single_shot_when_it_fits(self, mock_settings):
         """A transcript within budget is sent verbatim — no truncation, no warning."""
@@ -450,7 +450,7 @@ class TestNoteGenerator:
         ):
             console = Mock()
             generator = NoteGenerator(mock_settings, console=console)
-            transcript = "We discussed the quarterly roadmap. " * 500  # ~18k chars
+            transcript = "We discussed the quarterly roadmap. " * 500
 
             with (
                 patch.object(generator, "_call_llm", return_value="") as mock_llm,
@@ -464,7 +464,7 @@ class TestNoteGenerator:
 
             sent_prompt = mock_llm.call_args.args[0]
 
-        assert transcript in sent_prompt  # whole transcript, not head-truncated
+        assert transcript in sent_prompt
         assert not any(
             "summarizing the first" in str(call.args[0]).lower()
             for call in console.print.call_args_list
@@ -479,7 +479,7 @@ class TestNoteGenerator:
             console = Mock()
             generator = NoteGenerator(mock_settings, console=console)
             budget = generator._transcript_char_budget("")
-            long_transcript = "word " * ((budget // 5) + 1000)  # comfortably over
+            long_transcript = "word " * ((budget // 5) + 1000)
 
             with (
                 patch.object(generator, "_call_llm", return_value=None) as mock_llm,

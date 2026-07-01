@@ -245,7 +245,7 @@ def test_status_notes_version_mismatch_resolved(
 def test_status_warns_when_daemon_version_is_stale(
     monkeypatch: pytest.MonkeyPatch, force_tty: None
 ) -> None:
-    _mock_client(monkeypatch)  # health payload reports v0.7.0
+    _mock_client(monkeypatch)
     monkeypatch.setattr(daemon_module, "package_version", lambda: "0.9.0")
 
     result = runner.invoke(daemon_module.daemon_app, ["status"])
@@ -259,7 +259,7 @@ def test_status_warns_when_daemon_version_is_stale(
 def test_status_no_stale_warning_when_versions_match(
     monkeypatch: pytest.MonkeyPatch, force_tty: None
 ) -> None:
-    _mock_client(monkeypatch)  # health payload reports v0.7.0
+    _mock_client(monkeypatch)
     monkeypatch.setattr(daemon_module, "package_version", lambda: "0.7.0")
 
     result = runner.invoke(daemon_module.daemon_app, ["status"])
@@ -271,7 +271,7 @@ def test_status_no_stale_warning_when_versions_match(
 def test_status_suppresses_stale_warning_in_json_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _mock_client(monkeypatch)  # health payload reports v0.7.0
+    _mock_client(monkeypatch)
     monkeypatch.setattr(daemon_module, "package_version", lambda: "0.9.0")
 
     result = runner.invoke(daemon_module.daemon_app, ["status", "--json"])

@@ -130,13 +130,10 @@ def _daemon_ready() -> DependencyStatus:
 
 
 def _restart_daemon_if_stale(console: Console) -> None:
-    """Restart a resident daemon left running old code after a chirp upgrade.
+    """Restart a daemon left running stale code after a chirp upgrade.
 
-    The hello handshake keeps a warm daemon across cosmetic package bumps (only
-    PROTOCOL_VERSION forces a respawn), so `pip install -U` can leave an old
-    daemon serving stale code and reporting the old version. init is a setup
-    touchpoint where dropping the warm model is acceptable, so heal the skew
-    here; `chirp daemon status` and the verify table only warn.
+    A warm daemon survives cosmetic version bumps (the hello handshake only
+    respawns on PROTOCOL_VERSION), so init heals the skew; status/verify warn.
     """
     from llm.client import LLMClient, resolve_socket_path
     from llm.exceptions import LLMError
@@ -849,8 +846,6 @@ _CHAT_MODEL_CHOICES = {"1": RECOMMENDED_CHAT_REPO, "2": SMALLER_CHAT_REPO}
 
 
 def _print_models_add_hint(console: Console) -> None:
-    """Point at the manual `chirp models add` path — the fallback when init
-    can't run the interactive picker (non-TTY) or only verified (`--recheck`)."""
     console.print(
         f"  next step: [bold]chirp models add {RECOMMENDED_CHAT_REPO}[/bold]"
         " [dim](~4.3 GB, strong quality)[/dim]"
