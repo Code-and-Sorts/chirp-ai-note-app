@@ -458,7 +458,7 @@ class TestNoteGenerator:
             assert generator._transcript_char_budget("") == _MIN_TRANSCRIPT_BUDGET_CHARS
 
     def test_whole_transcript_used_single_shot_when_it_fits(self, mock_settings):
-        """A transcript within budget is sent verbatim — no truncation, no warning."""
+        """A transcript within budget is sent verbatim through one prompt."""
         with (
             patch("notes.note_generator.TemplateEngine"),
             patch("notes.note_generator.PopupManager"),
@@ -477,16 +477,15 @@ class TestNoteGenerator:
             ):
                 generator._generate_structured_notes(transcript)
 
-            sent_prompt = mock_llm.call_args.args[0]
-
-        assert transcript in sent_prompt
+        assert mock_llm.call_count == 1
+        assert transcript in mock_llm.call_args.args[0]
         assert not any(
-            "summarizing the first" in str(call.args[0]).lower()
+            "summarizing" in str(call.args[0]).lower()
             for call in console.print.call_args_list
         )
 
-    def test_long_transcript_is_windowed_with_warning(self, mock_settings):
-        """A transcript past the (dynamic) budget is windowed, not silently cut."""
+    def test_long_transcript_is_chunked_and_consolidated(self, mock_settings):
+        """A transcript past the budget is chunked (map) then consolidated (reduce)."""
         with (
             patch("notes.note_generator.TemplateEngine"),
             patch("notes.note_generator.PopupManager"),
@@ -494,24 +493,278 @@ class TestNoteGenerator:
             console = Mock()
             generator = NoteGenerator(mock_settings, console=console)
             budget = generator._transcript_char_budget("")
-            long_transcript = "word " * ((budget // 5) + 1000)
+            long_transcript = " ".join(
+                f"Sentence {i} discusses a distinct topic in some detail."
+                for i in range((budget // 40) + 500)
+            )
 
             with (
-                patch.object(generator, "_call_llm", return_value=None) as mock_llm,
+                patch.object(generator, "_call_llm", return_value="") as mock_llm,
                 patch.object(
                     generator,
                     "_parse_xml_response",
-                    return_value={"meeting_title": "T"},
+                    return_value={
+                        "meeting_title": "T",
+                        "executive_summary": "part",
+                        "action_items": ["A"],
+                    },
                 ),
             ):
-                generator._generate_structured_notes(long_transcript)
-
-            sent_prompt = mock_llm.call_args.args[0]
+                result = generator._generate_structured_notes(long_transcript)
 
         assert len(long_transcript) > budget
-        assert len(sent_prompt) < len(long_transcript)
-        warned = any(
-            "summarizing the first" in str(call.args[0]).lower()
+        assert result is not None
+        assert result["action_items"] == ["A"]
+        assert result["executive_summary"] != "No summary available"
+        assert mock_llm.call_count >= 2
+        assert any(
+            "summarizing in" in str(call.args[0]).lower()
             for call in console.print.call_args_list
         )
-        assert warned
+
+    def test_chunk_bounds_size_for_multiline_and_single_line(self, mock_settings):
+        """Every chunk stays within budget — including a real single-line transcript
+        (whisper joins segments with spaces, no newlines)."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+
+        multiline = "\n".join(
+            f"[00:{i:02d}] S{i % 3}: Point number {i} was discussed at length."
+            for i in range(400)
+        )
+        ml_chunks = generator._chunk_transcript(multiline, 8000)
+        assert len(ml_chunks) > 1
+        assert all(len(c) <= 8000 for c in ml_chunks)
+
+        single_line = " ".join(
+            f"Sentence {i} covers a distinct topic in detail." for i in range(2000)
+        )
+        assert "\n" not in single_line
+        sl_chunks = generator._chunk_transcript(single_line, 8000)
+        assert len(sl_chunks) > 1
+        assert all(len(c) <= 8000 for c in sl_chunks)
+
+    def test_chunk_transcript_overlaps_consecutive_chunks(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        single_line = " ".join(
+            f"Sentence {i} covers a distinct topic in detail." for i in range(2000)
+        )
+        chunks = generator._chunk_transcript(single_line, 8000)
+
+        assert len(chunks) >= 2
+        assert set(chunks[0].split()[-5:]) & set(chunks[1].split()[:10])
+
+    def test_reduce_preserves_every_item_across_chunks(self, mock_settings):
+        """No structured item is dropped when consolidating chunk notes."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        notes = [
+            {"executive_summary": "s1", "action_items": ["A1"], "decisions": ["D1"]},
+            {"executive_summary": "s2", "action_items": ["A2"], "decisions": ["D2"]},
+            {
+                "executive_summary": "s3",
+                "action_items": ["A3"],
+                "open_questions": ["Q3"],
+            },
+        ]
+        with patch.object(generator, "_call_llm", return_value="whole summary"):
+            result = generator._reduce_chunk_notes(notes, 95000)
+
+        assert result["action_items"] == ["A1", "A2", "A3"]
+        assert result["decisions"] == ["D1", "D2"]
+        assert result["open_questions"] == ["Q3"]
+        assert result["executive_summary"] == "whole summary"
+
+    def test_reduce_summary_synthesizes_from_chunk_summaries(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        notes = [{"executive_summary": "a"}, {"executive_summary": "b"}]
+        with patch.object(generator, "_call_llm", return_value="synthesized") as call:
+            result = generator._reduce_chunk_notes(notes, 95000)
+
+        call.assert_called_once()
+        assert result["executive_summary"] == "synthesized"
+
+    def test_reduce_summary_falls_back_to_joined_when_llm_empty(self, mock_settings):
+        """An empty model reply keeps the joined chunk summaries, never 'No summary
+        available'."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        notes = [
+            {"executive_summary": "first half"},
+            {"executive_summary": "second half"},
+        ]
+        with patch.object(generator, "_call_llm", return_value="   "):
+            result = generator._reduce_chunk_notes(notes, 95000)
+
+        assert result["executive_summary"] == "first half second half"
+
+    def test_reduce_summary_falls_back_to_content_when_no_chunk_summaries(
+        self, mock_settings
+    ):
+        """With no chunk summaries, synthesize from decisions/highlights/actions."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        notes = [
+            {"decisions": ["Adopt plan X"]},
+            {"action_items": ["Ship the release — Owner: Sam"]},
+        ]
+        with patch.object(generator, "_call_llm", return_value="synth") as call:
+            result = generator._reduce_chunk_notes(notes, 95000)
+
+        call.assert_called_once()
+        assert result["executive_summary"] == "synth"
+
+    def test_reduce_summary_never_empty_when_content_exists(self, mock_settings):
+        """No chunk summaries + empty LLM reply still yields a summary from the
+        extracted content — never 'No summary available'."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        notes = [
+            {"decisions": ["Adopt plan X"]},
+            {"action_items": ["Ship it — Owner: Sam"]},
+        ]
+        with patch.object(generator, "_call_llm", return_value="  "):
+            result = generator._reduce_chunk_notes(notes, 95000)
+
+        assert result["executive_summary"] != "No summary available"
+        assert result["executive_summary"].strip()
+
+    def test_merge_notes_unions_and_dedups(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        merged = generator._merge_notes(
+            [
+                {
+                    "meeting_title": "M",
+                    "executive_summary": "a",
+                    "action_items": ["Task — Owner: Jo", "shared"],
+                },
+                {
+                    "meeting_title": "M",
+                    "executive_summary": "b",
+                    "action_items": ["  task — owner: jo  ", "shared"],
+                    "decisions": ["D"],
+                },
+            ]
+        )
+        assert merged["action_items"] == ["Task — Owner: Jo", "shared"]
+        assert merged["decisions"] == ["D"]
+        assert merged["executive_summary"] == "a b"
+        assert merged["meeting_title"] == "M"
+
+    def test_dedup_merges_reordered_and_subset_phrasings(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        result = generator._dedup(
+            [
+                "Migration of audio capture to sounddevice",
+                "audio capture migration to sounddevice",
+                "Examine hiring plans for two backend engineers",
+                "hiring plans for two backend engineers",
+                "Ship the release on Friday",
+            ]
+        )
+
+        assert len(result) == 3
+        assert "Ship the release on Friday" in result
+
+    def test_dedup_keeps_items_distinct_by_number_or_identifier(self, mock_settings):
+        """Fuzzy-similar but genuinely distinct items must never collapse."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        result = generator._dedup(
+            [
+                "Launch feature X on June 1",
+                "Launch feature X on June 15",
+                "hire 2 engineers",
+                "hire 3 engineers",
+                "Approve vendor A",
+                "Approve vendor B",
+            ]
+        )
+
+        assert len(result) == 6
+
+    def test_dedup_merges_plural_variant(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        result = generator._dedup(["hire backend engineer", "hire backend engineers"])
+
+        assert len(result) == 1
+
+    def test_consolidate_skips_when_prompt_too_large(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        items = ["x" * 5000 + str(i) for i in range(10)]
+        with patch.object(generator, "_call_llm") as call:
+            result = generator._consolidate_items(items, "action items")
+
+        call.assert_not_called()
+        assert result == items
+
+    def test_consolidate_skips_short_lists(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        with patch.object(generator, "_call_llm") as call:
+            result = generator._consolidate_items(["one", "two"], "decisions")
+
+        call.assert_not_called()
+        assert result == ["one", "two"]
+
+    def test_consolidate_never_drops_or_fabricates_items(self, mock_settings):
+        """Coverage guard: model-omitted items stay as singletons; canonical is
+        always a verbatim input."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        items = ["alpha first", "alpha the first", "beta", "gamma", "delta"]
+        with patch.object(generator, "_call_llm", return_value="1=a\n2=a"):
+            result = generator._consolidate_items(items, "action items")
+
+        assert all(r in items for r in result)
+        for distinct in ["beta", "gamma", "delta"]:
+            assert distinct in result
+        assert len(result) == 4

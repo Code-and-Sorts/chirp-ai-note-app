@@ -4,11 +4,13 @@ import re
 import tomllib
 import wave
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import tomli_w
+from rapidfuzz import fuzz, utils
 from rich.console import Console
 
 from config.settings import ChirpSettings
@@ -32,6 +34,25 @@ _MIN_TRANSCRIPT_BUDGET_CHARS = 4000
 MIN_TRANSCRIPT_CHARS = 50
 
 MAX_PARSE_ATTEMPTS = 2
+
+_CHUNK_OVERLAP_CHARS = 1500
+
+_LLM_INPUT_TARGET_CHARS = 20000
+
+_DEDUP_THRESHOLD = 88
+
+_TOKEN_MATCH_THRESHOLD = 85
+
+_CONSOLIDATE_MIN_ITEMS = 5
+
+_LIST_KEYS = (
+    "agenda",
+    "action_items",
+    "next_steps",
+    "decisions",
+    "open_questions",
+    "discussion_highlights",
+)
 
 SYSTEM_PROMPT = """You are Chirp, the user's meeting note co-pilot.
 Your sole purpose is to transform raw meeting transcripts into structured meeting notes.
@@ -441,55 +462,267 @@ class NoteGenerator:
             return _MIN_TRANSCRIPT_BUDGET_CHARS
         return int(input_token_budget * _CHARS_PER_TOKEN)
 
-    def _window_transcript(self, transcript_text: str, max_chars: int) -> str:
-        if len(transcript_text) <= max_chars:
-            return transcript_text
-        self.console.print(
-            f"[yellow]Transcript is {len(transcript_text)} chars; summarizing the "
-            f"first {max_chars} — the tail isn't included yet (chunked "
-            "summarization of long meetings is coming).[/yellow]"
-        )
-        return transcript_text[:max_chars]
-
     def _generate_structured_notes(
         self, transcript_text: str, provided_title: str | None = None
     ) -> dict[str, Any] | None:
-        title_instruction = ""
-        if provided_title:
-            title_instruction = (
-                f"\n\nIMPORTANT: Use this exact meeting title in the "
-                f"MEETING_TITLE tag: {provided_title}"
+        title_instruction = self._title_instruction(provided_title)
+        budget = self._transcript_char_budget(title_instruction)
+        if len(transcript_text) <= budget:
+            return self._run_structured_prompt(
+                self._transcript_prompt(transcript_text, title_instruction)
             )
+        return self._summarize_chunked(transcript_text, title_instruction, budget)
 
-        max_chars = self._transcript_char_budget(title_instruction)
-        windowed_transcript = self._window_transcript(transcript_text, max_chars)
-        prompt = f"""{SYSTEM_PROMPT}
+    def _title_instruction(self, provided_title: str | None) -> str:
+        if not provided_title:
+            return ""
+        return (
+            f"\n\nIMPORTANT: Use this exact meeting title in the "
+            f"MEETING_TITLE tag: {provided_title}"
+        )
+
+    def _transcript_prompt(self, transcript: str, title_instruction: str) -> str:
+        return f"""{SYSTEM_PROMPT}
 
 {title_instruction}
 
 Transcript:
-{windowed_transcript}
+{transcript}
 
 Return ONLY the XML document, no additional text before or after."""
 
-        # Returns None on persistent parse failure so the caller skips writing
-        # and indexing a junk note (AC-12).
+    def _run_structured_prompt(self, prompt: str) -> dict[str, Any] | None:
         for attempt in range(1, MAX_PARSE_ATTEMPTS + 1):
             response = self._call_llm(prompt)
-
             parsed = self._parse_xml_response(response)
             if parsed is not None:
                 return parsed
-
             if attempt < MAX_PARSE_ATTEMPTS:
                 self.console.print(
                     "[yellow]Could not parse structured notes; retrying once…[/yellow]"
                 )
-
         logger.debug(
             "Structured-note parsing failed after %d attempts", MAX_PARSE_ATTEMPTS
         )
         return None
+
+    def _summarize_chunked(
+        self, transcript_text: str, title_instruction: str, budget: int
+    ) -> dict[str, Any] | None:
+        target = min(budget, _LLM_INPUT_TARGET_CHARS)
+        chunks = self._chunk_transcript(transcript_text, target)
+        self.console.print(
+            f"[yellow]Long transcript ({len(transcript_text)} chars) — summarizing "
+            f"in {len(chunks)} parts, then consolidating.[/yellow]"
+        )
+        chunk_notes = []
+        failed = 0
+        for index, chunk in enumerate(chunks, start=1):
+            self.console.print(f"[dim]  ↳ part {index}/{len(chunks)}[/dim]")
+            note = self._run_structured_prompt(
+                self._transcript_prompt(chunk, title_instruction)
+            )
+            if note is not None:
+                chunk_notes.append(note)
+            else:
+                failed += 1
+        if failed:
+            self.console.print(
+                f"[yellow]{failed} of {len(chunks)} parts could not be parsed; "
+                "notes may be incomplete.[/yellow]"
+            )
+        if not chunk_notes:
+            return None
+        if len(chunk_notes) == 1:
+            return chunk_notes[0]
+        return self._reduce_chunk_notes(chunk_notes, target)
+
+    def _chunk_transcript(self, transcript_text: str, chunk_chars: int) -> list[str]:
+        overlap = min(_CHUNK_OVERLAP_CHARS, chunk_chars // 4)
+        max_unit = max(chunk_chars - overlap - 1, 1)
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+        for unit in self._sentence_units(transcript_text, max_unit):
+            unit_len = len(unit) + 1
+            if current and current_len + unit_len > chunk_chars:
+                joined = " ".join(current)
+                chunks.append(joined)
+                seed = self._overlap_seed(joined, overlap)
+                current = [seed] if seed else []
+                current_len = (len(seed) + 1) if seed else 0
+            current.append(unit)
+            current_len += unit_len
+        if current:
+            chunks.append(" ".join(current))
+        return chunks
+
+    def _sentence_units(self, transcript_text: str, max_unit: int) -> list[str]:
+        units: list[str] = []
+        for piece in re.split(r"(?<=[.!?])\s+|\n+", transcript_text):
+            piece = piece.strip()
+            if not piece:
+                continue
+            if len(piece) <= max_unit:
+                units.append(piece)
+            else:
+                units.extend(
+                    piece[start : start + max_unit]
+                    for start in range(0, len(piece), max_unit)
+                )
+        return units
+
+    def _overlap_seed(self, text: str, max_chars: int) -> str:
+        if max_chars <= 0:
+            return ""
+        tail = text[-max_chars:]
+        if len(tail) == max_chars:
+            space = tail.find(" ")
+            if space != -1:
+                tail = tail[space + 1 :]
+        return tail
+
+    def _reduce_chunk_notes(
+        self, notes: list[dict[str, Any]], target: int
+    ) -> dict[str, Any]:
+        merged = self._merge_notes(notes)
+        for key in _LIST_KEYS:
+            merged[key] = self._consolidate_items(merged[key], key.replace("_", " "))
+        summary = self._reduce_summary(notes, merged, target)
+        if summary:
+            merged["executive_summary"] = summary
+        return merged
+
+    def _reduce_summary(
+        self, notes: list[dict[str, Any]], merged: dict[str, Any], target: int
+    ) -> str:
+        parts = [
+            note["executive_summary"].strip()
+            for note in notes
+            if isinstance(note.get("executive_summary"), str)
+            and note["executive_summary"].strip()
+            and note["executive_summary"].strip() != "No summary available"
+        ]
+        if not parts:
+            parts = (
+                merged["decisions"]
+                + merged["discussion_highlights"]
+                + merged["action_items"]
+            )
+        if not parts:
+            return ""
+        combined = "\n".join(parts)[:target]
+        summary = self._call_llm(self._summary_prompt(combined)).strip()
+        return summary or " ".join(parts)
+
+    def _summary_prompt(self, section_notes: str) -> str:
+        return (
+            "Below are notes from consecutive parts of ONE meeting. Write a single "
+            "cohesive executive summary of the entire meeting in three to five "
+            "sentences. Return only the summary text — no XML, no headers, no "
+            "preamble.\n\n"
+            f"Notes:\n{section_notes}"
+        )
+
+    def _merge_notes(self, notes: list[dict[str, Any]]) -> dict[str, Any]:
+        merged: dict[str, Any] = {
+            "meeting_title": next(
+                (n["meeting_title"] for n in notes if n.get("meeting_title")),
+                DEFAULT_MEETING_NAME,
+            ),
+            "executive_summary": " ".join(
+                n["executive_summary"]
+                for n in notes
+                if n.get("executive_summary")
+                and n["executive_summary"] != "No summary available"
+            )
+            or "No summary available",
+        }
+        for key in _LIST_KEYS:
+            merged[key] = self._dedup(item for n in notes for item in n.get(key, []))
+        return merged
+
+    def _dedup(self, items: Iterable[str]) -> list[str]:
+        cleaned = [item.strip() for item in items if item and item.strip()]
+        if len(cleaned) <= 1:
+            return cleaned
+
+        parent = list(range(len(cleaned)))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for i in range(len(cleaned)):
+            for j in range(i + 1, len(cleaned)):
+                if self._mergeable(cleaned[i], cleaned[j]):
+                    parent[max(find(i), find(j))] = min(find(i), find(j))
+
+        return self._canonical_by_cluster(
+            cleaned, [find(i) for i in range(len(cleaned))]
+        )
+
+    def _mergeable(self, a: str, b: str) -> bool:
+        if re.findall(r"\d+", a) != re.findall(r"\d+", b):
+            return False
+        score = max(
+            fuzz.token_set_ratio(a, b, processor=utils.default_process),
+            fuzz.token_sort_ratio(a, b, processor=utils.default_process),
+        )
+        if score < _DEDUP_THRESHOLD:
+            return False
+        only_a = set(utils.default_process(a).split()) - set(
+            utils.default_process(b).split()
+        )
+        only_b = set(utils.default_process(b).split()) - set(
+            utils.default_process(a).split()
+        )
+        if not only_a or not only_b:
+            return True
+        return all(
+            any(fuzz.ratio(x, y) >= _TOKEN_MATCH_THRESHOLD for y in only_b)
+            for x in only_a
+        ) and all(
+            any(fuzz.ratio(x, y) >= _TOKEN_MATCH_THRESHOLD for y in only_a)
+            for x in only_b
+        )
+
+    def _consolidate_items(self, items: list[str], label: str) -> list[str]:
+        if len(items) < _CONSOLIDATE_MIN_ITEMS:
+            return items
+        prompt = self._consolidate_prompt(items, label)
+        if len(prompt) > _LLM_INPUT_TARGET_CHARS:
+            return items
+        response = self._call_llm(prompt)
+        assigned: dict[int, str] = {}
+        for match in re.finditer(r"(\d+)\s*[=:]\s*([A-Za-z0-9]+)", response):
+            index = int(match.group(1)) - 1
+            if 0 <= index < len(items) and index not in assigned:
+                assigned[index] = match.group(2).lower()
+        groups = [assigned.get(index, f"solo-{index}") for index in range(len(items))]
+        return self._canonical_by_cluster(items, groups)
+
+    def _canonical_by_cluster(self, items: list[str], groups: list[Any]) -> list[str]:
+        clusters: dict[Any, list[str]] = {}
+        order: list[Any] = []
+        for item, group in zip(items, groups, strict=True):
+            if group not in clusters:
+                clusters[group] = []
+                order.append(group)
+            clusters[group].append(item)
+        return [max(clusters[group], key=len) for group in order]
+
+    def _consolidate_prompt(self, items: list[str], label: str) -> str:
+        numbered = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(items))
+        return (
+            f"Below is a numbered list of {label} from ONE meeting. Some entries "
+            "describe the same thing in different words. Assign every number to a "
+            "group so entries meaning the same thing share the same group letter; "
+            "an entry with no duplicate gets its own unique letter. Output ONLY one "
+            f"line per number as `<number>=<group>`, nothing else.\n\n{numbered}"
+        )
 
     def _call_llm(self, prompt: str) -> str:
         # Single user message so the chat template wraps SYSTEM_PROMPT + prompt
