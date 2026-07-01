@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chirp-notes-ai"
-version = "0.0.4-alpha"
+version = "0.0.5-alpha"
 description = "Meeting recorder CLI that transcribes and generates AI notes"
 authors = [{name = "Colby Timm"}]
 readme = "README.md"
