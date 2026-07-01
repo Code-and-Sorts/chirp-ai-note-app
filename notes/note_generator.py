@@ -41,6 +41,8 @@ _LLM_INPUT_TARGET_CHARS = 20000
 
 _DEDUP_THRESHOLD = 88
 
+_TOKEN_MATCH_THRESHOLD = 85
+
 _CONSOLIDATE_MIN_ITEMS = 5
 
 _LIST_KEYS = (
@@ -654,25 +656,45 @@ Return ONLY the XML document, no additional text before or after."""
 
         for i in range(len(cleaned)):
             for j in range(i + 1, len(cleaned)):
-                score = max(
-                    fuzz.token_set_ratio(
-                        cleaned[i], cleaned[j], processor=utils.default_process
-                    ),
-                    fuzz.token_sort_ratio(
-                        cleaned[i], cleaned[j], processor=utils.default_process
-                    ),
-                )
-                if score >= _DEDUP_THRESHOLD:
+                if self._mergeable(cleaned[i], cleaned[j]):
                     parent[max(find(i), find(j))] = min(find(i), find(j))
 
         return self._canonical_by_cluster(
             cleaned, [find(i) for i in range(len(cleaned))]
         )
 
+    def _mergeable(self, a: str, b: str) -> bool:
+        if re.findall(r"\d+", a) != re.findall(r"\d+", b):
+            return False
+        score = max(
+            fuzz.token_set_ratio(a, b, processor=utils.default_process),
+            fuzz.token_sort_ratio(a, b, processor=utils.default_process),
+        )
+        if score < _DEDUP_THRESHOLD:
+            return False
+        only_a = set(utils.default_process(a).split()) - set(
+            utils.default_process(b).split()
+        )
+        only_b = set(utils.default_process(b).split()) - set(
+            utils.default_process(a).split()
+        )
+        if not only_a or not only_b:
+            return True
+        return all(
+            any(fuzz.ratio(x, y) >= _TOKEN_MATCH_THRESHOLD for y in only_b)
+            for x in only_a
+        ) and all(
+            any(fuzz.ratio(x, y) >= _TOKEN_MATCH_THRESHOLD for y in only_a)
+            for x in only_b
+        )
+
     def _consolidate_items(self, items: list[str], label: str) -> list[str]:
         if len(items) < _CONSOLIDATE_MIN_ITEMS:
             return items
-        response = self._call_llm(self._consolidate_prompt(items, label))
+        prompt = self._consolidate_prompt(items, label)
+        if len(prompt) > _LLM_INPUT_TARGET_CHARS:
+            return items
+        response = self._call_llm(prompt)
         assigned: dict[int, str] = {}
         for match in re.finditer(r"(\d+)\s*[=:]\s*([A-Za-z0-9]+)", response):
             index = int(match.group(1)) - 1

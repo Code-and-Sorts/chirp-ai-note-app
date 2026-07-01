@@ -679,6 +679,49 @@ class TestNoteGenerator:
         assert len(result) == 3
         assert "Ship the release on Friday" in result
 
+    def test_dedup_keeps_items_distinct_by_number_or_identifier(self, mock_settings):
+        """Fuzzy-similar but genuinely distinct items must never collapse."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        result = generator._dedup(
+            [
+                "Launch feature X on June 1",
+                "Launch feature X on June 15",
+                "hire 2 engineers",
+                "hire 3 engineers",
+                "Approve vendor A",
+                "Approve vendor B",
+            ]
+        )
+
+        assert len(result) == 6
+
+    def test_dedup_merges_plural_variant(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        result = generator._dedup(["hire backend engineer", "hire backend engineers"])
+
+        assert len(result) == 1
+
+    def test_consolidate_skips_when_prompt_too_large(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        items = ["x" * 5000 + str(i) for i in range(10)]
+        with patch.object(generator, "_call_llm") as call:
+            result = generator._consolidate_items(items, "action items")
+
+        call.assert_not_called()
+        assert result == items
+
     def test_consolidate_skips_short_lists(self, mock_settings):
         with (
             patch("notes.note_generator.TemplateEngine"),
