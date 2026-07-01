@@ -1,4 +1,5 @@
 import logging
+import re
 import tomllib
 import wave
 import xml.etree.ElementTree as ET
@@ -19,9 +20,20 @@ from utils.popup_manager import PopupManager
 
 logger = logging.getLogger(__name__)
 
-# Bounds the prompt INPUT, not just num_predict (the OUTPUT): an unbounded
-# transcript was silently truncated mid-generation, so window it and warn.
-MAX_TRANSCRIPT_CHARS = 24000
+# Conservative average chars-per-token for English prose. Used only to size the
+# transcript against the model's token-denominated context window; deliberately
+# below the real ~4 so the assembled prompt lands *under* the window rather than
+# overflowing (which would silently drop the transcript tail and the trailing
+# output instruction).
+_CHARS_PER_TOKEN = 3.5
+
+# Literal non-transcript, non-SYSTEM_PROMPT scaffolding in the note prompt (the
+# "Transcript:" framing and the trailing "Return ONLY..." line).
+_PROMPT_SCAFFOLD_CHARS = 200
+
+# Floor so a misconfigured tiny context_window still lets a short meeting
+# through instead of collapsing the budget to zero.
+_MIN_TRANSCRIPT_BUDGET_CHARS = 4000
 
 # Below this, a transcript has nothing to summarize (a silent/near-empty clip);
 # generating notes would only yield junk that later poisons `ask`. Callers treat
@@ -420,15 +432,42 @@ class NoteGenerator:
             return value.isoformat()
         return str(value)
 
-    def _window_transcript(self, transcript_text: str) -> str:
-        """Cap the transcript to ``MAX_TRANSCRIPT_CHARS``, warning on truncation."""
-        if len(transcript_text) <= MAX_TRANSCRIPT_CHARS:
+    def _transcript_char_budget(self, title_instruction: str) -> int:
+        """Chars of transcript that fit the model context alongside the prompt
+        and the reserved output.
+
+        Derived from settings (``context_window`` minus ``num_predict`` minus the
+        prompt scaffolding) so a smaller-context model or a raised output cap
+        scales the input down automatically — versus a fixed constant that
+        silently truncated long meetings well short of what the window allows.
+        """
+        models = self.settings.models
+        scaffold_tokens = int(
+            (len(SYSTEM_PROMPT) + len(title_instruction) + _PROMPT_SCAFFOLD_CHARS)
+            / _CHARS_PER_TOKEN
+        )
+        input_token_budget = (
+            models.context_window - models.num_predict - scaffold_tokens
+        )
+        return max(
+            int(input_token_budget * _CHARS_PER_TOKEN), _MIN_TRANSCRIPT_BUDGET_CHARS
+        )
+
+    def _window_transcript(self, transcript_text: str, max_chars: int) -> str:
+        """Cap the transcript to ``max_chars``, warning that the tail is dropped.
+
+        Head-truncation is the interim behavior for meetings that still overflow
+        a full context window; chunked (map-reduce) summarization of the whole
+        transcript is the planned follow-up.
+        """
+        if len(transcript_text) <= max_chars:
             return transcript_text
         self.console.print(
-            f"[yellow]Transcript is {len(transcript_text)} chars; truncating to "
-            f"{MAX_TRANSCRIPT_CHARS} for note generation.[/yellow]"
+            f"[yellow]Transcript is {len(transcript_text)} chars; summarizing the "
+            f"first {max_chars} — the tail isn't included yet (chunked "
+            "summarization of long meetings is coming).[/yellow]"
         )
-        return transcript_text[:MAX_TRANSCRIPT_CHARS]
+        return transcript_text[:max_chars]
 
     def _generate_structured_notes(
         self, transcript_text: str, provided_title: str | None = None
@@ -440,7 +479,8 @@ class NoteGenerator:
                 f"MEETING_TITLE tag: {provided_title}"
             )
 
-        windowed_transcript = self._window_transcript(transcript_text)
+        max_chars = self._transcript_char_budget(title_instruction)
+        windowed_transcript = self._window_transcript(transcript_text, max_chars)
         prompt = f"""{SYSTEM_PROMPT}
 
 {title_instruction}
@@ -572,10 +612,94 @@ Return ONLY the XML document, no additional text before or after."""
             }
 
         except ET.ParseError:
-            # Malformed XML: let the caller retry/degrade, never write it (AC-12).
-            return None
+            # LLMs routinely emit XML that isn't well-formed — an unescaped `&`
+            # (Q&A, R&D, P&L), a stray `<`/`>` ("revenue < target"), or output
+            # truncated at the token cap before `</MEETING_NOTES>`. A single bad
+            # character otherwise loses the whole note. Recover the known tags
+            # directly instead. Only reached after the strict parse fails, so
+            # well-formed output — and the quality-regression baseline — is
+            # untouched.
+            return self._extract_notes_lenient(xml_content)
         except (AttributeError, KeyError, TypeError, ValueError):
             return None
+
+    def _extract_notes_lenient(self, xml_content: str) -> dict[str, Any] | None:
+        """Recover note fields from XML that ``ET.fromstring`` rejected.
+
+        String-scans for each known tag rather than parsing a well-formed tree,
+        so unescaped entities and stray angle brackets in the text survive and a
+        truncated tail still yields whatever earlier tags completed. Returns
+        ``None`` when nothing usable is found so the caller still degrades rather
+        than writing an empty shell.
+        """
+
+        def _inner(tag: str) -> str | None:
+            match = re.search(
+                rf"<{tag}\b[^>]*>(.*?)</{tag}>", xml_content, re.DOTALL | re.IGNORECASE
+            )
+            return match.group(1) if match else None
+
+        def _text(tag: str) -> str:
+            inner = _inner(tag)
+            if inner is None:
+                return ""
+            value = inner.strip()
+            return "" if value.lower() == "none" else value
+
+        def _items(tag: str) -> list[str]:
+            inner = _inner(tag)
+            if inner is None or inner.strip().lower() == "none":
+                return []
+            items: list[str] = []
+            for match in re.finditer(
+                r"<ITEM\b([^>]*?)/?>(.*?)(?:</ITEM>|(?=<ITEM\b)|(?=</)|$)",
+                inner,
+                re.DOTALL | re.IGNORECASE,
+            ):
+                if tag == "ACTION_ITEMS":
+                    attrs = dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', match.group(1)))
+                    parts = []
+                    if attrs.get("task", "").strip():
+                        parts.append(attrs["task"].strip())
+                    if attrs.get("owner", "").strip():
+                        parts.append(f"Owner: {attrs['owner'].strip()}")
+                    if attrs.get("deadline", "").strip():
+                        parts.append(f"Deadline: {attrs['deadline'].strip()}")
+                    if parts:
+                        items.append(" — ".join(parts))
+                else:
+                    text = match.group(2).strip()
+                    if text:
+                        items.append(text)
+            return items
+
+        title = _text("MEETING_TITLE")
+        summary = _text("EXECUTIVE_SUMMARY")
+        lists = {
+            name: _items(name)
+            for name in (
+                "AGENDA",
+                "ACTION_ITEMS",
+                "NEXT_STEPS",
+                "DECISIONS",
+                "OPEN_QUESTIONS",
+                "DISCUSSION_HIGHLIGHTS",
+            )
+        }
+        if not title and not summary and not any(lists.values()):
+            return None
+
+        logger.info("Recovered notes from malformed model XML via lenient parse")
+        return {
+            "meeting_title": title or DEFAULT_MEETING_NAME,
+            "executive_summary": summary or "No summary available",
+            "agenda": lists["AGENDA"],
+            "action_items": lists["ACTION_ITEMS"],
+            "next_steps": lists["NEXT_STEPS"],
+            "decisions": lists["DECISIONS"],
+            "open_questions": lists["OPEN_QUESTIONS"],
+            "discussion_highlights": lists["DISCUSSION_HIGHLIGHTS"],
+        }
 
     def _auto_index_note(self, notes_path: Path):
         if not self.settings.notes_chat.auto_index:
