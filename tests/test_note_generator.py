@@ -442,6 +442,21 @@ class TestNoteGenerator:
         assert big > small
         assert big > 24000
 
+    def test_transcript_char_budget_floors_when_no_input_room(self, mock_settings):
+        """num_predict >= context leaves no input room — fall back to the floor,
+        not an inflated budget that would overflow the window."""
+        from notes.note_generator import _MIN_TRANSCRIPT_BUDGET_CHARS
+
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            mock_settings.models.context_window = 4096
+            mock_settings.models.num_predict = 4096
+
+            assert generator._transcript_char_budget("") == _MIN_TRANSCRIPT_BUDGET_CHARS
+
     def test_whole_transcript_used_single_shot_when_it_fits(self, mock_settings):
         """A transcript within budget is sent verbatim — no truncation, no warning."""
         with (

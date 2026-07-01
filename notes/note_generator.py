@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 import tomllib
 import wave
@@ -425,16 +426,20 @@ class NoteGenerator:
     def _transcript_char_budget(self, title_instruction: str) -> int:
         """Chars of transcript that fit alongside the prompt and reserved output."""
         models = self.settings.models
-        scaffold_tokens = int(
+        # ceil (not floor) so under-reserving the prompt can't push the budget
+        # over the window.
+        scaffold_tokens = math.ceil(
             (len(SYSTEM_PROMPT) + len(title_instruction) + _PROMPT_SCAFFOLD_CHARS)
             / _CHARS_PER_TOKEN
         )
         input_token_budget = (
             models.context_window - models.num_predict - scaffold_tokens
         )
-        return max(
-            int(input_token_budget * _CHARS_PER_TOKEN), _MIN_TRANSCRIPT_BUDGET_CHARS
-        )
+        if input_token_budget <= 0:
+            # num_predict left no room for input — misconfigured; a floor beats
+            # sending an empty transcript.
+            return _MIN_TRANSCRIPT_BUDGET_CHARS
+        return int(input_token_budget * _CHARS_PER_TOKEN)
 
     def _window_transcript(self, transcript_text: str, max_chars: int) -> str:
         if len(transcript_text) <= max_chars:
