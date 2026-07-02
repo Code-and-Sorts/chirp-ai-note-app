@@ -26,7 +26,7 @@ class LLMBackend(Protocol):
     async def load(
         self, repo: str, role: ModelRole, revision: str | None = None
     ) -> Any:
-        """Load ``repo`` (optionally pinned to ``revision``) and return a handle."""
+        """Load ``repo`` for ``role`` and return an opaque model handle."""
 
     async def unload(self, handle: Any) -> None:
         """Release the resources held by a previously loaded ``handle``."""

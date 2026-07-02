@@ -43,9 +43,6 @@ class RegistryEntry(BaseModel):
     hf_repo: str
     role: ModelRole
     options: dict[str, Any] = Field(default_factory=dict)
-    # HF commit SHA captured when the model was registered/pulled. Downloads
-    # and daemon loads pin to it so a mutated upstream `main` can't swap
-    # weights under an existing alias. None = legacy entry, unpinned.
     revision: str | None = None
 
 

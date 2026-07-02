@@ -43,10 +43,6 @@ jobs:
 
   publish-to-test-pypi:
     needs: build-and-test
-    # Opt-in via the `publish-testpypi` PR label instead of every push:
-    # unlabeled PRs would otherwise burn a permanent .devN version in the
-    # TestPyPI namespace (and hand all repo secrets to the publish job) on
-    # every synchronize event.
     if: github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'publish-testpypi')
     uses: ./.github/workflows/shared-publish-package.yaml
     with:

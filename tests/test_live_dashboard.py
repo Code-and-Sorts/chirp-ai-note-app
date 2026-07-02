@@ -1,5 +1,3 @@
-"""Behavior tests for the live-transcription dashboard (rendering + state)."""
-
 from __future__ import annotations
 
 import queue

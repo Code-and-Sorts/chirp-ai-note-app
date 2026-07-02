@@ -380,10 +380,6 @@ class ChirpSettings(BaseModel):
         ]
         if self.notes_chat.semantic_enabled:
             directories.append(self.notes_chat.index_dir / "chroma")
-        # App-owned roots get re-tightened even when they already exist: the
-        # chirp home always, and the notes root only at its default location —
-        # a user-configured custom notes_root keeps whatever modes the user
-        # chose for it.
         app_owned = {chirp_home, default_notes_root()}
         for directory in directories:
             ensure_private_directory(directory, tighten_existing=directory in app_owned)

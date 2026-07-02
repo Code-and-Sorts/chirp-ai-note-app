@@ -457,12 +457,6 @@ def pull_command(
 
 
 def _current_repo_sha(hf_repo: str) -> str | None:
-    """Latest upstream commit SHA, or None when HF is unreachable.
-
-    `pull` is the user's explicit refresh action, so it re-pins to the current
-    upstream head; offline or API failure falls back to the existing pin
-    rather than blocking the redownload.
-    """
     try:
         return hf.validate_repo(hf_repo).sha
     except hf.HfError:

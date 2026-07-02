@@ -8,6 +8,7 @@ import stat
 import tomllib
 import unicodedata
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -22,17 +23,6 @@ META_FILENAME = "meta.toml"
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` atomically (unique temp + fsync + replace).
-
-    Readers never observe a partially written file: they see either the old
-    content or the new content. The temp name is unique per invocation
-    (pid + random suffix) so concurrent writers can't clobber each other's
-    temp file; on failure this writer's temp file is removed and the original
-    error re-raised. An existing target's permission bits are carried over to
-    the replacement — the temp file is created under the process umask, and
-    replacing a deliberately tightened file (e.g. 0600) with a 0644 one would
-    silently widen access to its contents.
-    """
     try:
         existing_mode = stat.S_IMODE(path.stat().st_mode)
     except OSError:
@@ -47,12 +37,8 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             tmp_path.chmod(existing_mode)
         tmp_path.replace(path)
     except OSError:
-        try:
+        with suppress(OSError):
             tmp_path.unlink(missing_ok=True)
-        except OSError:
-            # Cleanup is best-effort; raising here would mask the original
-            # write/replace error being propagated below.
-            pass
         raise
 
 
@@ -229,25 +215,11 @@ def ensure_directory(directory: Path) -> bool:
 
 
 def ensure_private_directory(path: Path, *, tighten_existing: bool = False) -> None:
-    """Create ``path`` (and parents) and restrict it to the owner (0700).
-
-    Notes and config hold verbatim meeting content, so the containing
-    directories must not be group/world readable. A directory that already
-    exists keeps its permissions unless ``tighten_existing`` is set — used for
-    fully app-owned roots like the chirp home, where user customization of
-    modes is not expected. The chmod is best-effort: failure to tighten never
-    blocks the write path that needs the directory.
-    """
     existed = path.is_dir()
     path.mkdir(parents=True, exist_ok=True)
     if not existed or tighten_existing:
-        try:
+        with suppress(OSError):
             path.chmod(0o700)
-        except OSError:
-            # Best-effort hardening: a filesystem that rejects chmod (e.g.
-            # some network mounts) must not block the write path that needs
-            # this directory.
-            pass
 
 
 def clean_old_files(directory: Path, days_old: int = 30) -> int:

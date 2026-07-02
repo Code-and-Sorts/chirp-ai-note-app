@@ -205,8 +205,6 @@ jobs:
       run: uv run pytest --cov --cov-report=term
 
     - name: 📤 Upload build artifacts
-      # Only the primary-python leg uploads: the wheel is py3-tagged (identical
-      # across matrix legs) and duplicate artifact names fail the upload.
       if: ${{ inputs.upload-artifacts && matrix.python-version == inputs.python-version }}
       uses: actions/upload-artifact@v7
       with:
@@ -244,9 +242,6 @@ jobs:
         path: dist/
 
     - name: 🧪 Install wheel and smoke-test the CLI
-      # Post-install smoke against the real artifact: the wheel must install
-      # cleanly on the target platform, expose both entry points, import every
-      # runtime package, and (on macOS) bundle the Chirp.app capture helper.
       run: |
         set -euo pipefail
         uv venv smoke-env

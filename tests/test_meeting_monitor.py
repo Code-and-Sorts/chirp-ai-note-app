@@ -1,5 +1,3 @@
-"""Behavior tests for MeetingMonitor (duration warnings + safety stop)."""
-
 from __future__ import annotations
 
 import threading
