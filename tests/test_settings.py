@@ -1,3 +1,4 @@
+import stat
 import tomllib
 from pathlib import Path
 from unittest.mock import patch
@@ -67,6 +68,42 @@ class TestChirpSettings:
 
         assert (tmp_path / "home").is_dir()
         assert not (tmp_path / "home" / "chroma").exists()
+
+    def test_ensure_directories_tightens_app_owned_roots(self, tmp_path):
+        settings = ChirpSettings()
+        settings.directories.notes_root = tmp_path / "notes"
+        settings.notes_chat.index_dir = tmp_path / "home"
+        settings.notes_chat.semantic_enabled = False
+        for existing in ("notes", "home"):
+            (tmp_path / existing).mkdir()
+            (tmp_path / existing).chmod(0o755)
+
+        with (
+            patch("config.settings.default_chirp_home", return_value=tmp_path / "home"),
+            patch(
+                "config.settings.default_notes_root",
+                return_value=tmp_path / "notes",
+            ),
+        ):
+            settings.ensure_directories_exist()
+
+        assert stat.S_IMODE((tmp_path / "home").stat().st_mode) == 0o700
+        assert stat.S_IMODE((tmp_path / "notes").stat().st_mode) == 0o700
+
+    def test_ensure_directories_leaves_custom_notes_root_mode(self, tmp_path):
+        settings = ChirpSettings()
+        settings.directories.notes_root = tmp_path / "custom-notes"
+        settings.notes_chat.index_dir = tmp_path / "home"
+        settings.notes_chat.semantic_enabled = False
+        (tmp_path / "custom-notes").mkdir()
+        (tmp_path / "custom-notes").chmod(0o755)
+
+        with patch(
+            "config.settings.default_chirp_home", return_value=tmp_path / "home"
+        ):
+            settings.ensure_directories_exist()
+
+        assert stat.S_IMODE((tmp_path / "custom-notes").stat().st_mode) == 0o755
 
     def test_config_path_lives_under_chirp_home(self):
         assert ChirpSettings.get_config_path() == Path.home() / ".chirp" / "config.toml"

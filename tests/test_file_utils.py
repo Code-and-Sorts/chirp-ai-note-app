@@ -189,6 +189,14 @@ class TestAtomicWrite:
         atomic_write_json(target, {"files": {"a": 1}})
         assert json.loads(target.read_text()) == {"files": {"a": 1}}
 
+    def test_preserves_tightened_permissions_of_existing_file(self, tmp_path):
+        target = tmp_path / "transcript.txt"
+        target.write_text("old")
+        target.chmod(0o600)
+        atomic_write_text(target, "new")
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+        assert target.read_text(encoding="utf-8") == "new"
+
     def test_failure_cleans_temp_and_preserves_original(self, tmp_path, monkeypatch):
         target = tmp_path / "notes.md"
         target.write_text("original")

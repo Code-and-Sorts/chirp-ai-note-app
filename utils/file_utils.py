@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tomllib
 import unicodedata
 import uuid
@@ -27,19 +28,30 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
     content or the new content. The temp name is unique per invocation
     (pid + random suffix) so concurrent writers can't clobber each other's
     temp file; on failure this writer's temp file is removed and the original
-    error re-raised.
+    error re-raised. An existing target's permission bits are carried over to
+    the replacement — the temp file is created under the process umask, and
+    replacing a deliberately tightened file (e.g. 0600) with a 0644 one would
+    silently widen access to its contents.
     """
+    try:
+        existing_mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError:
+        existing_mode = None
     tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         with tmp_path.open("wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+        if existing_mode is not None:
+            tmp_path.chmod(existing_mode)
         tmp_path.replace(path)
     except OSError:
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError:
+            # Cleanup is best-effort; raising here would mask the original
+            # write/replace error being propagated below.
             pass
         raise
 
@@ -232,6 +244,9 @@ def ensure_private_directory(path: Path, *, tighten_existing: bool = False) -> N
         try:
             path.chmod(0o700)
         except OSError:
+            # Best-effort hardening: a filesystem that rejects chmod (e.g.
+            # some network mounts) must not block the write path that needs
+            # this directory.
             pass
 
 
