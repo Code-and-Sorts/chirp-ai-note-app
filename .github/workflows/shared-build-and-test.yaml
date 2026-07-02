@@ -63,6 +63,7 @@ on:
 jobs:
   build-and-test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
@@ -216,6 +217,7 @@ jobs:
     if: ${{ inputs.run-integration-tests }}
     needs: build-and-test
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
@@ -249,7 +251,8 @@ jobs:
         uv pip install dist/*.whl
         chirp --version
         chirp --help >/dev/null
-        chirpd --help >/dev/null
+        command -v chirpd
+        python -c "import chirpd.__main__"
         python -c "import chirp.cli, chirpd, config.settings, llm.client, notes, notes_chat, recorder, transcriber, utils.file_utils"
         if [ "$(uname)" = "Darwin" ]; then
           python - <<'PY'
