@@ -246,9 +246,11 @@ jobs:
     - name: 🧪 Install wheel and smoke-test the CLI
       run: |
         set -euo pipefail
-        uv venv smoke-env
-        source smoke-env/bin/activate
+        uv venv "$RUNNER_TEMP/smoke-env"
+        source "$RUNNER_TEMP/smoke-env/bin/activate"
         uv pip install dist/*.whl
+        mkdir "$RUNNER_TEMP/smoke-cwd"
+        cd "$RUNNER_TEMP/smoke-cwd"
         chirp --version
         chirp --help >/dev/null
         command -v chirpd
