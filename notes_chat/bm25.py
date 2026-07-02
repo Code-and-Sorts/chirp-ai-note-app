@@ -6,6 +6,8 @@ from typing import Any
 
 from rank_bm25 import BM25Okapi
 
+from utils.file_utils import atomic_write_json
+
 logger = logging.getLogger(__name__)
 
 # Process-local BM25 model cache keyed by bm25.json path, invalidated on
@@ -177,8 +179,7 @@ def rebuild_bm25_index(
         }
 
         bm25_file.parent.mkdir(parents=True, exist_ok=True)
-        with bm25_file.open("w") as f:
-            json.dump(bm25_data, f, indent=2)
+        atomic_write_json(bm25_file, bm25_data)
 
         # Drop the cached model: the rewrite may land within the filesystem's
         # mtime resolution, so the fingerprint alone wouldn't invalidate it.
@@ -267,17 +268,15 @@ def append_bm25_index(
         merged_metadatas.append(metadata)
 
     bm25_file.parent.mkdir(parents=True, exist_ok=True)
-    with bm25_file.open("w") as f:
-        json.dump(
-            {
-                "doc_ids": merged_ids,
-                "corpus": merged_corpus,
-                "documents": merged_documents,
-                "metadatas": merged_metadatas,
-            },
-            f,
-            indent=2,
-        )
+    atomic_write_json(
+        bm25_file,
+        {
+            "doc_ids": merged_ids,
+            "corpus": merged_corpus,
+            "documents": merged_documents,
+            "metadatas": merged_metadatas,
+        },
+    )
 
     _MODEL_CACHE.pop(str(bm25_file), None)
 

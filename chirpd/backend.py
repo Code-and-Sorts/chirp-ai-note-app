@@ -23,8 +23,10 @@ ModelRole = Literal["chat", "embed"]
 class LLMBackend(Protocol):
     """Inference-backend protocol used by ``DaemonState``."""
 
-    async def load(self, repo: str, role: ModelRole) -> Any:
-        """Load ``repo`` for ``role`` and return an opaque model handle."""
+    async def load(
+        self, repo: str, role: ModelRole, revision: str | None = None
+    ) -> Any:
+        """Load ``repo`` (optionally pinned to ``revision``) and return a handle."""
 
     async def unload(self, handle: Any) -> None:
         """Release the resources held by a previously loaded ``handle``."""
@@ -51,7 +53,7 @@ class MLXBackend:
     """Production backend wrapping ``mlx_lm`` + ``huggingface_hub``."""
 
     async def load(
-        self, repo: str, role: ModelRole
+        self, repo: str, role: ModelRole, revision: str | None = None
     ) -> Any:  # pragma: no cover — opt-in @slow @integration per AC-27
         try:
             from huggingface_hub import snapshot_download
@@ -65,7 +67,7 @@ class MLXBackend:
 
         try:
             local_path = await asyncio.to_thread(
-                snapshot_download, repo, local_files_only=True
+                snapshot_download, repo, local_files_only=True, revision=revision
             )
         except LocalEntryNotFoundError as err:
             raise LLMModelLoadFailed(
@@ -339,7 +341,9 @@ class FakeBackend:
         self.last_options: dict[str, Any] | None = None
         self.embed_calls: list[list[str]] = []
 
-    async def load(self, repo: str, role: ModelRole) -> Any:
+    async def load(
+        self, repo: str, role: ModelRole, revision: str | None = None
+    ) -> Any:
         self.load_calls.append((repo, role))
         if self.load_delay_s > 0:
             await asyncio.sleep(self.load_delay_s)

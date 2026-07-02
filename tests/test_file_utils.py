@@ -1,11 +1,20 @@
+import json
+import os
+import stat
 import time
+import tomllib
 from datetime import date
 from unittest.mock import Mock
 
+import pytest
 import tomli_w
 
 from utils.file_utils import (
     NoteRecord,
+    atomic_write_json,
+    atomic_write_text,
+    atomic_write_toml,
+    ensure_private_directory,
     get_file_size_mb,
     list_notes,
     sanitize_filename,
@@ -150,3 +159,70 @@ def _write_meta(note_dir, title, iso, tags=None):
     }
     with (note_dir / "meta.toml").open("wb") as fh:
         tomli_w.dump(payload, fh)
+
+
+class TestAtomicWrite:
+    def test_text_roundtrip(self, tmp_path):
+        target = tmp_path / "notes.md"
+        atomic_write_text(target, "hello world")
+        assert target.read_text(encoding="utf-8") == "hello world"
+
+    def test_replaces_existing_content(self, tmp_path):
+        target = tmp_path / "transcript.txt"
+        target.write_text("old")
+        atomic_write_text(target, "new")
+        assert target.read_text(encoding="utf-8") == "new"
+
+    def test_no_temp_files_left_behind(self, tmp_path):
+        target = tmp_path / "meta.toml"
+        atomic_write_toml(target, {"title": "t"})
+        assert [f.name for f in tmp_path.iterdir()] == ["meta.toml"]
+
+    def test_toml_roundtrip(self, tmp_path):
+        target = tmp_path / "meta.toml"
+        atomic_write_toml(target, {"title": "Standup", "tags": ["a", "b"]})
+        with target.open("rb") as fh:
+            assert tomllib.load(fh) == {"title": "Standup", "tags": ["a", "b"]}
+
+    def test_json_roundtrip(self, tmp_path):
+        target = tmp_path / "manifest.json"
+        atomic_write_json(target, {"files": {"a": 1}})
+        assert json.loads(target.read_text()) == {"files": {"a": 1}}
+
+    def test_failure_cleans_temp_and_preserves_original(self, tmp_path, monkeypatch):
+        target = tmp_path / "notes.md"
+        target.write_text("original")
+
+        def explode(_fd):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "fsync", explode)
+        with pytest.raises(OSError, match="disk full"):
+            atomic_write_text(target, "partial")
+        assert target.read_text(encoding="utf-8") == "original"
+        assert [f.name for f in tmp_path.iterdir()] == ["notes.md"]
+
+
+class TestEnsurePrivateDirectory:
+    def _mode(self, path):
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_new_directory_is_owner_only(self, tmp_path):
+        target = tmp_path / "chirp-home"
+        ensure_private_directory(target)
+        assert target.is_dir()
+        assert self._mode(target) == 0o700
+
+    def test_existing_directory_keeps_mode_by_default(self, tmp_path):
+        target = tmp_path / "notes-root"
+        target.mkdir()
+        target.chmod(0o755)
+        ensure_private_directory(target)
+        assert self._mode(target) == 0o755
+
+    def test_tighten_existing_chmods_to_owner_only(self, tmp_path):
+        target = tmp_path / "chirp-home"
+        target.mkdir()
+        target.chmod(0o755)
+        ensure_private_directory(target, tighten_existing=True)
+        assert self._mode(target) == 0o700

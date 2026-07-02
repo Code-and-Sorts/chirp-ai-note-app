@@ -176,7 +176,9 @@ class DaemonState:
                     return existing
 
                 await self._enforce_resident_cap(entry.role, incoming_alias=alias)
-                handle = await self._backend.load(entry.hf_repo, entry.role)
+                handle = await self._backend.load(
+                    entry.hf_repo, entry.role, revision=entry.revision
+                )
                 now = datetime.now(UTC)
                 model = LoadedModel(
                     alias=alias,

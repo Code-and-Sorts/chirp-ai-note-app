@@ -11,6 +11,7 @@ from config.settings import ChirpSettings
 from notes.constants import DEFAULT_MEETING_NAME
 from recorder.live_types import DashboardEvent, SpeechChunk, TranscriptSegment
 from transcriber.whisper_transcriber import WhisperTranscriber
+from utils.file_utils import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +278,7 @@ class LiveTranscriber(threading.Thread):
         for segment in segments:
             timestamp = self._format_timestamp(segment.start)
             lines.append(f"[{timestamp}] {segment.text}")
-        output_path.write_text("\n".join(lines), encoding="utf-8")
+        atomic_write_text(output_path, "\n".join(lines))
 
     def close(self) -> None:
         """Release the underlying Whisper model. Idempotent."""

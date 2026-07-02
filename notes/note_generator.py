@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import tomli_w
 from rapidfuzz import fuzz, utils
 from rich.console import Console
 
@@ -18,7 +17,14 @@ from llm.client import LLMClient
 from llm.registry import resolved_chat_model
 from notes.constants import DEFAULT_MEETING_NAME
 from notes.template_engine import TemplateEngine
-from utils.file_utils import META_FILENAME, NOTES_FILENAME, NoteRecord, list_notes
+from utils.file_utils import (
+    META_FILENAME,
+    NOTES_FILENAME,
+    NoteRecord,
+    atomic_write_text,
+    atomic_write_toml,
+    list_notes,
+)
 from utils.popup_manager import PopupManager
 
 logger = logging.getLogger(__name__)
@@ -330,7 +336,7 @@ class NoteGenerator:
         body = self.template_engine.render_meeting_section(meeting_notes)
         content = self._format_generated_note(body, record.created_at)
 
-        notes_path.write_text(content, encoding="utf-8")
+        atomic_write_text(notes_path, content)
         self._update_meta(record.dir)
         self._auto_index_note(notes_path)
 
@@ -395,8 +401,7 @@ class NoteGenerator:
         meta["indexed_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
 
         meta_path.parent.mkdir(parents=True, exist_ok=True)
-        with meta_path.open("wb") as fh:
-            tomli_w.dump(meta, fh)
+        atomic_write_toml(meta_path, meta)
 
     def _format_generated_note(self, body: str, note_date: datetime) -> str:
         metadata = {

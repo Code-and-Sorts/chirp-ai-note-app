@@ -8,7 +8,21 @@ version = "0.0.5-alpha"
 description = "Meeting recorder CLI that transcribes and generates AI notes"
 authors = [{name = "Colby Timm"}]
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.11"
+keywords = ["meetings", "transcription", "whisper", "notes", "mlx", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Capture/Recording",
+    "Topic :: Text Processing :: Linguistic",
+]
 dependencies = [
     "typer>=0.9.0",
     "rich>=14.1.0",
@@ -31,6 +45,12 @@ dependencies = [
     "huggingface_hub>=1.5.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "psutil>=5.9",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Code-and-Sorts/chirp-ai-note-app"
+Repository = "https://github.com/Code-and-Sorts/chirp-ai-note-app"
+Issues = "https://github.com/Code-and-Sorts/chirp-ai-note-app/issues"
+Changelog = "https://github.com/Code-and-Sorts/chirp-ai-note-app/blob/main/CHANGELOG.md"
 
 [project.scripts]
 chirp = "chirp.cli:app"

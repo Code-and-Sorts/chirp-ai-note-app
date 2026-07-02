@@ -50,8 +50,13 @@ LAUNCH_AGENT_LABEL: Final[str] = "com.chirp.chirpd"
 LAUNCH_AGENT_PLIST_PATH: Final[Path] = (
     Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 )
+# Deliberately NOT chirpd.log: launchd holds this fd open for the daemon's
+# lifetime, so if it pointed at the file RotatingFileHandler rotates, launchd
+# would keep writing to the renamed inode (lost output) and its writes would
+# bypass the rotation size cap. This file only captures pre-logging stdout/
+# stderr (startup crashes, tracebacks); structured logs live in chirpd.log.
 LAUNCH_AGENT_LOG_PATH: Final[Path] = (
-    Path.home() / "Library" / "Logs" / "chirp" / "chirpd.log"
+    Path.home() / "Library" / "Logs" / "chirp" / "chirpd.launchd.log"
 )
 
 _LAUNCHCTL_TIMEOUT_S: Final[float] = 10.0

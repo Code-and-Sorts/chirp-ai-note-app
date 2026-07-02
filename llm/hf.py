@@ -226,7 +226,10 @@ def infer_role(metadata: HfRepoMetadata) -> Literal["chat", "embed"]:
 
 
 def download_model(
-    repo_id: str, *, progress: ProgressCallback | None = None
+    repo_id: str,
+    *,
+    revision: str | None = None,
+    progress: ProgressCallback | None = None,
 ) -> DownloadResult:
     """Snapshot-download ``repo_id`` into the standard HF cache.
 
@@ -256,7 +259,9 @@ def download_model(
     tqdm_cls = _build_tqdm_adapter(state, progress)
 
     try:
-        local_path = snapshot_download(repo_id=repo_id, tqdm_class=tqdm_cls)
+        local_path = snapshot_download(
+            repo_id=repo_id, revision=revision, tqdm_class=tqdm_cls
+        )
     except RepositoryNotFoundError as err:
         raise HfRepoNotFound(repo_id) from err
     except HfHubHTTPError as err:

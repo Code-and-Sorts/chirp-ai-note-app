@@ -107,7 +107,9 @@ async def test_concurrent_load_of_same_alias_serializes() -> None:
     from chirpd.backend import ModelRole
 
     class _BlockingBackend(FakeBackend):
-        async def load(self, repo: str, role: ModelRole) -> Any:
+        async def load(
+            self, repo: str, role: ModelRole, revision: str | None = None
+        ) -> Any:
             self.load_calls.append((repo, role))
             inside_backend_load.set()
             await release_backend_load.wait()

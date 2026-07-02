@@ -17,7 +17,7 @@ from config.settings import ChirpSettings
 from llm.client import LLMClient
 from llm.exceptions import LLMError
 from notes_chat.types import Chunk, NoteMeta
-from utils.file_utils import META_FILENAME, _resolve_created_at
+from utils.file_utils import META_FILENAME, _resolve_created_at, atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -445,8 +445,7 @@ class IndexManager:
         # A lexical-only add_note never opens Chroma (which used to create
         # index_dir as a side effect), so ensure the directory exists here.
         self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
-        with self.manifest_file.open("w") as f:
-            json.dump(manifest, f, indent=2)
+        atomic_write_json(self.manifest_file, manifest)
 
     def _chunks_for_file(self, file_path: Path) -> list[Chunk]:
         """Read a note file and split it into chunks (no embedding / Chroma touch).

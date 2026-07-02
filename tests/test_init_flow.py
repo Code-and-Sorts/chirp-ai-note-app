@@ -7,6 +7,7 @@ platform-agnostic, and never spawn a real daemon or write a real models.toml.
 
 import sys
 from io import StringIO
+from types import SimpleNamespace
 
 from rich.console import Console
 
@@ -1359,7 +1360,7 @@ def test_ensure_chat_ready_downloads_and_warms(monkeypatch):
     downloaded: list[str] = []
     monkeypatch.setattr(
         "llm.hf.download_model",
-        lambda repo, progress=None: downloaded.append(repo),
+        lambda repo, revision=None, progress=None: downloaded.append(repo),
     )
     monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
     warmed: list[tuple[str, str]] = []
@@ -1383,7 +1384,7 @@ def test_ensure_chat_ready_noop_when_unregistered(monkeypatch):
     downloaded: list[str] = []
     monkeypatch.setattr(
         "llm.hf.download_model",
-        lambda repo, progress=None: downloaded.append(repo),
+        lambda repo, revision=None, progress=None: downloaded.append(repo),
     )
 
     init_flow._ensure_default_chat_ready(_console())
@@ -1398,7 +1399,7 @@ def test_ensure_chat_ready_download_failure_skips_warm(monkeypatch):
         "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
     )
 
-    def _boom(repo, progress=None):
+    def _boom(repo, revision=None, progress=None):
         raise HfError("network down")
 
     monkeypatch.setattr("llm.hf.download_model", _boom)
@@ -1424,7 +1425,9 @@ def test_ensure_chat_ready_warm_failure_is_graceful(monkeypatch):
     monkeypatch.setattr(
         "llm.registry.read_registry", lambda path=None: _registry_with_default("qwen")
     )
-    monkeypatch.setattr("llm.hf.download_model", lambda repo, progress=None: None)
+    monkeypatch.setattr(
+        "llm.hf.download_model", lambda repo, revision=None, progress=None: None
+    )
     monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
 
     class _Client:
@@ -1443,7 +1446,15 @@ def test_ensure_chat_ready_warm_failure_is_graceful(monkeypatch):
 
 
 def test_setup_chat_model_registers_downloads_warms(monkeypatch):
-    monkeypatch.setattr("llm.hf.download_model", lambda repo, progress=None: None)
+    pinned: list[str | None] = []
+    monkeypatch.setattr(
+        "llm.hf.validate_repo",
+        lambda repo: SimpleNamespace(sha="abc123"),
+    )
+    monkeypatch.setattr(
+        "llm.hf.download_model",
+        lambda repo, revision=None, progress=None: pinned.append(revision),
+    )
     monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
     monkeypatch.setattr(
         "llm.registry.read_registry", lambda path=None: _empty_registry()
@@ -1468,15 +1479,21 @@ def test_setup_chat_model_registers_downloads_warms(monkeypatch):
     assert len(written) == 1
     assert written[0].default_chat == "qwen2.5-7b-instruct-4bit"
     assert "qwen2.5-7b-instruct-4bit" in written[0].models
+    assert written[0].models["qwen2.5-7b-instruct-4bit"].revision == "abc123"
+    assert pinned == ["abc123"]
     assert warmed == [("qwen2.5-7b-instruct-4bit", "chat")]
 
 
 def test_setup_chat_model_download_failure_returns_false(monkeypatch):
     from llm.hf import HfError
 
-    def _boom(repo, progress=None):
+    def _boom(repo, revision=None, progress=None):
         raise HfError("network down")
 
+    monkeypatch.setattr(
+        "llm.hf.validate_repo",
+        lambda repo: SimpleNamespace(sha="abc123"),
+    )
     monkeypatch.setattr("llm.hf.download_model", _boom)
     monkeypatch.setattr("llm.cli._progress.RichProgressCallback", _FakeProgressCallback)
     written = []

@@ -25,6 +25,7 @@ from recorder.audio_mixer import (
     StereoToMonoMixer,
 )
 from recorder.live_types import AudioFrame
+from utils.file_utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +271,6 @@ class LiveAudioStream:
             self._wave = None
 
     def save_recording(self, file_path: Path, title: str | None = None) -> None:
-        import json
 
         if self._temp_wav_path is None or not self._temp_wav_path.exists():
             raise RuntimeError("No audio data captured")
@@ -297,8 +297,7 @@ class LiveAudioStream:
                 "channels": self.channels,
                 "sample_rate": self._sample_rate,
             }
-            with metadata_file.open("w", encoding="utf-8") as fh:
-                json.dump(metadata, fh, indent=2)
+            atomic_write_json(metadata_file, metadata)
 
     def close(self) -> None:
         if self._cap_ctx is not None or self._mixer_thread is not None:

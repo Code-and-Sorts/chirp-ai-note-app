@@ -35,13 +35,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import tomli_w
 from rich.console import Console
 from rich.text import Text
 
 import audio_capture
 from chirp import exit_codes, glyphs
 from config.settings import ChirpSettings, _stringify_paths
+from utils.file_utils import atomic_write_toml, ensure_private_directory
 
 EXIT_NOT_APPLE_SILICON = exit_codes.NOT_APPLE_SILICON
 
@@ -585,9 +585,8 @@ def _merge_config(
             existing[section] = {}
         existing[section].update(values)
 
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    with config_path.open("wb") as fh:
-        tomli_w.dump(existing, fh)
+    ensure_private_directory(config_path.parent, tighten_existing=True)
+    atomic_write_toml(config_path, existing)
 
 
 def _backup_unparsable_config(config_path: Path) -> Path:
@@ -753,7 +752,7 @@ def _ensure_default_chat_ready(console: Console) -> None:
     console.print(f" [dim]preparing chat model {alias} (one-time download)...[/dim]")
     callback = RichProgressCallback(entry.hf_repo, console=console)
     try:
-        hf.download_model(entry.hf_repo, progress=callback)
+        hf.download_model(entry.hf_repo, revision=entry.revision, progress=callback)
     except KeyboardInterrupt:
         console.print(
             " [yellow]![/yellow] skipped — the model will download on first use."
@@ -807,9 +806,14 @@ def _setup_chat_model(console: Console, hf_repo: str) -> bool:
         console.print(f" [yellow]![/yellow] invalid model repo {hf_repo}: {exc}")
         return False
 
+    try:
+        pinned_sha = hf.validate_repo(hf_repo).sha
+    except (KeyboardInterrupt, hf.HfError):
+        pinned_sha = None
+
     callback = RichProgressCallback(hf_repo, console=console)
     try:
-        hf.download_model(hf_repo, progress=callback)
+        hf.download_model(hf_repo, revision=pinned_sha, progress=callback)
     except KeyboardInterrupt:
         console.print(" [yellow]![/yellow] skipped.")
         return False
@@ -823,7 +827,9 @@ def _setup_chat_model(console: Console, hf_repo: str) -> bool:
     try:
         registry = read_registry()
         registry = upsert_model(
-            registry, alias, RegistryEntry(hf_repo=hf_repo, role="chat")
+            registry,
+            alias,
+            RegistryEntry(hf_repo=hf_repo, role="chat", revision=pinned_sha),
         )
         registry = set_default_for_role(registry, alias)
         write_registry(registry)

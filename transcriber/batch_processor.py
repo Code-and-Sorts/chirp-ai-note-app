@@ -9,7 +9,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import tomli_w
 from rich.console import Console, RenderableType
 from rich.live import Live
 from rich.spinner import Spinner
@@ -24,6 +23,8 @@ from utils.file_utils import (
     NOTES_FILENAME,
     TRANSCRIPT_FILENAME,
     NoteRecord,
+    atomic_write_text,
+    atomic_write_toml,
     list_notes,
 )
 from utils.popup_manager import PopupManager
@@ -330,7 +331,7 @@ class BatchProcessor:
         if not result.get("success"):
             raise RuntimeError(result.get("error") or "whisper failed")
         full_text = result.get("full_text", "") or ""
-        transcript_path.write_text(full_text, encoding="utf-8")
+        atomic_write_text(transcript_path, full_text)
         ctx.transcript_words = len(full_text.split())
         ctx.view.done(
             Stage.TRANSCRIBE,
@@ -438,5 +439,4 @@ def _read_meta(meta_path: Path) -> dict[str, Any]:
 
 def _write_meta(meta_path: Path, meta: dict[str, Any]) -> None:
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    with meta_path.open("wb") as fh:
-        tomli_w.dump(meta, fh)
+    atomic_write_toml(meta_path, meta)

@@ -1,17 +1,59 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 import tomllib
 import unicodedata
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
+
+import tomli_w
 
 AUDIO_FILENAME = "audio.wav"
 TRANSCRIPT_FILENAME = "transcript.txt"
 NOTES_FILENAME = "notes.md"
 META_FILENAME = "meta.toml"
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` atomically (unique temp + fsync + replace).
+
+    Readers never observe a partially written file: they see either the old
+    content or the new content. The temp name is unique per invocation
+    (pid + random suffix) so concurrent writers can't clobber each other's
+    temp file; on failure this writer's temp file is removed and the original
+    error re-raised.
+    """
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp_path.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp_path.replace(path)
+    except OSError:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+    atomic_write_bytes(path, content.encode(encoding))
+
+
+def atomic_write_toml(path: Path, payload: dict[str, Any]) -> None:
+    atomic_write_bytes(path, tomli_w.dumps(payload).encode("utf-8"))
+
+
+def atomic_write_json(path: Path, payload: Any, *, indent: int = 2) -> None:
+    atomic_write_bytes(path, json.dumps(payload, indent=indent).encode("utf-8"))
 
 
 @dataclass
@@ -172,6 +214,25 @@ def ensure_directory(directory: Path) -> bool:
         return True
     except OSError:
         return False
+
+
+def ensure_private_directory(path: Path, *, tighten_existing: bool = False) -> None:
+    """Create ``path`` (and parents) and restrict it to the owner (0700).
+
+    Notes and config hold verbatim meeting content, so the containing
+    directories must not be group/world readable. A directory that already
+    exists keeps its permissions unless ``tighten_existing`` is set — used for
+    fully app-owned roots like the chirp home, where user customization of
+    modes is not expected. The chmod is best-effort: failure to tighten never
+    blocks the write path that needs the directory.
+    """
+    existed = path.is_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    if not existed or tighten_existing:
+        try:
+            path.chmod(0o700)
+        except OSError:
+            pass
 
 
 def clean_old_files(directory: Path, days_old: int = 30) -> int:

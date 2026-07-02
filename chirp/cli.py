@@ -27,7 +27,7 @@ from config.settings import ChirpSettings, get_settings
 from llm.cli.daemon import daemon_app
 from llm.cli.models import app as models_app
 from llm.registry import resolved_chat_model, resolved_embed_model
-from utils.file_utils import NoteRecord, list_notes
+from utils.file_utils import NoteRecord, atomic_write_text, list_notes
 from utils.tls import enable_system_trust_store
 
 logger = logging.getLogger(__name__)
@@ -614,14 +614,27 @@ def _run_live_transcription(
     try:
         with _quiet_tty_logging():
             result: LiveSessionResult = session.run()
+    except KeyboardInterrupt:
+        console.print("[yellow]recording stopped by user[/yellow]")
+        return
     except ImportError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(exit_codes.RUNTIME_ERROR)
     except WhisperModelLoadError as e:
         console.print(f"[red]{e!s}[/red]")
         raise typer.Exit(exit_codes.MODEL_LOAD_FAILED)
+    except AudioDeviceError as e:
+        console.print(f"[red]audio device error: {e!s}[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
     except RecordingError as e:
         console.print(f"[red]live recording error: {e!s}[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
+    except ConfigurationError as e:
+        console.print(f"[red]configuration error: {e!s}[/red]")
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
+    except Exception as e:  # noqa: BLE001 - top-level CLI handler; all specific errors caught above
+        logger.debug("Unexpected error in live transcription: %s", e, exc_info=True)
+        console.print(f"[red]unexpected error: {e!s}[/red]")
         raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
     from utils.time_utils import format_duration
@@ -1081,7 +1094,7 @@ def notes_edit(
         console.print("[yellow]changes not saved.[/yellow]")
         return
 
-    record.notes.write_text(result.content, encoding="utf-8")
+    atomic_write_text(record.notes, result.content)
     console.print(f"[green]updated note: {record.notes}[/green]")
 
     if settings.notes_chat.auto_index:

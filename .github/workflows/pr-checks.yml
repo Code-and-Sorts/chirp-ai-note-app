@@ -35,14 +35,19 @@ jobs:
       contents: read
     with:
       python-version: '3.11'
+      python-matrix: '["3.11", "3.12", "3.13"]'
       os-matrix: '["macos-latest"]'
       upload-artifacts: true
       update-version-for-pr: true
-      run-integration-tests: false
+      run-integration-tests: true
 
   publish-to-test-pypi:
     needs: build-and-test
-    if: github.event.pull_request.draft == false
+    # Opt-in via the `publish-testpypi` PR label instead of every push:
+    # unlabeled PRs would otherwise burn a permanent .devN version in the
+    # TestPyPI namespace (and hand all repo secrets to the publish job) on
+    # every synchronize event.
+    if: github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'publish-testpypi')
     uses: ./.github/workflows/shared-publish-package.yaml
     with:
       python-version: '3.11'
