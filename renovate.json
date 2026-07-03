@@ -3,9 +3,21 @@
   "extends": [
     "config:recommended"
   ],
-  "automerge": true,
-  "platformAutomerge": true,
+  "automerge": false,
   "packageRules": [
+    {
+      "description": "Dev tooling and GitHub Actions are exercised end-to-end by CI itself, so a green check is a meaningful gate — safe to automerge at any level",
+      "matchDepTypes": ["devDependencies", "action"],
+      "automerge": true,
+      "platformAutomerge": true
+    },
+    {
+      "description": "Runtime deps ship to users with unbounded >= floors; patch bumps automerge, minor/major require review because CI's mocked LLM/audio seams can't prove them safe",
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "platformAutomerge": true
+    },
     {
       "description": "gh-aw manages github/gh-aw-actions pins via the agentic-workflows toolchain; Renovate must not touch them",
       "matchPackageNames": [
@@ -18,7 +30,8 @@
       "description": "Exact-pinned MLX deps drive the only real-inference code path, which is `# pragma: no cover` and never exercised by CI's FakeBackend. A green check on a bump proves nothing about real inference, so these require manual review before merge.",
       "matchPackageNames": [
         "mlx-lm",
-        "mlx-embeddings"
+        "mlx-embeddings",
+        "mlx-whisper"
       ],
       "automerge": false,
       "platformAutomerge": false

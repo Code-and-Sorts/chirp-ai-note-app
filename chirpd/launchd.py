@@ -51,7 +51,7 @@ LAUNCH_AGENT_PLIST_PATH: Final[Path] = (
     Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 )
 LAUNCH_AGENT_LOG_PATH: Final[Path] = (
-    Path.home() / "Library" / "Logs" / "chirp" / "chirpd.log"
+    Path.home() / "Library" / "Logs" / "chirp" / "chirpd.launchd.log"
 )
 
 _LAUNCHCTL_TIMEOUT_S: Final[float] = 10.0

@@ -43,6 +43,7 @@ class RegistryEntry(BaseModel):
     hf_repo: str
     role: ModelRole
     options: dict[str, Any] = Field(default_factory=dict)
+    revision: str | None = None
 
 
 class Registry(BaseModel):

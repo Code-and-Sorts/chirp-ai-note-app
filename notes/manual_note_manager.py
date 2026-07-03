@@ -6,12 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-import tomli_w
-
 from config.settings import ChirpSettings
 from utils.file_utils import (
     META_FILENAME,
     NOTES_FILENAME,
+    atomic_write_toml,
     ensure_directory,
     slugify,
 )
@@ -127,5 +126,4 @@ class ManualNoteManager:
             "tags": [],
             "source": "manual",
         }
-        with meta_path.open("wb") as fh:
-            tomli_w.dump(meta, fh)
+        atomic_write_toml(meta_path, meta)

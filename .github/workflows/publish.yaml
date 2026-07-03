@@ -31,7 +31,8 @@ jobs:
       upload-artifacts: true
       update-version-for-pr: false
       package-version: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
-      run-integration-tests: false
+      run-integration-tests: true
+      require-signing: ${{ github.event_name == 'release' || github.event.inputs.is-test-pypi != 'true' }}
     secrets: inherit
 
   publish-package:

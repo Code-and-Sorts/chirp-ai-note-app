@@ -143,12 +143,14 @@ def register_model(
             2,
         )
     resolved_alias = _resolve_alias(hf_repo, alias)
-    _download(hf_repo, resolved_alias)
+    _download(hf_repo, resolved_alias, revision=metadata.sha)
 
     registry = _read_registry()
     previous_entry = registry.models.get(resolved_alias)
     default_was_unset = _default_unset_for_role(registry, resolved_role)
-    registry = _mutate(registry, resolved_alias, hf_repo, resolved_role)
+    registry = _mutate(
+        registry, resolved_alias, hf_repo, resolved_role, revision=metadata.sha
+    )
     if default_was_unset and previous_entry is None:
         registry = set_default_for_role(registry, resolved_alias)
     _write(registry)
@@ -434,7 +436,13 @@ def pull_command(
     """Force-redownload a registered model's weights, then warm it."""
     registry = _read_registry()
     entry = _require_registered(registry, alias)
-    result = _download(entry.hf_repo, alias)
+    refreshed_sha = _current_repo_sha(entry.hf_repo) or entry.revision
+    result = _download(entry.hf_repo, alias, revision=refreshed_sha)
+    if refreshed_sha is not None and refreshed_sha != entry.revision:
+        registry = upsert_model(
+            registry, alias, entry.model_copy(update={"revision": refreshed_sha})
+        )
+        _write(registry)
 
     note = "cache hit" if result.cache_hit else f"{result.bytes_downloaded} bytes"
     console.print(f"Pulled {alias} ({note}).", markup=False, soft_wrap=True)
@@ -446,6 +454,13 @@ def pull_command(
         return
     _load_on_daemon(alias, entry.role)
     console.print(f"Warmed {alias}.", markup=False, soft_wrap=True)
+
+
+def _current_repo_sha(hf_repo: str) -> str | None:
+    try:
+        return hf.validate_repo(hf_repo).sha
+    except hf.HfError:
+        return None
 
 
 def _require_registered(registry: Registry, alias: str) -> RegistryEntry:
@@ -596,10 +611,12 @@ def _resolve_alias(hf_repo: str, alias: str | None) -> str:
         )
 
 
-def _download(hf_repo: str, alias: str) -> hf.DownloadResult:
+def _download(
+    hf_repo: str, alias: str, revision: str | None = None
+) -> hf.DownloadResult:
     callback = RichProgressCallback(hf_repo)
     try:
-        return hf.download_model(hf_repo, progress=callback)
+        return hf.download_model(hf_repo, revision=revision, progress=callback)
     except hf.HfRepoNotFound:
         _exit(
             f"Error: HuggingFace repo not found: {hf_repo}. "
@@ -642,8 +659,14 @@ def _read_registry() -> Registry:
         )
 
 
-def _mutate(registry: Registry, alias: str, hf_repo: str, role: ModelRole) -> Registry:
-    entry = RegistryEntry(hf_repo=hf_repo, role=role, options={})
+def _mutate(
+    registry: Registry,
+    alias: str,
+    hf_repo: str,
+    role: ModelRole,
+    revision: str | None = None,
+) -> Registry:
+    entry = RegistryEntry(hf_repo=hf_repo, role=role, options={}, revision=revision)
     try:
         return upsert_model(registry, alias, entry)
     except ValueError:

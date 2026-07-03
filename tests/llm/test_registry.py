@@ -252,6 +252,27 @@ def test_registry_round_trip_chat_and_embed(tmp_path: Path) -> None:
     assert loaded == original
 
 
+def test_registry_roundtrips_pinned_revision(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    pinned = RegistryEntry(
+        hf_repo="mlx-community/gemma-4-4b-it-4bit",
+        role="chat",
+        revision="0123456789abcdef0123456789abcdef01234567",
+    )
+    write_registry(Registry(schema_version=1, models={"gemma": pinned}), path=target)
+    loaded = read_registry(target)
+    assert loaded.models["gemma"].revision == pinned.revision
+
+
+def test_registry_entry_without_revision_is_unpinned(tmp_path: Path) -> None:
+    target = tmp_path / "models.toml"
+    write_registry(
+        Registry(schema_version=1, models={"gemma": _chat_entry()}), path=target
+    )
+    assert read_registry(target).models["gemma"].revision is None
+    assert "revision" not in target.read_text()
+
+
 def test_write_creates_parent_dir(tmp_path: Path) -> None:
     target = tmp_path / "nested" / "deeper" / "models.toml"
     write_registry(Registry(schema_version=1), path=target)

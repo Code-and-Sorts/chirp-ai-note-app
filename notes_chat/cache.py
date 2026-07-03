@@ -4,6 +4,7 @@ import logging
 import time
 
 from notes_chat.config import PROMPT_VERSION, get_notes_config
+from utils.file_utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,7 @@ def cache_answer(question: str, retrieved_ids: list[str], answer: str) -> bool:
             "cache_key": cache_key,
         }
 
-        with cache_file.open("w") as f:
-            json.dump(cache_data, f, indent=2)
+        atomic_write_json(cache_file, cache_data)
 
         _evict_if_needed(cache_dir)
         return True

@@ -4,10 +4,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-import tomli_w
 from platformdirs import user_documents_dir
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from rich.console import Console
+
+from utils.file_utils import atomic_write_toml, ensure_private_directory
 
 SUPPORTED_CONFIG_SCHEMA_VERSION = 1
 
@@ -360,13 +361,15 @@ class ChirpSettings(BaseModel):
         return parent.pop(location[1], _MISSING) is not _MISSING
 
     def save_to_file(self, config_path: Path):
-        config_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(
+            config_path.parent,
+            tighten_existing=config_path.parent == default_chirp_home(),
+        )
 
         config_dict = self.model_dump()
         _stringify_paths(config_dict)
 
-        with config_path.open("wb") as config_file:
-            tomli_w.dump(config_dict, config_file)
+        atomic_write_toml(config_path, config_dict)
 
     def ensure_directories_exist(self):
         chirp_home = default_chirp_home()
@@ -377,8 +380,9 @@ class ChirpSettings(BaseModel):
         ]
         if self.notes_chat.semantic_enabled:
             directories.append(self.notes_chat.index_dir / "chroma")
+        app_owned = {chirp_home, default_notes_root()}
         for directory in directories:
-            directory.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(directory, tighten_existing=directory in app_owned)
 
 
 def _stringify_paths(value):

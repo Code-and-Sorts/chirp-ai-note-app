@@ -4,10 +4,15 @@ on:
   workflow_call:
     inputs:
       python-version:
-        description: 'Python version to use'
+        description: 'Primary Python version (used for artifacts and publishing)'
         required: false
         type: string
         default: '3.11'
+      python-matrix:
+        description: 'Python versions to test on (JSON array); must include python-version'
+        required: false
+        type: string
+        default: '["3.11"]'
       os-matrix:
         description: 'Operating systems to test on (JSON array)'
         required: false
@@ -38,6 +43,11 @@ on:
         required: false
         type: boolean
         default: false
+      require-signing:
+        description: 'Fail the build when Developer ID signing secrets are absent (set for PyPI releases)'
+        required: false
+        type: boolean
+        default: false
     secrets:
       MACOS_CERT_P12:
         required: false
@@ -53,21 +63,23 @@ on:
 jobs:
   build-and-test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJson(inputs.os-matrix) }}
+        python-version: ${{ fromJson(inputs.python-matrix) }}
 
     steps:
     - name: ⤵️ Checkout code
       uses: actions/checkout@v7
 
-    - name: 🐍 Set up Python ${{ inputs.python-version }}
+    - name: 🐍 Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v6
       with:
-        python-version: ${{ inputs.python-version }}
+        python-version: ${{ matrix.python-version }}
 
     - name: 🚀 Install uv with caching
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
@@ -102,10 +114,10 @@ jobs:
       uses: actions/cache@v6
       with:
         path: .venv
-        key: ${{ runner.os }}-python-${{ inputs.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-${{ hashFiles('uv.lock') }}
+        key: ${{ runner.os }}-python-${{ matrix.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-${{ hashFiles('uv.lock') }}
         restore-keys: |
-          ${{ runner.os }}-python-${{ inputs.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-
-          ${{ runner.os }}-python-${{ inputs.python-version }}-venv-
+          ${{ runner.os }}-python-${{ matrix.python-version }}-venv-${{ hashFiles('pyproject.toml', 'scripts/pyproject.toml') }}-
+          ${{ runner.os }}-python-${{ matrix.python-version }}-venv-
 
     - name: ✅ Install dependencies
       run: uv sync --dev
@@ -136,6 +148,9 @@ jobs:
       run: |
         if [ -n "$CERT_P12" ]; then
           echo "enabled=true" >> "$GITHUB_OUTPUT"
+        elif [ "${{ inputs.require-signing }}" = "true" ]; then
+          echo "::error::Developer ID signing secrets are required for this build (require-signing=true) but MACOS_CERT_P12 is not set. Refusing to ship an ad-hoc-signed Chirp.app — it breaks Gatekeeper/TCC permission persistence on user machines." >&2
+          exit 1
         else
           echo "enabled=false" >> "$GITHUB_OUTPUT"
         fi
@@ -191,7 +206,7 @@ jobs:
       run: uv run pytest --cov --cov-report=term
 
     - name: 📤 Upload build artifacts
-      if: ${{ inputs.upload-artifacts }}
+      if: ${{ inputs.upload-artifacts && matrix.python-version == inputs.python-version }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.artifact-name }}
@@ -202,6 +217,7 @@ jobs:
     if: ${{ inputs.run-integration-tests }}
     needs: build-and-test
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
@@ -227,9 +243,26 @@ jobs:
         name: ${{ inputs.artifact-name }}
         path: dist/
 
-    - name: 🧪 Run integration tests
+    - name: 🧪 Install wheel and smoke-test the CLI
       run: |
-        # Install the built package
-        uv pip install dist/*.whl --system
-        # Run integration tests (customize as needed)
-        echo "Integration tests would run here"
+        set -euo pipefail
+        uv venv "$RUNNER_TEMP/smoke-env"
+        source "$RUNNER_TEMP/smoke-env/bin/activate"
+        uv pip install dist/*.whl
+        mkdir "$RUNNER_TEMP/smoke-cwd"
+        cd "$RUNNER_TEMP/smoke-cwd"
+        chirp --version
+        chirp --help >/dev/null
+        command -v chirpd
+        python -c "import chirpd.__main__"
+        python -c "import chirp.cli, chirpd, config.settings, llm.client, notes, notes_chat, recorder, transcriber, utils.file_utils"
+        if [ "$(uname)" = "Darwin" ]; then
+          python - <<'PY'
+        import pathlib, sys
+
+        import audio_capture
+
+        bundle = pathlib.Path(audio_capture.__file__).parent / "Chirp.app"
+        sys.exit(0 if bundle.is_dir() else "Chirp.app helper missing from installed wheel")
+        PY
+        fi

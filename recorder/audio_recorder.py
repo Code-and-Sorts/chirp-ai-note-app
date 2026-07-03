@@ -12,7 +12,6 @@ from pathlib import Path
 from threading import Timer
 
 import numpy as np
-import tomli_w
 
 from audio_capture import AudioCapture, check_macos_version
 from chirp.exceptions import RecordingError
@@ -26,6 +25,7 @@ from recorder.meeting_monitor import MeetingMonitor
 from utils.file_utils import (
     AUDIO_FILENAME,
     META_FILENAME,
+    atomic_write_toml,
     slugify,
 )
 from utils.time_utils import get_recording_duration
@@ -336,5 +336,4 @@ def _read_meta(meta_path: Path) -> dict:
 
 def _write_meta(meta_path: Path, meta: dict) -> None:
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    with meta_path.open("wb") as fh:
-        tomli_w.dump(meta, fh)
+    atomic_write_toml(meta_path, meta)

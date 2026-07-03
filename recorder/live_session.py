@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from recorder.vad_chunker import VADChunker
 
-import tomli_w
 from rich.console import Console
 
 from chirp.exceptions import RecordingError
@@ -22,7 +21,12 @@ from recorder.live_audio import LiveAudioStream
 from recorder.live_dashboard import LiveDashboard
 from recorder.live_transcriber import LiveTranscriber
 from recorder.live_types import DashboardEvent, SpeechChunk
-from utils.file_utils import AUDIO_FILENAME, META_FILENAME, slugify
+from utils.file_utils import (
+    AUDIO_FILENAME,
+    META_FILENAME,
+    atomic_write_toml,
+    slugify,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -324,8 +328,7 @@ class LiveTranscriptionSession:
             "tags": list(self.tags),
         }
         meta_path = note_dir / META_FILENAME
-        with meta_path.open("wb") as fh:
-            tomli_w.dump(meta, fh)
+        atomic_write_toml(meta_path, meta)
 
     def _write_debug_chunk(self, data: bytes, path: Path):
         if not data or not self.audio_stream:
