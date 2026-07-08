@@ -65,6 +65,7 @@ class NoteRecord:
     created_at: datetime
     tags: list[str] = field(default_factory=list)
     title: str | None = None
+    template: str | None = None
 
 
 def sanitize_filename(filename: str) -> str:
@@ -145,6 +146,10 @@ def _build_record(entry: Path) -> NoteRecord | None:
     if not isinstance(title, str):
         title = None
 
+    template = meta_data.get("template")
+    if not isinstance(template, str):
+        template = None
+
     return NoteRecord(
         slug=entry.name,
         dir=entry,
@@ -155,6 +160,7 @@ def _build_record(entry: Path) -> NoteRecord | None:
         created_at=created_at,
         tags=list(tags),
         title=title,
+        template=template,
     )
 
 

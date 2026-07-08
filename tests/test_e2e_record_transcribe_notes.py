@@ -25,8 +25,8 @@ pytestmark = pytest.mark.integration
 
 _XML_TOKENS = [
     '<?xml version="1.0" encoding="UTF-8"?>\n',
-    "<MEETING_NOTES>\n",
-    "<MEETING_TITLE>Quarterly Planning</MEETING_TITLE>\n",
+    "<NOTES>\n",
+    "<TITLE>Quarterly Planning</TITLE>\n",
     "<EXECUTIVE_SUMMARY>The team aligned on Q3 priorities and owners.",
     "</EXECUTIVE_SUMMARY>\n",
     "<AGENDA><ITEM>Review roadmap</ITEM><ITEM>Assign owners</ITEM></AGENDA>\n",
@@ -37,7 +37,7 @@ _XML_TOKENS = [
     "<OPEN_QUESTIONS>None</OPEN_QUESTIONS>\n",
     "<DISCUSSION_HIGHLIGHTS><ITEM>Strong demo feedback</ITEM>",
     "</DISCUSSION_HIGHLIGHTS>\n",
-    "</MEETING_NOTES>\n",
+    "</NOTES>\n",
 ]
 
 

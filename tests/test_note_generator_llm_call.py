@@ -15,7 +15,10 @@ from unittest.mock import Mock, patch
 import pytest
 
 from llm.exceptions import LLMConnectionLost, LLMModelError
-from notes.note_generator import SYSTEM_PROMPT, NoteGenerator
+from notes.note_generator import NoteGenerator
+from notes.note_templates import TemplateLoader, build_system_prompt
+
+SYSTEM_PROMPT = build_system_prompt(TemplateLoader().load_default())
 
 
 @pytest.fixture

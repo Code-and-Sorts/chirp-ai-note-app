@@ -16,6 +16,14 @@ from config.settings import ChirpSettings
 from llm.client import LLMClient
 from llm.registry import resolved_chat_model
 from notes.constants import DEFAULT_MEETING_NAME
+from notes.note_templates import (
+    ROOT_TAG,
+    TITLE_TAG,
+    NoteTemplate,
+    Section,
+    TemplateLoader,
+    build_system_prompt,
+)
 from notes.template_engine import TemplateEngine
 from utils.file_utils import (
     META_FILENAME,
@@ -28,6 +36,18 @@ from utils.file_utils import (
 from utils.popup_manager import PopupManager
 
 logger = logging.getLogger(__name__)
+
+
+def _format_action_item(task: str, owner: str, deadline: str) -> str:
+    parts = []
+    if task.strip():
+        parts.append(task.strip())
+    if owner.strip():
+        parts.append(f"Owner: {owner.strip()}")
+    if deadline.strip():
+        parts.append(f"Deadline: {deadline.strip()}")
+    return " — ".join(parts)
+
 
 # Below the real ~4 so the assembled prompt lands under the context window, not over.
 _CHARS_PER_TOKEN = 3.5
@@ -51,143 +71,19 @@ _TOKEN_MATCH_THRESHOLD = 85
 
 _CONSOLIDATE_MIN_ITEMS = 5
 
-_LIST_KEYS = (
-    "agenda",
-    "action_items",
-    "next_steps",
-    "decisions",
-    "open_questions",
-    "discussion_highlights",
-)
-
-SYSTEM_PROMPT = """You are Chirp, the user's meeting note co-pilot.
-Your sole purpose is to transform raw meeting transcripts into structured meeting notes.
-Always produce notes in a consistent format. Never invent content.
-Always produce notes using the canonical tags below. Never invent content.
-
-<core_principles>
-- Output only what is explicitly stated in the transcript.
-- **NEVER** infer, guess, or fabricate tasks, owners, deadlines, or decisions.
-- Always prioritize the latest statement if contradictions appear.
-  • Example of prioritize latest statement:
-
-    ```text
-    Transcript:
-      • "We'll launch feature X on June 1."
-      • "Actually, make that June 15."
-
-    Notes:
-      • Decisions: Launch feature X on June 15.
-    ```
-
-- If transcript contains no actionable content, output:
-  "Transcript contained no actionable content. No notes available."
-- Maintain professional, neutral, concise tone.
-</core_principles>
-
-<output_contract>
-- Emit a SINGLE well-formed UTF-8 XML document with this exact structure:
-  - XML declaration: <?xml version="1.0" encoding="UTF-8"?>
-  - Root element: <MEETING_NOTES> ... </MEETING_NOTES>
-  - Inside the root, ALWAYS include these child tags in this order:
-    1) <MEETING_TITLE>...</MEETING_TITLE>
-    2) <EXECUTIVE_SUMMARY>...</EXECUTIVE_SUMMARY>
-    3) <AGENDA> <ITEM>...</ITEM> ... </AGENDA>
-    4) <ACTION_ITEMS> <ITEM task="..." owner="..." deadline="..."/> ... </ACTION_ITEMS>
-    5) <NEXT_STEPS> <ITEM>...</ITEM> ... </NEXT_STEPS>
-    6) <DECISIONS> <ITEM>...</ITEM> ... </DECISIONS>
-    7) <OPEN_QUESTIONS> <ITEM>...</ITEM> ... </OPEN_QUESTIONS>
-    8) <DISCUSSION_HIGHLIGHTS> <ITEM>...</ITEM> ... </DISCUSSION_HIGHLIGHTS>
-
-- If a section has no content, include the tag with a single text node "None"
-  (e.g., <AGENDA>None</AGENDA>), except:
-  - For ACTION_ITEMS when empty, emit <ACTION_ITEMS>None</ACTION_ITEMS> (no ITEM children).
-- Do NOT output markdown fences or prose. XML ONLY.
-- Escape XML special characters (&, <, >) in text nodes.
-- For code snippets or multi-line technical blocks, wrap content in <![CDATA[ ... ]]> within the relevant ITEM.
-</output_contract>
-
-<tag_definitions>
-
-<MEETING_TITLE>
-• Short headline (≤6 words, e.g., "Project Alpha Sync")
-</MEETING_TITLE>
-
-<EXECUTIVE_SUMMARY>
-• 2-4 sentences maximum
-• High-level overview of meeting purpose, key outcomes, and tone
-• No action details — keep those in ACTION_ITEMS / NEXT_STEPS
-• If transcript lacks substance, output "None"
-</EXECUTIVE_SUMMARY>
-
-<AGENDA>
-• Agenda items mentioned by participants
-• If none stated, output "None"
-</AGENDA>
-
-<ACTION_ITEMS>
-• Format: [Task] — [Owner if stated] — [Deadline if stated]
-• If owner missing: "Unassigned"
-• If deadline missing: leave blank
-• Always use the latest statement if contradictions occur
-</ACTION_ITEMS>
-
-<NEXT_STEPS>
-• Broader follow-ups not tied to an individual
-• Team-level actions or reminders
-• Future agenda items
-• If none present, output "None"
-</NEXT_STEPS>
-
-<DECISIONS>
-• Record only explicit, final conclusions
-• If later statements revise earlier ones, keep the most recent
-• If unresolved conflict remains: "Unresolved: conflicting statements on [topic]"
-</DECISIONS>
-
-<OPEN_QUESTIONS>
-• Capture unresolved questions or risks explicitly raised
-• If none present, output "None"
-</OPEN_QUESTIONS>
-
-<DISCUSSION_HIGHLIGHTS>
-• Short bullets (≤15 words each)
-• Optional sub-bullets for context (≤20 words)
-• Do not include small talk
-• Prioritize final statements when contradictions occur
-</DISCUSSION_HIGHLIGHTS>
-
-</tag_definitions>
-
-<handling_rules>
-- Do not include small talk or filler unless relevant to work.
-- If technical/code discussed:
-  • Render in fenced code blocks
-  • Add concise explanatory bullets below
-- If transcript mentions topics but no detail:
-  • Record: "Limited info available on [topic]"
-- Do not use pronouns; use names/roles if stated.
-</handling_rules>
-
-<consistency_requirements>
-- Always output all sections, even if "None".
-- Use Markdown formatting for clarity.
-- Keep responses deterministic and repeatable.
-- Maintain Markdown-safe formatting inside tags where applicable.
-- Keep bullets crisp, no prose paragraphs except in technical explanations.
-</consistency_requirements>
-"""
-
-
 class NoteGenerator:
     def __init__(
         self,
         settings: ChirpSettings,
         console: Console | None = None,
         llm_client: LLMClient | None = None,
+        template_loader: TemplateLoader | None = None,
     ) -> None:
         self.settings = settings
         self.template_engine = TemplateEngine(settings)
+        self.template_loader = (
+            template_loader if template_loader is not None else TemplateLoader()
+        )
         self.popup_manager = PopupManager()
         self.console = console if console is not None else Console()
         self._llm_client = llm_client
@@ -196,10 +92,11 @@ class NoteGenerator:
         self,
         records: list[NoteRecord],
         force: bool = False,
+        template_override: str | None = None,
     ) -> dict[str, Any]:
         results = []
         for record in records:
-            result = self._generate_for_record(record, force)
+            result = self._generate_for_record(record, force, template_override)
             results.append(result)
 
         newly_generated = [r for r in results if r["success"] and "message" not in r]
@@ -254,7 +151,12 @@ class NoteGenerator:
             }
         return self.generate_for_records(candidates, force=force)
 
-    def _generate_for_record(self, record: NoteRecord, force: bool) -> dict[str, Any]:
+    def _generate_for_record(
+        self,
+        record: NoteRecord,
+        force: bool,
+        template_override: str | None = None,
+    ) -> dict[str, Any]:
         notes_path = record.dir / NOTES_FILENAME
 
         if notes_path.exists() and not force:
@@ -285,10 +187,13 @@ class NoteGenerator:
                 ),
             }
 
+        template = self.template_loader.resolve(
+            record.template, record.tags, template_override
+        )
         provided_title = record.title
         try:
             structured_notes = self._generate_structured_notes(
-                transcript_text, provided_title
+                transcript_text, provided_title, template
             )
         except Exception as exc:  # noqa: BLE001 - surface the real daemon/LLM failure
             logger.warning("Note generation failed for %s: %s", record.slug, exc)
@@ -311,29 +216,20 @@ class NoteGenerator:
                 "error": "Could not parse structured notes from the model output",
             }
 
-        meeting_title = (
-            provided_title
-            if provided_title
-            else structured_notes.get("meeting_title", DEFAULT_MEETING_NAME)
-        )
-        meeting_notes = {
-            "meeting_title": meeting_title,
-            "executive_summary": structured_notes.get(
-                "executive_summary", "No summary available"
-            ),
-            "agenda": structured_notes.get("agenda", []),
-            "action_items": structured_notes.get("action_items", []),
-            "next_steps": structured_notes.get("next_steps", []),
-            "decisions": structured_notes.get("decisions", []),
-            "open_questions": structured_notes.get("open_questions", []),
-            "discussion_highlights": structured_notes.get("discussion_highlights", []),
+        note_data: dict[str, Any] = {
+            "title": provided_title
+            or structured_notes.get("title")
+            or DEFAULT_MEETING_NAME,
             "metadata": {
                 "date": record.created_at.isoformat(),
                 "duration_s": self._resolve_duration_seconds(record),
             },
         }
+        for section in template.sections:
+            default: Any = "" if section.kind == "prose" else []
+            note_data[section.key] = structured_notes.get(section.key, default)
 
-        body = self.template_engine.render_meeting_section(meeting_notes)
+        body = self.template_engine.render_note(template, note_data)
         content = self._format_generated_note(body, record.created_at)
 
         atomic_write_text(notes_path, content)
@@ -449,13 +345,13 @@ class NoteGenerator:
             return value.isoformat()
         return str(value)
 
-    def _transcript_char_budget(self, title_instruction: str) -> int:
+    def _transcript_char_budget(self, title_instruction: str, system_prompt: str) -> int:
         """Chars of transcript that fit alongside the prompt and reserved output."""
         models = self.settings.models
         # ceil (not floor) so under-reserving the prompt can't push the budget
         # over the window.
         scaffold_tokens = math.ceil(
-            (len(SYSTEM_PROMPT) + len(title_instruction) + _PROMPT_SCAFFOLD_CHARS)
+            (len(system_prompt) + len(title_instruction) + _PROMPT_SCAFFOLD_CHARS)
             / _CHARS_PER_TOKEN
         )
         input_token_budget = (
@@ -468,26 +364,39 @@ class NoteGenerator:
         return int(input_token_budget * _CHARS_PER_TOKEN)
 
     def _generate_structured_notes(
-        self, transcript_text: str, provided_title: str | None = None
+        self,
+        transcript_text: str,
+        provided_title: str | None = None,
+        template: NoteTemplate | None = None,
     ) -> dict[str, Any] | None:
+        if template is None:
+            template = self.template_loader.load_default()
+        system_prompt = build_system_prompt(template)
         title_instruction = self._title_instruction(provided_title)
-        budget = self._transcript_char_budget(title_instruction)
+        budget = self._transcript_char_budget(title_instruction, system_prompt)
         if len(transcript_text) <= budget:
             return self._run_structured_prompt(
-                self._transcript_prompt(transcript_text, title_instruction)
+                self._transcript_prompt(
+                    transcript_text, title_instruction, system_prompt
+                ),
+                template,
             )
-        return self._summarize_chunked(transcript_text, title_instruction, budget)
+        return self._summarize_chunked(
+            transcript_text, title_instruction, budget, template, system_prompt
+        )
 
     def _title_instruction(self, provided_title: str | None) -> str:
         if not provided_title:
             return ""
         return (
-            f"\n\nIMPORTANT: Use this exact meeting title in the "
-            f"MEETING_TITLE tag: {provided_title}"
+            f"\n\nIMPORTANT: Use this exact title in the "
+            f"{TITLE_TAG} tag: {provided_title}"
         )
 
-    def _transcript_prompt(self, transcript: str, title_instruction: str) -> str:
-        return f"""{SYSTEM_PROMPT}
+    def _transcript_prompt(
+        self, transcript: str, title_instruction: str, system_prompt: str
+    ) -> str:
+        return f"""{system_prompt}
 
 {title_instruction}
 
@@ -496,10 +405,12 @@ Transcript:
 
 Return ONLY the XML document, no additional text before or after."""
 
-    def _run_structured_prompt(self, prompt: str) -> dict[str, Any] | None:
+    def _run_structured_prompt(
+        self, prompt: str, template: NoteTemplate
+    ) -> dict[str, Any] | None:
         for attempt in range(1, MAX_PARSE_ATTEMPTS + 1):
             response = self._call_llm(prompt)
-            parsed = self._parse_xml_response(response)
+            parsed = self._parse_xml_response(response, template)
             if parsed is not None:
                 return parsed
             if attempt < MAX_PARSE_ATTEMPTS:
@@ -512,7 +423,12 @@ Return ONLY the XML document, no additional text before or after."""
         return None
 
     def _summarize_chunked(
-        self, transcript_text: str, title_instruction: str, budget: int
+        self,
+        transcript_text: str,
+        title_instruction: str,
+        budget: int,
+        template: NoteTemplate,
+        system_prompt: str,
     ) -> dict[str, Any] | None:
         target = min(budget, _LLM_INPUT_TARGET_CHARS)
         chunks = self._chunk_transcript(transcript_text, target)
@@ -525,7 +441,8 @@ Return ONLY the XML document, no additional text before or after."""
         for index, chunk in enumerate(chunks, start=1):
             self.console.print(f"[dim]  ↳ part {index}/{len(chunks)}[/dim]")
             note = self._run_structured_prompt(
-                self._transcript_prompt(chunk, title_instruction)
+                self._transcript_prompt(chunk, title_instruction, system_prompt),
+                template,
             )
             if note is not None:
                 chunk_notes.append(note)
@@ -540,7 +457,7 @@ Return ONLY the XML document, no additional text before or after."""
             return None
         if len(chunk_notes) == 1:
             return chunk_notes[0]
-        return self._reduce_chunk_notes(chunk_notes, target)
+        return self._reduce_chunk_notes(chunk_notes, target, template)
 
     def _chunk_transcript(self, transcript_text: str, chunk_chars: int) -> list[str]:
         overlap = min(_CHUNK_OVERLAP_CHARS, chunk_chars // 4)
@@ -588,32 +505,37 @@ Return ONLY the XML document, no additional text before or after."""
         return tail
 
     def _reduce_chunk_notes(
-        self, notes: list[dict[str, Any]], target: int
+        self, notes: list[dict[str, Any]], target: int, template: NoteTemplate
     ) -> dict[str, Any]:
-        merged = self._merge_notes(notes)
-        for key in _LIST_KEYS:
+        merged = self._merge_notes(notes, template)
+        for key in template.list_keys:
             merged[key] = self._consolidate_items(merged[key], key.replace("_", " "))
-        summary = self._reduce_summary(notes, merged, target)
-        if summary:
-            merged["executive_summary"] = summary
+        summary_key = template.summary_key
+        if summary_key is not None:
+            summary = self._reduce_summary(notes, merged, target, template)
+            if summary:
+                merged[summary_key] = summary
         return merged
 
     def _reduce_summary(
-        self, notes: list[dict[str, Any]], merged: dict[str, Any], target: int
+        self,
+        notes: list[dict[str, Any]],
+        merged: dict[str, Any],
+        target: int,
+        template: NoteTemplate,
     ) -> str:
+        summary_key = template.summary_key
+        if summary_key is None:
+            return ""
         parts = [
-            note["executive_summary"].strip()
+            note[summary_key].strip()
             for note in notes
-            if isinstance(note.get("executive_summary"), str)
-            and note["executive_summary"].strip()
-            and note["executive_summary"].strip() != "No summary available"
+            if isinstance(note.get(summary_key), str) and note[summary_key].strip()
         ]
         if not parts:
-            parts = (
-                merged["decisions"]
-                + merged["discussion_highlights"]
-                + merged["action_items"]
-            )
+            parts = [
+                item for key in template.list_keys for item in merged.get(key, [])
+            ]
         if not parts:
             return ""
         combined = "\n".join(parts)[:target]
@@ -622,29 +544,33 @@ Return ONLY the XML document, no additional text before or after."""
 
     def _summary_prompt(self, section_notes: str) -> str:
         return (
-            "Below are notes from consecutive parts of ONE meeting. Write a single "
-            "cohesive executive summary of the entire meeting in three to five "
+            "Below are notes from consecutive parts of ONE recording. Write a "
+            "single cohesive summary of the entire recording in three to five "
             "sentences. Return only the summary text — no XML, no headers, no "
             "preamble.\n\n"
             f"Notes:\n{section_notes}"
         )
 
-    def _merge_notes(self, notes: list[dict[str, Any]]) -> dict[str, Any]:
+    def _merge_notes(
+        self, notes: list[dict[str, Any]], template: NoteTemplate
+    ) -> dict[str, Any]:
         merged: dict[str, Any] = {
-            "meeting_title": next(
-                (n["meeting_title"] for n in notes if n.get("meeting_title")),
+            "title": next(
+                (n["title"] for n in notes if n.get("title")),
                 DEFAULT_MEETING_NAME,
             ),
-            "executive_summary": " ".join(
-                n["executive_summary"]
-                for n in notes
-                if n.get("executive_summary")
-                and n["executive_summary"] != "No summary available"
-            )
-            or "No summary available",
         }
-        for key in _LIST_KEYS:
-            merged[key] = self._dedup(item for n in notes for item in n.get(key, []))
+        for section in template.sections:
+            if section.kind == "prose":
+                merged[section.key] = " ".join(
+                    n[section.key]
+                    for n in notes
+                    if isinstance(n.get(section.key), str) and n[section.key].strip()
+                )
+            else:
+                merged[section.key] = self._dedup(
+                    item for n in notes for item in n.get(section.key, [])
+                )
         return merged
 
     def _dedup(self, items: Iterable[str]) -> list[str]:
@@ -761,11 +687,17 @@ Return ONLY the XML document, no additional text before or after."""
 
         return "".join(deltas).strip()
 
-    def _parse_xml_response(self, response: str) -> dict[str, Any] | None:
+    def _parse_xml_response(
+        self, response: str, template: NoteTemplate | None = None
+    ) -> dict[str, Any] | None:
+        if template is None:
+            template = self.template_loader.load_default()
+        root_open = f"<{ROOT_TAG}>"
+        root_close = f"</{ROOT_TAG}>"
         try:
             xml_start = response.find("<?xml")
             if xml_start == -1:
-                xml_start = response.find("<MEETING_NOTES>")
+                xml_start = response.find(root_open)
 
             if xml_start == -1:
                 # No XML: signal parse failure so the caller retries/degrades
@@ -773,9 +705,9 @@ Return ONLY the XML document, no additional text before or after."""
                 return None
 
             xml_content = response[xml_start:]
-            xml_end = xml_content.find("</MEETING_NOTES>")
+            xml_end = xml_content.find(root_close)
             if xml_end != -1:
-                xml_content = xml_content[: xml_end + len("</MEETING_NOTES>")]
+                xml_content = xml_content[: xml_end + len(root_close)]
 
             root = ET.fromstring(xml_content)
 
@@ -790,8 +722,8 @@ Return ONLY the XML document, no additional text before or after."""
                     return elem.text.strip()
                 return ""
 
-            def get_items(element_name: str) -> list[str]:
-                parent = root.find(element_name)
+            def get_items(section: Section) -> list[str]:
+                parent = root.find(section.tag)
                 if parent is None:
                     return []
                 if parent.text and parent.text.strip().lower() == "none":
@@ -799,19 +731,14 @@ Return ONLY the XML document, no additional text before or after."""
 
                 items = []
                 for item in parent.findall("ITEM"):
-                    if element_name == "ACTION_ITEMS":
-                        task = item.get("task", "").strip()
-                        owner = item.get("owner", "").strip()
-                        deadline = item.get("deadline", "").strip()
-                        parts = []
-                        if task:
-                            parts.append(task)
-                        if owner:
-                            parts.append(f"Owner: {owner}")
-                        if deadline:
-                            parts.append(f"Deadline: {deadline}")
-                        if parts:
-                            items.append(" — ".join(parts))
+                    if section.kind == "action_list":
+                        formatted = _format_action_item(
+                            item.get("task", ""),
+                            item.get("owner", ""),
+                            item.get("deadline", ""),
+                        )
+                        if formatted:
+                            items.append(formatted)
                     else:
                         text = item.text.strip() if item.text else ""
                         if text:
@@ -819,27 +746,27 @@ Return ONLY the XML document, no additional text before or after."""
 
                 return items
 
-            return {
-                "meeting_title": get_text("MEETING_TITLE") or DEFAULT_MEETING_NAME,
-                "executive_summary": get_text("EXECUTIVE_SUMMARY")
-                or "No summary available",
-                "agenda": get_items("AGENDA"),
-                "action_items": get_items("ACTION_ITEMS"),
-                "next_steps": get_items("NEXT_STEPS"),
-                "decisions": get_items("DECISIONS"),
-                "open_questions": get_items("OPEN_QUESTIONS"),
-                "discussion_highlights": get_items("DISCUSSION_HIGHLIGHTS"),
+            parsed: dict[str, Any] = {
+                "title": get_text(TITLE_TAG) or DEFAULT_MEETING_NAME
             }
+            for section in template.sections:
+                if section.kind == "prose":
+                    parsed[section.key] = get_text(section.tag)
+                else:
+                    parsed[section.key] = get_items(section)
+            return parsed
 
         except ET.ParseError:
             # Reached only after the strict parse fails, so well-formed output
-            # (and the quality-regression baseline) is untouched.
-            return self._extract_notes_lenient(xml_content)
+            # is untouched.
+            return self._extract_notes_lenient(xml_content, template)
         except (AttributeError, KeyError, TypeError, ValueError):
             return None
 
-    def _extract_notes_lenient(self, xml_content: str) -> dict[str, Any] | None:
-        """String-scan the known tags from XML that ``ET.fromstring`` rejected.
+    def _extract_notes_lenient(
+        self, xml_content: str, template: NoteTemplate
+    ) -> dict[str, Any] | None:
+        """String-scan the template's tags from XML that ``ET.fromstring`` rejected.
 
         Returns ``None`` when nothing usable is found so the caller still
         degrades rather than writing an empty shell.
@@ -858,8 +785,8 @@ Return ONLY the XML document, no additional text before or after."""
             value = inner.strip()
             return "" if value.lower() == "none" else value
 
-        def _items(tag: str) -> list[str]:
-            inner = _inner(tag)
+        def _items(section: Section) -> list[str]:
+            inner = _inner(section.tag)
             if inner is None or inner.strip().lower() == "none":
                 return []
             items: list[str] = []
@@ -868,50 +795,34 @@ Return ONLY the XML document, no additional text before or after."""
                 inner,
                 re.DOTALL | re.IGNORECASE,
             ):
-                if tag == "ACTION_ITEMS":
+                if section.kind == "action_list":
                     attrs = dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', match.group(1)))
-                    parts = []
-                    if attrs.get("task", "").strip():
-                        parts.append(attrs["task"].strip())
-                    if attrs.get("owner", "").strip():
-                        parts.append(f"Owner: {attrs['owner'].strip()}")
-                    if attrs.get("deadline", "").strip():
-                        parts.append(f"Deadline: {attrs['deadline'].strip()}")
-                    if parts:
-                        items.append(" — ".join(parts))
+                    formatted = _format_action_item(
+                        attrs.get("task", ""),
+                        attrs.get("owner", ""),
+                        attrs.get("deadline", ""),
+                    )
+                    if formatted:
+                        items.append(formatted)
                 else:
                     text = match.group(2).strip()
                     if text:
                         items.append(text)
             return items
 
-        title = _text("MEETING_TITLE")
-        summary = _text("EXECUTIVE_SUMMARY")
-        lists = {
-            name: _items(name)
-            for name in (
-                "AGENDA",
-                "ACTION_ITEMS",
-                "NEXT_STEPS",
-                "DECISIONS",
-                "OPEN_QUESTIONS",
-                "DISCUSSION_HIGHLIGHTS",
-            )
-        }
-        if not title and not summary and not any(lists.values()):
+        title = _text(TITLE_TAG)
+        parsed: dict[str, Any] = {}
+        for section in template.sections:
+            if section.kind == "prose":
+                parsed[section.key] = _text(section.tag)
+            else:
+                parsed[section.key] = _items(section)
+        if not title and not any(parsed.values()):
             return None
 
         logger.info("Recovered notes from malformed model XML via lenient parse")
-        return {
-            "meeting_title": title or DEFAULT_MEETING_NAME,
-            "executive_summary": summary or "No summary available",
-            "agenda": lists["AGENDA"],
-            "action_items": lists["ACTION_ITEMS"],
-            "next_steps": lists["NEXT_STEPS"],
-            "decisions": lists["DECISIONS"],
-            "open_questions": lists["OPEN_QUESTIONS"],
-            "discussion_highlights": lists["DISCUSSION_HIGHLIGHTS"],
-        }
+        parsed["title"] = title or DEFAULT_MEETING_NAME
+        return parsed
 
     def _auto_index_note(self, notes_path: Path):
         if not self.settings.notes_chat.auto_index:
