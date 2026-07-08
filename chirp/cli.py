@@ -27,7 +27,13 @@ from config.settings import ChirpSettings, get_settings
 from llm.cli.daemon import daemon_app
 from llm.cli.models import app as models_app
 from llm.registry import resolved_chat_model, resolved_embed_model
-from utils.file_utils import NoteRecord, atomic_write_text, list_notes
+from utils.file_utils import (
+    META_FILENAME,
+    NoteRecord,
+    atomic_write_text,
+    atomic_write_toml,
+    list_notes,
+)
 from utils.tls import enable_system_trust_store
 
 logger = logging.getLogger(__name__)
@@ -388,6 +394,34 @@ def _render_record_view(state: _RecordViewState) -> RenderableType:
     return Group(*lines)
 
 
+def _merge_note_meta(note_dir: Path, updates: dict) -> None:
+    import tomllib
+
+    meta_path = note_dir / META_FILENAME
+    meta: dict = {}
+    if meta_path.exists():
+        try:
+            with meta_path.open("rb") as fh:
+                meta = dict(tomllib.load(fh))
+        except (OSError, tomllib.TOMLDecodeError):
+            meta = {}
+    meta.update(updates)
+    atomic_write_toml(meta_path, meta)
+
+
+def _validated_template_or_exit(template: str) -> str:
+    from notes.note_templates import TemplateLoader
+
+    names = TemplateLoader().available()
+    if template not in names:
+        console.print(
+            f"[red]unknown template '{template}'. "
+            f"available: {', '.join(names)}[/red]"
+        )
+        raise typer.Exit(exit_codes.USAGE_ERROR)
+    return template
+
+
 @app.command(rich_help_panel=MAIN_PANEL)
 def record(
     duration: int | None = typer.Option(
@@ -409,6 +443,11 @@ def record(
         "--tag",
         help="Tag to attach to the note (repeatable). Skips the tags prompt.",
     ),
+    template: str | None = typer.Option(
+        None,
+        "--template",
+        help="Note template for this recording (overrides tag-based selection).",
+    ),
     live_transcribe: bool = typer.Option(
         False,
         "--live-transcribe/--no-live-transcribe",
@@ -422,14 +461,17 @@ def record(
     ),
 ):
     """Capture audio to a new note"""
+    settings = get_settings()
+
+    if template is not None:
+        _validated_template_or_exit(template)
+
     import shutil
     from datetime import datetime
 
     from recorder.audio_recorder import AudioRecorder
     from recorder.device_manager import DeviceManager
     from utils.time_utils import parse_timeframe
-
-    settings = get_settings()
 
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
     if title is None and is_tty:
@@ -458,6 +500,7 @@ def record(
             duration,
             debug_live=debug_live,
             tags=resolved_tags,
+            template=template,
         )
         return
 
@@ -559,6 +602,8 @@ def record(
             console.print("[yellow]nothing to save.[/yellow]")
             return
 
+        if template is not None:
+            _merge_note_meta(note_dir, {"template": template})
         console.print(f"[green]saved to {note_dir}[/green]")
         console.print(
             f" [dim]{glyphs.INPUT_ARROW} chirp transcribe    "
@@ -593,6 +638,7 @@ def _run_live_transcription(
     duration: int | None,
     debug_live: bool = False,
     tags: list[str] | None = None,
+    template: str | None = None,
 ):
     from chirp.exceptions import WhisperModelLoadError
     from recorder.live_session import LiveSessionResult, LiveTranscriptionSession
@@ -639,6 +685,9 @@ def _run_live_transcription(
 
     from utils.time_utils import format_duration
 
+    if template is not None and result.audio_path is not None:
+        _merge_note_meta(Path(result.audio_path).parent, {"template": template})
+
     console.print()
     console.print("[green]Live recording complete[/green]")
     console.print(f"[dim]Audio saved to:[/dim] {result.audio_path}")
@@ -680,6 +729,17 @@ def transcribe(
         help="Regenerate notes from existing transcripts; skip audio transcription. "
         "Useful after switching LLMs.",
     ),
+    note_ids: list[str] = typer.Option(
+        None,
+        "--note",
+        help="With --regen: only regenerate the given note id(s) (repeatable).",
+    ),
+    template: str | None = typer.Option(
+        None,
+        "--template",
+        help="With --regen: template override for the regenerated notes "
+        "(persisted to meta.toml when combined with --note).",
+    ),
 ):
     """Turn audio into text + summary"""
     from chirp.init_flow import offer_first_run_setup
@@ -690,6 +750,10 @@ def transcribe(
     first_run = offer_first_run_setup(settings, console)
     if first_run is not None:
         raise typer.Exit(first_run)
+
+    if (note_ids or template) and not regen:
+        console.print("[red]--note and --template require --regen.[/red]")
+        raise typer.Exit(exit_codes.USAGE_ERROR)
 
     if regen:
         if n is not None:
@@ -703,7 +767,7 @@ def transcribe(
                 "--regen reuses existing transcripts).[/red]"
             )
             raise typer.Exit(exit_codes.USAGE_ERROR)
-        _run_regen_pipeline(settings)
+        _run_regen_pipeline(settings, note_ids=note_ids, template=template)
         return
 
     if n is not None and n < 1:
@@ -723,8 +787,15 @@ def transcribe(
     processor.run_queue(n=n, force=force, console=console)
 
 
-def _run_regen_pipeline(settings) -> None:
+def _run_regen_pipeline(
+    settings,
+    note_ids: list[str] | None = None,
+    template: str | None = None,
+) -> None:
     from notes.note_generator import NoteGenerator
+
+    if template is not None:
+        _validated_template_or_exit(template)
 
     notes_root = settings.directories.notes_root
     records = [
@@ -738,11 +809,24 @@ def _run_regen_pipeline(settings) -> None:
         )
         return
 
+    if note_ids:
+        selected: dict[str, NoteRecord] = {}
+        for note_id in note_ids:
+            record = _resolve_from_records_or_exit(records, note_id)
+            selected[record.slug] = record
+        records = list(selected.values())
+        if template is not None:
+            for record in records:
+                _merge_note_meta(record.dir, {"template": template})
+                record.template = template
+
     note_generator = NoteGenerator(settings)
     console.print(
         f"[bold blue]Regenerating notes for {len(records)} record(s)…[/bold blue]"
     )
-    result = note_generator.generate_for_records(records, force=True)
+    result = note_generator.generate_for_records(
+        records, force=True, template_override=template
+    )
 
     sub_results = result.get("results", [])
     success_count = sum(1 for r in sub_results if r.get("success"))
@@ -923,6 +1007,7 @@ def _list_notes(tag: str | None, json_output: bool = False) -> None:
     )
     console.print(f" [dim]{arrow} chirp notes edit <id>      · edit a note[/dim]")
     console.print(f" [dim]{arrow} chirp notes delete <id>    · delete a note[/dim]")
+    console.print(f" [dim]{arrow} chirp notes tag <id> --add work · edit tags[/dim]")
     console.print(f" [dim]{arrow} chirp notes --tag meeting  · filter by tag[/dim]")
 
 
@@ -964,8 +1049,9 @@ def _load_notes_or_exit() -> list[NoteRecord]:
     return records
 
 
-def _resolve_or_exit(note_id: str) -> NoteRecord:
-    records = _load_notes_or_exit()
+def _resolve_from_records_or_exit(
+    records: list[NoteRecord], note_id: str
+) -> NoteRecord:
     try:
         return _resolve_note(records, note_id)
     except NoteNotFound:
@@ -979,6 +1065,59 @@ def _resolve_or_exit(note_id: str) -> NoteRecord:
         for slug in exc.matches:
             console.print(f"[dim]  • {slug}[/dim]")
         raise typer.Exit(exit_codes.RUNTIME_ERROR)
+
+
+def _resolve_or_exit(note_id: str) -> NoteRecord:
+    return _resolve_from_records_or_exit(_load_notes_or_exit(), note_id)
+
+
+@notes_app.command("tag")
+def notes_tag(
+    note_id: str = typer.Argument(..., help="Note id (slug or prefix)"),
+    add: list[str] = typer.Option(
+        None, "--add", "-a", help="Tag to add (repeatable)."
+    ),
+    remove: list[str] = typer.Option(
+        None, "--remove", "-r", help="Tag to remove (repeatable)."
+    ),
+    clear: bool = typer.Option(False, "--clear", help="Remove all tags first."),
+):
+    """Add or remove tags on an existing note."""
+    if not add and not remove and not clear:
+        console.print("[red]nothing to do — pass --add, --remove, or --clear.[/red]")
+        raise typer.Exit(exit_codes.USAGE_ERROR)
+
+    settings = get_settings()
+    records = list_notes(settings.directories.notes_root)
+    if not records:
+        console.print(
+            f"[yellow]No notes found in {settings.directories.notes_root}[/yellow]"
+        )
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
+
+    # Numeric ids follow the `chirp notes` table (generated notes only); slugs
+    # resolve across every record so untranscribed notes can be tagged too.
+    if note_id.strip().isdigit():
+        records = [record for record in records if record.notes is not None]
+    record = _resolve_from_records_or_exit(records, note_id)
+
+    tags = [] if clear else list(record.tags)
+    for tag in remove or []:
+        tags = [existing for existing in tags if existing != tag]
+    for tag in add or []:
+        cleaned = tag.strip()
+        if cleaned and cleaned not in tags:
+            tags.append(cleaned)
+
+    _merge_note_meta(record.dir, {"tags": tags})
+
+    label = ", ".join(tags) if tags else glyphs.PENDING
+    console.print(f"[green]tags for {record.slug}:[/green] {label}")
+    if record.notes is not None:
+        console.print(
+            f" [dim]{glyphs.INPUT_ARROW} chirp transcribe --regen --note "
+            f"{record.slug}  · regenerate with the new tags[/dim]"
+        )
 
 
 @notes_app.command("view")
@@ -1325,6 +1464,16 @@ def init(
         raise typer.Exit(code)
 
     settings = get_settings()
+
+    from notes.note_templates import TemplateLoader, user_templates_dir
+
+    written = TemplateLoader().scaffold()
+    if written:
+        console.print(
+            f"[dim]note templates scaffolded to {user_templates_dir()} — "
+            "edit them to customize note layouts and tag links[/dim]"
+        )
+
     code = run_init(settings, console, recheck=recheck, switch_model=switch_model)
     if code != 0:
         raise typer.Exit(code)
@@ -1401,9 +1550,12 @@ def config(
     settings = get_settings()
 
     if list_config:
+        from notes.note_templates import DEFAULT_TEMPLATE_NAME, user_templates_dir
+
         panel = Panel.fit(
             f"""[cyan]Directories:[/cyan]
 Notes Root: {settings.directories.notes_root}
+Note Templates: {user_templates_dir()} (default: {DEFAULT_TEMPLATE_NAME})
 
 [cyan]Models:[/cyan]
 Whisper: {settings.models.whisper}
