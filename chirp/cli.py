@@ -415,8 +415,7 @@ def _validated_template_or_exit(template: str) -> str:
     names = TemplateLoader().available()
     if template not in names:
         console.print(
-            f"[red]unknown template '{template}'. "
-            f"available: {', '.join(names)}[/red]"
+            f"[red]unknown template '{template}'. available: {', '.join(names)}[/red]"
         )
         raise typer.Exit(exit_codes.USAGE_ERROR)
     return template
@@ -1074,9 +1073,7 @@ def _resolve_or_exit(note_id: str) -> NoteRecord:
 @notes_app.command("tag")
 def notes_tag(
     note_id: str = typer.Argument(..., help="Note id (slug or prefix)"),
-    add: list[str] = typer.Option(
-        None, "--add", "-a", help="Tag to add (repeatable)."
-    ),
+    add: list[str] = typer.Option(None, "--add", "-a", help="Tag to add (repeatable)."),
     remove: list[str] = typer.Option(
         None, "--remove", "-r", help="Tag to remove (repeatable)."
     ),

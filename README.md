@@ -14,8 +14,9 @@ Chirp is a local-first CLI for recording meetings, transcribing audio, generatin
 - Stream live transcription in a Rich dashboard while recording
 - Transcribe recordings with mlx-whisper (Metal-accelerated on Apple Silicon)
 - Generate structured notes with a local MLX model (via the bundled chirpd daemon)
-- Browse, edit, and delete saved notes from the terminal
-- Ask questions or run keyword search across your note history
+- Shape notes with editable templates that are selected by a note's tags
+- Browse, edit, tag, and delete saved notes from the terminal
+- Ask questions or run keyword search across your note history, scoped by tag
 
 ## Prerequisites
 
@@ -75,7 +76,7 @@ pip install chirp-notes-ai
 | --- | --- |
 | `chirp record` | Capture audio to a new note, optionally with live transcription |
 | `chirp transcribe [N]` | Process pending recordings into transcripts and notes |
-| `chirp notes` | List saved notes; `view`, `edit`, and `delete` are subcommands |
+| `chirp notes` | List saved notes; `view`, `edit`, `tag`, and `delete` are subcommands |
 | `chirp ask` | Ask questions about your meetings, or open interactive chat |
 | `chirp search` | Run keyword or regex search across transcripts and notes |
 | `chirp init` | Guided setup, daemon readiness, and model recommendation |
@@ -94,6 +95,9 @@ chirp record --title "Sprint Planning" --timeframe 45m
 
 # Add tags at capture time
 chirp record --title "Roadmap Review" --tag roadmap --tag planning
+
+# Pick a note template explicitly (otherwise tags select one)
+chirp record --title "Daily Sync" --tag dsu --template standup
 ```
 
 ### Transcription and notes
@@ -108,6 +112,9 @@ chirp transcribe 5
 # Rebuild notes from existing transcripts
 chirp transcribe --regen
 
+# Regenerate one note with a different template (persisted to its meta.toml)
+chirp transcribe --regen --note daily-sync-2026-07-08 --template standup
+
 # Override the Whisper model for one run
 chirp transcribe --model medium
 ```
@@ -118,16 +125,70 @@ chirp transcribe --model medium
 # Filter note list by tags
 chirp notes --tag roadmap,planning
 
+# Retag an existing note (then regenerate to apply a tag-linked template)
+chirp notes tag daily-sync-2026-07-08 --add standup --remove roadmap
+
 # Open interactive chat
 chirp ask
 
 # Ask with a time filter
 chirp ask -q "What changed this week?" --when "last week"
 
+# Ask or search only within tagged notes
+chirp ask -q "Any blockers this week?" --tag standup
+chirp search "pricing" --tag roadmap,planning
+
 # Regex or JSON search output
 chirp search "action item" --since 30d
 chirp search "owner: .*" --regex --json
 ```
+
+## Note templates
+
+Generated notes are shaped by markdown templates. Chirp ships with `meeting`
+(the default), `standup`, `one-on-one`, and `brainstorm`; `chirp init`
+scaffolds editable copies into `~/.chirp/templates/`, and a file there with
+the same name replaces the built-in.
+
+A template is YAML frontmatter plus a markdown body. The frontmatter `tags`
+list links the template to note tags: when a note carries any of those tags,
+the template is used automatically (the template sharing the most tags wins;
+`--template` and a `template` key in the note's `meta.toml` take precedence).
+Untagged or unmatched notes use `meeting`.
+
+```markdown
+---
+description: "Daily standup"
+tags:
+- dsu
+- standup
+---
+## {title}
+
+**Time:** {time}
+**Duration:** {duration}
+
+### Yesterday
+
+{yesterday}
+
+### Today
+
+{today}
+
+### Blockers
+
+{blockers}
+
+---
+```
+
+The body drives everything: each `{placeholder}` under a heading becomes a
+section the LLM extracts from the transcript and renders in that exact
+layout. `{title}`, `{time}`, and `{duration}` are built-ins. Sections render
+as bullet lists by default; name placeholders under a frontmatter `prose:`
+list (or call one `summary`/`executive_summary`) for paragraph output, and an
+`action_items` placeholder captures task/owner/deadline structure.
 
 ## How search works
 
@@ -177,6 +238,7 @@ If you prefer to set things up manually on macOS (chirp itself is pip-installed;
 ## Configuration and storage
 
 - Config file: `~/.chirp/config.toml`
+- Note templates: `~/.chirp/templates/` (see [Note templates](#note-templates))
 - Default notes root: `~/Documents/chirp`
 
 Each note is stored in its own directory:

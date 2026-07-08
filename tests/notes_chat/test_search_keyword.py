@@ -381,9 +381,7 @@ def test_tag_filter_restricts_results(tmp_path):
         notes_md="pricing everywhere\n",
     )
 
-    result = run_search(
-        settings, SearchOptions(query="pricing", tags=("standup",))
-    )
+    result = run_search(settings, SearchOptions(query="pricing", tags=("standup",)))
 
     assert [m["slug"] for m in result["matches"]] == ["standup-tagged"]
     assert result["tags"] == ["standup"]

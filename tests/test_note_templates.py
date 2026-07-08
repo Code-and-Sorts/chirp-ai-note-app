@@ -176,7 +176,7 @@ class TestTemplateLoader:
             "---\nbroken frontmatter\n---\n", encoding="utf-8"
         )
         template = loader.load("standup")
-        assert [s.key for s in template.sections][0] == "yesterday"
+        assert next(s.key for s in template.sections) == "yesterday"
 
     def test_broken_user_file_without_builtin_falls_back_to_default(self, loader):
         loader.user_dir.mkdir(parents=True)
@@ -185,7 +185,7 @@ class TestTemplateLoader:
         assert template.name == DEFAULT_TEMPLATE_NAME
 
     def test_unknown_name_raises_with_available(self, loader):
-        with pytest.raises(TemplateError, match="unknown template 'nope'.*meeting"):
+        with pytest.raises(TemplateError, match=r"unknown template 'nope'.*meeting"):
             loader.load("nope")
 
 

@@ -878,9 +878,7 @@ class TestRetrieveContextTagFilter:
             patch("notes_chat.retrieval._build_note_index", return_value={}),
         ):
             MockIM.return_value = _make_index_manager(config, manifest_exists=True)
-            result = retrieve_context(
-                config, "what happened", tags=["standup", "work"]
-            )
+            result = retrieve_context(config, "what happened", tags=["standup", "work"])
 
         assert result["success"] is True
         assert "both content" in result["context"]

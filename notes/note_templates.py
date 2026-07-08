@@ -91,7 +91,7 @@ def parse_template(name: str, content: str) -> NoteTemplate:
     frontmatter, body = _split_front_matter(content)
     meta = _parse_front_matter(frontmatter)
 
-    prose_keys = BUILTIN_PROSE_KEYS | set(_string_list(meta.get("prose")))
+    prose_keys = set(BUILTIN_PROSE_KEYS) | set(_string_list(meta.get("prose")))
     sections = _derive_sections(body, prose_keys)
     if not sections:
         raise TemplateError(
@@ -374,7 +374,9 @@ class TemplateLoader:
             try:
                 return parse_template(name, user_path.read_text(encoding="utf-8"))
             except (TemplateError, OSError, UnicodeDecodeError) as exc:
-                logger.warning("Template %s is broken (%s); using fallback", user_path, exc)
+                logger.warning(
+                    "Template %s is broken (%s); using fallback", user_path, exc
+                )
         if name in self._builtins:
             return parse_template(name, self._builtins[name])
         if user_path.is_file():

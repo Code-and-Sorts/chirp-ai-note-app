@@ -135,9 +135,7 @@ def ask(
         if not json_output:
             console.print(f"[dim]searching for: {question}[/dim]")
 
-        context_result = retrieve_context(
-            config, question, when_filter=when, tags=tags
-        )
+        context_result = retrieve_context(config, question, when_filter=when, tags=tags)
 
         if not context_result.get("success"):
             error = context_result.get("error", "Unknown error")

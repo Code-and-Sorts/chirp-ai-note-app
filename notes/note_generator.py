@@ -71,6 +71,7 @@ _TOKEN_MATCH_THRESHOLD = 85
 
 _CONSOLIDATE_MIN_ITEMS = 5
 
+
 class NoteGenerator:
     def __init__(
         self,
@@ -345,7 +346,9 @@ class NoteGenerator:
             return value.isoformat()
         return str(value)
 
-    def _transcript_char_budget(self, title_instruction: str, system_prompt: str) -> int:
+    def _transcript_char_budget(
+        self, title_instruction: str, system_prompt: str
+    ) -> int:
         """Chars of transcript that fit alongside the prompt and reserved output."""
         models = self.settings.models
         # ceil (not floor) so under-reserving the prompt can't push the budget
@@ -533,9 +536,7 @@ Return ONLY the XML document, no additional text before or after."""
             if isinstance(note.get(summary_key), str) and note[summary_key].strip()
         ]
         if not parts:
-            parts = [
-                item for key in template.list_keys for item in merged.get(key, [])
-            ]
+            parts = [item for key in template.list_keys for item in merged.get(key, [])]
         if not parts:
             return ""
         combined = "\n".join(parts)[:target]

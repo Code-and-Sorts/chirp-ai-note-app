@@ -215,7 +215,9 @@ class TestTranscribeRegen:
             def __init__(self, s):
                 captured["settings"] = s
 
-            def generate_for_records(self, records, force=False, template_override=None):
+            def generate_for_records(
+                self, records, force=False, template_override=None
+            ):
                 captured["records"] = records
                 captured["force"] = force
                 captured["template_override"] = template_override
@@ -654,7 +656,9 @@ class TestTranscribeRegenTemplateAndNoteFilter:
             def __init__(self, s):
                 captured["settings"] = s
 
-            def generate_for_records(self, records, force=False, template_override=None):
+            def generate_for_records(
+                self, records, force=False, template_override=None
+            ):
                 captured["records"] = records
                 captured["template_override"] = template_override
                 return {

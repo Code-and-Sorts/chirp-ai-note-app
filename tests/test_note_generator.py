@@ -185,8 +185,7 @@ class TestNoteGenerator:
         ):
             generator = NoteGenerator(mock_settings)
             truncated = (
-                "<NOTES><TITLE>Planning</TITLE>"
-                "<EXECUTIVE_SUMMARY>We discussed the road"
+                "<NOTES><TITLE>Planning</TITLE><EXECUTIVE_SUMMARY>We discussed the road"
             )
 
             result = generator._parse_xml_response(truncated)
@@ -218,9 +217,7 @@ class TestNoteGenerator:
             ),
         ):
             template_instance = mock_template_engine.return_value
-            template_instance.render_note.return_value = (
-                "## Project Alpha\n\nBody"
-            )
+            template_instance.render_note.return_value = "## Project Alpha\n\nBody"
 
             generator = NoteGenerator(mock_settings)
             record = _seed_record(
@@ -462,7 +459,10 @@ class TestNoteGenerator:
             mock_settings.models.context_window = 4096
             mock_settings.models.num_predict = 4096
 
-            assert generator._transcript_char_budget("", MEETING_PROMPT) == _MIN_TRANSCRIPT_BUDGET_CHARS
+            assert (
+                generator._transcript_char_budget("", MEETING_PROMPT)
+                == _MIN_TRANSCRIPT_BUDGET_CHARS
+            )
 
     def test_whole_transcript_used_single_shot_when_it_fits(self, mock_settings):
         """A transcript within budget is sent verbatim through one prompt."""
@@ -778,9 +778,9 @@ class TestNoteGenerator:
         assert len(result) == 4
 
 
-STANDUP_TEMPLATE = TemplateLoader(
-    user_dir=Path("/nonexistent-chirp-templates")
-).load("standup")
+STANDUP_TEMPLATE = TemplateLoader(user_dir=Path("/nonexistent-chirp-templates")).load(
+    "standup"
+)
 
 STANDUP_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <NOTES>
