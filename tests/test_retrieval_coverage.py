@@ -803,3 +803,118 @@ class TestFormatSourcesAdditionalBranches:
         chunks = [("orphan-id", "# header\nbody\n", {"source": "bm25"})]
         sources = format_sources(chunks, note_index={})
         assert sources[0] == "orphan-id"
+
+
+class TestRetrieveContextTagFilter:
+    def _seed_note(self, notes_root: Path, slug: str, tags: list[str]) -> None:
+        note_dir = notes_root / slug
+        note_dir.mkdir()
+        (note_dir / "notes.md").write_text(f"# {slug}\n", encoding="utf-8")
+        tag_list = ", ".join(f'"{tag}"' for tag in tags)
+        (note_dir / "meta.toml").write_text(
+            f'title = "{slug}"\ndate = "2026-07-01T09:00:00"\ntags = [{tag_list}]\n',
+            encoding="utf-8",
+        )
+
+    def _chunk(self, slug: str, content: str):
+        return (
+            f"{slug}-chunk",
+            0.9,
+            {
+                "content": content,
+                "metadata": {
+                    "path": f"/notes/{slug}/notes.md",
+                    "date": "2026-07-01",
+                    "content_hash": slug,
+                },
+            },
+        )
+
+    def test_filters_chunks_to_tagged_notes(self, tmp_path):
+        config = _make_config(tmp_path)
+        notes_root = config.directories.notes_root
+        self._seed_note(notes_root, "standup-note", ["standup"])
+        self._seed_note(notes_root, "other-note", ["planning"])
+
+        captured = {}
+
+        def fake_bm25(bm25_file, question, k, index_manager=None):
+            captured["k"] = k
+            return [
+                self._chunk("standup-note", "standup content"),
+                self._chunk("other-note", "planning content"),
+            ]
+
+        with (
+            patch("notes_chat.retrieval.IndexManager") as MockIM,
+            patch("notes_chat.retrieval._search_bm25", side_effect=fake_bm25),
+            patch("notes_chat.retrieval.parse_time_range", return_value=None),
+            patch("notes_chat.retrieval._build_note_index", return_value={}),
+        ):
+            MockIM.return_value = _make_index_manager(config, manifest_exists=True)
+            result = retrieve_context(config, "what happened", tags=["standup"])
+
+        assert result["success"] is True
+        assert "standup content" in result["context"]
+        assert "planning content" not in result["context"]
+        assert captured["k"] == config.notes_chat.k * 3
+
+    def test_and_semantics_across_tags(self, tmp_path):
+        config = _make_config(tmp_path)
+        notes_root = config.directories.notes_root
+        self._seed_note(notes_root, "both-note", ["standup", "work"])
+        self._seed_note(notes_root, "one-note", ["standup"])
+
+        def fake_bm25(bm25_file, question, k, index_manager=None):
+            return [
+                self._chunk("both-note", "both content"),
+                self._chunk("one-note", "one content"),
+            ]
+
+        with (
+            patch("notes_chat.retrieval.IndexManager") as MockIM,
+            patch("notes_chat.retrieval._search_bm25", side_effect=fake_bm25),
+            patch("notes_chat.retrieval.parse_time_range", return_value=None),
+            patch("notes_chat.retrieval._build_note_index", return_value={}),
+        ):
+            MockIM.return_value = _make_index_manager(config, manifest_exists=True)
+            result = retrieve_context(
+                config, "what happened", tags=["standup", "work"]
+            )
+
+        assert result["success"] is True
+        assert "both content" in result["context"]
+        assert "one content" not in result["context"]
+
+    def test_no_notes_match_tags_returns_error(self, tmp_path):
+        config = _make_config(tmp_path)
+        self._seed_note(config.directories.notes_root, "a-note", ["planning"])
+
+        result = retrieve_context(config, "anything", tags=["standup"])
+
+        assert result["success"] is False
+        assert "No notes match tag(s): standup" in result["error"]
+        assert "chirp notes" in result["suggestion"]
+
+    def test_contentless_hits_dropped_under_tag_filter(self, tmp_path):
+        config = _make_config(tmp_path)
+        self._seed_note(config.directories.notes_root, "standup-note", ["standup"])
+
+        def fake_bm25(bm25_file, question, k, index_manager=None):
+            return [
+                self._chunk("standup-note", "standup content"),
+                ("stale-chunk", 0.5, {"source": "bm25"}),
+            ]
+
+        with (
+            patch("notes_chat.retrieval.IndexManager") as MockIM,
+            patch("notes_chat.retrieval._search_bm25", side_effect=fake_bm25),
+            patch("notes_chat.retrieval.parse_time_range", return_value=None),
+            patch("notes_chat.retrieval._build_note_index", return_value={}),
+        ):
+            MockIM.return_value = _make_index_manager(config, manifest_exists=True)
+            result = retrieve_context(config, "what happened", tags=["standup"])
+
+        assert result["success"] is True
+        assert "stale-chunk" not in result["retrieved_ids"]
+        assert "standup-note-chunk" in result["retrieved_ids"]

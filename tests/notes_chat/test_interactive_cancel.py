@@ -26,7 +26,7 @@ def test_handle_question_cancels_inflight_on_keyboard_interrupt(fake_llm_client)
     """A mid-stream Ctrl-C cancels the in-flight request and returns fast."""
     req_id = "r-0123456789ab"
 
-    def fake_stream(config, question):
+    def fake_stream(config, question, tags=None):
         yield {"type": "request_started", "req_id": req_id}
         yield {"type": "token", "content": "partial answer "}
         raise KeyboardInterrupt
@@ -65,7 +65,7 @@ def test_handle_question_cancel_when_daemon_unreachable_returns_cleanly(
     """
     req_id = "r-0123456789ab"
 
-    def fake_stream(config, question):
+    def fake_stream(config, question, tags=None):
         yield {"type": "request_started", "req_id": req_id}
         yield {"type": "token", "content": "partial "}
         raise KeyboardInterrupt
@@ -97,7 +97,7 @@ def test_handle_question_cancel_when_daemon_unreachable_returns_cleanly(
 def test_handle_question_does_not_cancel_on_normal_completion(fake_llm_client):
     """A stream that completes normally never issues a cancel."""
 
-    def fake_stream(config, question):
+    def fake_stream(config, question, tags=None):
         yield {"type": "request_started", "req_id": "r-aaaaaaaaaaaa"}
         yield {"type": "token", "content": "hello"}
         yield {"type": "complete", "answer": "hello"}

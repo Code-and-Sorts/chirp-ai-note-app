@@ -92,6 +92,11 @@ def ask(
         "--when",
         help="Time range filter (e.g., 'last week', 'on:2025-01-15', '2025-01-01:2025-01-31')",
     ),
+    tags: list[str] | None = typer.Option(
+        None,
+        "--tag",
+        help="Only answer from notes carrying this tag (repeatable; AND-combined).",
+    ),
     sources: bool = typer.Option(
         True, "--sources/--no-sources", help="Show source information"
     ),
@@ -118,7 +123,7 @@ def ask(
     if question is None:
         from notes_chat.interactive import InteractiveChatSession
 
-        session = InteractiveChatSession(config, markdown=markdown)
+        session = InteractiveChatSession(config, markdown=markdown, tags=tags)
         session.start()
         return
 
@@ -130,7 +135,9 @@ def ask(
         if not json_output:
             console.print(f"[dim]searching for: {question}[/dim]")
 
-        context_result = retrieve_context(config, question, when_filter=when)
+        context_result = retrieve_context(
+            config, question, when_filter=when, tags=tags
+        )
 
         if not context_result.get("success"):
             error = context_result.get("error", "Unknown error")

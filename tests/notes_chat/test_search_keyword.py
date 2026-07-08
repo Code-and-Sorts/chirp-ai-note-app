@@ -26,6 +26,7 @@ def _seed_note(
     title: str,
     transcript: str | None = None,
     notes_md: str | None = None,
+    tags: list[str] | None = None,
 ) -> Path:
     note_dir = settings.directories.notes_root / slug
     note_dir.mkdir()
@@ -33,7 +34,12 @@ def _seed_note(
         (note_dir / "transcript.txt").write_text(transcript, encoding="utf-8")
     if notes_md is not None:
         (note_dir / "notes.md").write_text(notes_md, encoding="utf-8")
-    meta_lines = [f'title = "{title}"', f'date = "{created_at.isoformat()}"']
+    tag_list = ", ".join(f'"{tag}"' for tag in tags or [])
+    meta_lines = [
+        f'title = "{title}"',
+        f'date = "{created_at.isoformat()}"',
+        f"tags = [{tag_list}]",
+    ]
     (note_dir / "meta.toml").write_text("\n".join(meta_lines), encoding="utf-8")
     return Path(note_dir)
 
@@ -352,3 +358,88 @@ def test_cli_since_renders_scope_line(seeded_settings):
     assert result.exit_code == 0
     assert "scope: last 30 days" in result.output
     assert "case-insensitive" not in result.output
+
+
+def test_tag_filter_restricts_results(tmp_path):
+    from notes_chat.search_keyword import SearchOptions, run_search
+
+    settings = _build_settings(tmp_path)
+    now = datetime.now()
+    _seed_note(
+        settings,
+        slug="standup-tagged",
+        created_at=now,
+        title="standup",
+        notes_md="pricing came up in standup\n",
+        tags=["standup"],
+    )
+    _seed_note(
+        settings,
+        slug="untagged-note",
+        created_at=now,
+        title="untagged",
+        notes_md="pricing everywhere\n",
+    )
+
+    result = run_search(
+        settings, SearchOptions(query="pricing", tags=("standup",))
+    )
+
+    assert [m["slug"] for m in result["matches"]] == ["standup-tagged"]
+    assert result["tags"] == ["standup"]
+
+
+def test_tag_filter_is_and_combined(tmp_path):
+    from notes_chat.search_keyword import SearchOptions, run_search
+
+    settings = _build_settings(tmp_path)
+    now = datetime.now()
+    _seed_note(
+        settings,
+        slug="both-tags",
+        created_at=now,
+        title="both",
+        notes_md="pricing discussion\n",
+        tags=["standup", "work"],
+    )
+    _seed_note(
+        settings,
+        slug="one-tag",
+        created_at=now,
+        title="one",
+        notes_md="pricing discussion\n",
+        tags=["standup"],
+    )
+
+    result = run_search(
+        settings, SearchOptions(query="pricing", tags=("standup", "work"))
+    )
+
+    assert [m["slug"] for m in result["matches"]] == ["both-tags"]
+
+
+def test_cli_search_passes_tag_filter(tmp_path):
+    settings = _build_settings(tmp_path)
+    now = datetime.now()
+    _seed_note(
+        settings,
+        slug="standup-tagged",
+        created_at=now,
+        title="standup",
+        notes_md="pricing came up\n",
+        tags=["standup", "work"],
+    )
+    _seed_note(
+        settings,
+        slug="untagged-note",
+        created_at=now,
+        title="untagged",
+        notes_md="pricing everywhere\n",
+    )
+
+    result = _invoke_search(["pricing", "--tag", "standup,work", "--json"], settings)
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["tags"] == ["standup", "work"]
+    assert [m["slug"] for m in payload["matches"]] == ["standup-tagged"]

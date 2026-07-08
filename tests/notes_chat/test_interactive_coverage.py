@@ -301,7 +301,7 @@ def test_handle_question_plaintext_mode(mock_console, mock_stream, plaintext_ses
         {"type": "complete", "answer": "hello"},
     ]
     plaintext_session.handle_question("hi")
-    mock_stream.assert_called_once_with(plaintext_session.config, "hi")
+    mock_stream.assert_called_once_with(plaintext_session.config, "hi", tags=None)
 
 
 # ---------------------------------------------------------------------------

@@ -127,7 +127,7 @@ class TestAskInteractiveMode:
         started = {"called": False}
 
         class FakeSession:
-            def __init__(self, config, markdown=True):
+            def __init__(self, config, markdown=True, tags=None):
                 pass
 
             def start(self):
@@ -143,7 +143,7 @@ class TestAskInteractiveMode:
     def test_question_option_used_when_positional_absent(self, monkeypatch):
         _patch_config(monkeypatch)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": True,
                 "context": "ctx",
@@ -176,7 +176,7 @@ class TestAskRetrievalFailure:
     def test_no_documents_found_prints_message(self, monkeypatch):
         self._setup(monkeypatch)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": False,
                 "error": "no documents found for your query",
@@ -191,7 +191,7 @@ class TestAskRetrievalFailure:
     def test_no_documents_found_without_suggestion(self, monkeypatch):
         self._setup(monkeypatch)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {"success": False, "error": "no documents found"}
 
         monkeypatch.setattr("notes_chat.retrieval.retrieve_context", fake_retrieve)
@@ -201,7 +201,7 @@ class TestAskRetrievalFailure:
     def test_generic_retrieval_error_exits_1(self, monkeypatch):
         self._setup(monkeypatch)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": False,
                 "error": "index corrupted",
@@ -217,7 +217,7 @@ class TestAskRetrievalFailure:
     def test_generic_retrieval_error_without_suggestion(self, monkeypatch):
         self._setup(monkeypatch)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {"success": False, "error": "index corrupted"}
 
         monkeypatch.setattr("notes_chat.retrieval.retrieve_context", fake_retrieve)
@@ -236,7 +236,7 @@ class TestAskDryRun:
         _patch_config(monkeypatch)
         context = "x" * context_len
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": True,
                 "context": context,
@@ -282,7 +282,7 @@ class TestAskCachedAnswer:
     def test_uses_cached_answer_when_available(self, monkeypatch):
         _patch_config(monkeypatch)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": True,
                 "context": "ctx",
@@ -320,7 +320,7 @@ class TestAskGenerationFailure:
     def test_generation_failure_exits_1(self, monkeypatch):
         _patch_config(monkeypatch)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": True,
                 "context": "ctx",
@@ -367,7 +367,7 @@ class TestAskLLMExceptions:
     def _retrieval_ok(monkeypatch):
         _patch_config(monkeypatch)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": True,
                 "context": "ctx",

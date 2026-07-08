@@ -24,9 +24,15 @@ console = stderr_console
 
 
 class InteractiveChatSession:
-    def __init__(self, config: ChirpSettings, markdown: bool = True):
+    def __init__(
+        self,
+        config: ChirpSettings,
+        markdown: bool = True,
+        tags: list[str] | None = None,
+    ):
         self.config = config
         self.markdown = markdown
+        self.tags = list(tags) if tags else None
         self.last_interrupt_time = None
         self.interrupt_timeout = 2.0
         self._inflight_req_id: str | None = None
@@ -207,7 +213,9 @@ class InteractiveChatSession:
             sources = None
             from_cache = False
 
-            stream_gen = enhanced_search_and_answer_stream(self.config, question)
+            stream_gen = enhanced_search_and_answer_stream(
+                self.config, question, tags=self.tags
+            )
             for stream_event in stream_gen:
                 event_type = stream_event.get("type", "")
 

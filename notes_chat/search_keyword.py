@@ -27,6 +27,7 @@ class SearchOptions:
     since_minutes: int | None = None
     regex: bool = False
     json: bool = False
+    tags: tuple[str, ...] = ()
 
 
 @dataclass
@@ -60,6 +61,7 @@ def run_search(settings: Any, options: SearchOptions) -> dict:
     ]
     total_notes_scanned = len(records)
     records = _apply_since(records, options.since_minutes)
+    records = _apply_tags(records, options.tags)
 
     started = time.perf_counter()
 
@@ -90,6 +92,7 @@ def run_search(settings: Any, options: SearchOptions) -> dict:
         "query": options.query,
         "since": _since_to_text(options.since_minutes),
         "regex": options.regex,
+        "tags": list(options.tags),
         "duration_seconds": round(elapsed, 2),
         "total_notes_scanned": total_notes_scanned,
         "matches": [_hit_to_dict(hit) for hit in hits],
@@ -121,10 +124,13 @@ def render_results(
     )
     stderr_console.print()
 
+    scope_parts = []
     if options.since_minutes is not None:
-        stderr_console.print(
-            f" [dim]scope: last {_humanize_duration(options.since_minutes)}[/dim]"
-        )
+        scope_parts.append(f"last {_humanize_duration(options.since_minutes)}")
+    if options.tags:
+        scope_parts.append(f"tag: {', '.join(options.tags)}")
+    if scope_parts:
+        stderr_console.print(f" [dim]scope: {' · '.join(scope_parts)}[/dim]")
         stderr_console.print()
 
     if not matches:
@@ -281,6 +287,12 @@ def _apply_since(
         return records
     cutoff = datetime.now() - timedelta(minutes=since_minutes)
     return [r for r in records if r.created_at >= cutoff]
+
+
+def _apply_tags(records: list[NoteRecord], tags: tuple[str, ...]) -> list[NoteRecord]:
+    if not tags:
+        return records
+    return [r for r in records if all(tag in r.tags for tag in tags)]
 
 
 def _extract_matches(

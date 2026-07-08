@@ -89,10 +89,36 @@ def _record_index_freshness(config: ChirpSettings) -> None:
 
 
 def retrieve_context(
-    config: ChirpSettings, question: str, when_filter: str | None = None
+    config: ChirpSettings,
+    question: str,
+    when_filter: str | None = None,
+    tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Retrieve context for answering a question using hybrid search."""
+    """Retrieve context for answering a question using hybrid search.
+
+    ``tags`` restricts retrieval to notes carrying every given tag (the same
+    AND semantics as ``chirp notes --tag``), matched by slug against each
+    chunk's ``path`` metadata.
+    """
     try:
+        tag_filter = [tag for tag in (tags or []) if tag]
+        allowed_slugs: set[str] | None = None
+        if tag_filter:
+            from utils.file_utils import list_notes
+
+            allowed_slugs = {
+                record.slug
+                for record in list_notes(config.directories.notes_root)
+                if all(tag in record.tags for tag in tag_filter)
+            }
+            if not allowed_slugs:
+                tag_label = ", ".join(tag_filter)
+                return {
+                    "success": False,
+                    "error": f"No notes match tag(s): {tag_label}",
+                    "suggestion": "Run `chirp notes` to see the tags in use.",
+                }
+
         index_manager = IndexManager(config)
 
         if not index_manager.manifest_file.exists():
@@ -118,10 +144,13 @@ def retrieve_context(
         else:
             time_range = parse_time_range(question)
 
+        # Over-fetch under a tag filter so post-filtering by slug doesn't
+        # starve the context of the K the budget expects.
+        fetch_k = config.notes_chat.k * (3 if allowed_slugs is not None else 1)
         bm25_results = _search_bm25(
             index_manager.bm25_file,
             question,
-            config.notes_chat.k,
+            fetch_k,
             index_manager=index_manager,
         )
 
@@ -130,8 +159,12 @@ def retrieve_context(
         if config.notes_chat.semantic_enabled:
             weights = _route_query(question)
             chroma_results = _search_chroma(
-                index_manager, question, config.notes_chat.k, time_range
+                index_manager, question, fetch_k, time_range
             )
+
+        if allowed_slugs is not None:
+            bm25_results = _filter_by_slugs(bm25_results, allowed_slugs)
+            chroma_results = _filter_by_slugs(chroma_results, allowed_slugs)
 
         if not chroma_results and not bm25_results:
             suggestion = _generate_suggestion(config, time_range)
@@ -264,6 +297,21 @@ def _search_bm25(
     except Exception as e:  # noqa: BLE001 - BM25 can raise many types on corrupt index
         logger.debug("BM25 search failed: %s", e, exc_info=True)
         return []
+
+
+def _filter_by_slugs(
+    results: list[tuple[str, float, dict[str, Any]]], allowed_slugs: set[str]
+) -> list[tuple[str, float, dict[str, Any]]]:
+    """Keep hits whose chunk metadata resolves to an allowed note slug.
+
+    Contentless hits (no metadata → no slug) are dropped: their note can't be
+    verified against the tag filter.
+    """
+    return [
+        (chunk_id, score, data)
+        for chunk_id, score, data in results
+        if _slug_from_chunk(data) in allowed_slugs
+    ]
 
 
 def _signature(chunk_id: str, data: dict[str, Any]) -> str:

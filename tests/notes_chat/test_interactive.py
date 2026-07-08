@@ -87,7 +87,7 @@ def test_handle_question_search_success(mock_print, mock_stream, chat_session):
     chat_session.handle_question("what was discussed in the meeting")
 
     mock_stream.assert_called_once_with(
-        chat_session.config, "what was discussed in the meeting"
+        chat_session.config, "what was discussed in the meeting", tags=None
     )
 
 
@@ -103,7 +103,7 @@ def test_handle_question_conversational_success(mock_print, mock_stream, chat_se
 
     chat_session.handle_question("hi")
 
-    mock_stream.assert_called_once_with(chat_session.config, "hi")
+    mock_stream.assert_called_once_with(chat_session.config, "hi", tags=None)
 
 
 @patch("notes_chat.interactive.enhanced_search_and_answer_stream")
@@ -116,7 +116,7 @@ def test_handle_question_error_handling(mock_print, mock_stream, chat_session):
 
     chat_session.handle_question("hello")
 
-    mock_stream.assert_called_once_with(chat_session.config, "hello")
+    mock_stream.assert_called_once_with(chat_session.config, "hello", tags=None)
 
 
 @patch("notes_chat.interactive.enhanced_search_and_answer_stream")
@@ -134,7 +134,7 @@ def test_handle_question_no_documents_found(mock_print, mock_stream, chat_sessio
     ]
 
     chat_session.handle_question("test question")
-    mock_stream.assert_called_once_with(chat_session.config, "test question")
+    mock_stream.assert_called_once_with(chat_session.config, "test question", tags=None)
 
 
 @patch("notes_chat.interactive.enhanced_search_and_answer_stream")
@@ -151,7 +151,7 @@ def test_handle_question_cached_answer(mock_print, mock_stream, chat_session):
     ]
 
     chat_session.handle_question("test question")
-    mock_stream.assert_called_once_with(chat_session.config, "test question")
+    mock_stream.assert_called_once_with(chat_session.config, "test question", tags=None)
 
 
 @patch("notes_chat.interactive.enhanced_search_and_answer_stream")
@@ -163,7 +163,7 @@ def test_handle_question_retrieval_error(mock_print, mock_stream, chat_session):
     ]
 
     chat_session.handle_question("test question")
-    mock_stream.assert_called_once_with(chat_session.config, "test question")
+    mock_stream.assert_called_once_with(chat_session.config, "test question", tags=None)
 
 
 @patch("notes_chat.interactive.enhanced_search_and_answer_stream")
@@ -175,4 +175,4 @@ def test_handle_question_generation_failure(mock_print, mock_stream, chat_sessio
     ]
 
     chat_session.handle_question("test question")
-    mock_stream.assert_called_once_with(chat_session.config, "test question")
+    mock_stream.assert_called_once_with(chat_session.config, "test question", tags=None)

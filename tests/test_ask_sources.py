@@ -159,7 +159,7 @@ class TestInteractiveBanner:
 
 class TestAskMarkdownToggle:
     def _stub_pipeline(self, monkeypatch, answer: str = "**bold** and _italic_"):
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": True,
                 "context": "ctx",

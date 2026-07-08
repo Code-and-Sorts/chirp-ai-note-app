@@ -1335,6 +1335,12 @@ def ask(
         help="Same as the positional argument; kept for backwards compatibility.",
     ),
     when: str | None = typer.Option(None, "--when", help="Time range filter"),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        help="Only answer from notes with this tag "
+        "(comma-separated values are AND-combined).",
+    ),
     sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
     markdown: bool = typer.Option(
         True,
@@ -1368,6 +1374,7 @@ def ask(
         question=resolved,
         question_option=None,
         when=when,
+        tags=_parse_tag_filter(tag) or None,
         sources=sources,
         dry_run=dry_run,
         markdown=markdown,
@@ -1384,6 +1391,11 @@ def search(
         None,
         "--since",
         help="Only notes from the last DURATION (e.g. 30d, 2w, 48h).",
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        help="Filter by tag (comma-separated values are AND-combined).",
     ),
     regex: bool = typer.Option(False, "--regex", help="Treat QUERY as a Python regex."),
     json_output: bool = typer.Option(
@@ -1426,6 +1438,7 @@ def search(
         since_minutes=since_minutes,
         regex=regex,
         json=json_output,
+        tags=tuple(_parse_tag_filter(tag)),
     )
 
     result = run_search(settings, options)
