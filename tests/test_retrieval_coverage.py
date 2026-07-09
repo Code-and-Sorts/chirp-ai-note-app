@@ -916,3 +916,26 @@ class TestRetrieveContextTagFilter:
         assert result["success"] is True
         assert "stale-chunk" not in result["retrieved_ids"]
         assert "standup-note-chunk" in result["retrieved_ids"]
+
+    def test_tags_are_stripped_and_blank_tags_ignored(self, tmp_path):
+        config = _make_config(tmp_path)
+        self._seed_note(config.directories.notes_root, "standup-note", ["standup"])
+
+        def fake_bm25(bm25_file, question, k, index_manager=None):
+            return [self._chunk("standup-note", "standup content")]
+
+        with (
+            patch("notes_chat.retrieval.IndexManager") as MockIM,
+            patch("notes_chat.retrieval._search_bm25", side_effect=fake_bm25),
+            patch("notes_chat.retrieval.parse_time_range", return_value=None),
+            patch("notes_chat.retrieval._build_note_index", return_value={}),
+        ):
+            MockIM.return_value = _make_index_manager(config, manifest_exists=True)
+            padded = retrieve_context(config, "what happened", tags=["  standup  "])
+            blank_only = retrieve_context(config, "what happened", tags=["   "])
+
+        assert padded["success"] is True
+        assert "standup content" in padded["context"]
+        # A tag that strips to nothing is no filter at all, matching
+        # _parse_tag_filter's behavior — not a filter that matches nothing.
+        assert blank_only["success"] is True

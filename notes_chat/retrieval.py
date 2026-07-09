@@ -101,7 +101,7 @@ def retrieve_context(
     chunk's ``path`` metadata.
     """
     try:
-        tag_filter = [tag for tag in (tags or []) if tag]
+        tag_filter = [tag.strip() for tag in (tags or []) if tag and tag.strip()]
         allowed_slugs: set[str] | None = None
         if tag_filter:
             from utils.file_utils import list_notes

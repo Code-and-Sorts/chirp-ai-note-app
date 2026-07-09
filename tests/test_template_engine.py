@@ -227,6 +227,14 @@ class TestRenderNote:
         result = engine.render_note(meeting_template, data)
         assert "1m 30s" in result
 
+    def test_zero_duration_s_does_not_fall_back_to_legacy_duration(
+        self, engine, meeting_template
+    ):
+        data = self._full_note_data()
+        data["metadata"] = {"duration_s": 0.0, "duration": 3600.0}
+        result = engine.render_note(meeting_template, data)
+        assert "**Duration:** Unknown" in result
+
     def test_custom_template_layout(self, engine, tmp_path):
         loader = TemplateLoader(user_dir=tmp_path / "templates")
         template = loader.load("standup")

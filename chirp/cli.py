@@ -728,7 +728,7 @@ def transcribe(
         help="Regenerate notes from existing transcripts; skip audio transcription. "
         "Useful after switching LLMs.",
     ),
-    note_ids: list[str] = typer.Option(
+    note_ids: list[str] | None = typer.Option(
         None,
         "--note",
         help="With --regen: only regenerate the given note id(s) (repeatable).",
@@ -1082,8 +1082,10 @@ def _resolve_or_exit(note_id: str) -> NoteRecord:
 @notes_app.command("tag")
 def notes_tag(
     note_id: str = typer.Argument(..., help="Note id (slug or prefix)"),
-    add: list[str] = typer.Option(None, "--add", "-a", help="Tag to add (repeatable)."),
-    remove: list[str] = typer.Option(
+    add: list[str] | None = typer.Option(
+        None, "--add", "-a", help="Tag to add (repeatable)."
+    ),
+    remove: list[str] | None = typer.Option(
         None, "--remove", "-r", help="Tag to remove (repeatable)."
     ),
     clear: bool = typer.Option(False, "--clear", help="Remove all tags first."),
@@ -1341,7 +1343,7 @@ def ask(
         help="Same as the positional argument; kept for backwards compatibility.",
     ),
     when: str | None = typer.Option(None, "--when", help="Time range filter"),
-    tag: list[str] = typer.Option(
+    tag: list[str] | None = typer.Option(
         None,
         "--tag",
         help="Only answer from notes with this tag "

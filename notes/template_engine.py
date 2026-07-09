@@ -35,7 +35,9 @@ class TemplateEngine:
 
     def render_note(self, template: NoteTemplate, data: dict[str, Any]) -> str:
         metadata = data.get("metadata", {})
-        duration = metadata.get("duration_s") or metadata.get("duration") or 0
+        duration = metadata.get("duration_s")
+        if duration is None:
+            duration = metadata.get("duration") or 0
 
         variables: dict[str, Any] = {
             "title": data.get("title") or "Untitled Note",

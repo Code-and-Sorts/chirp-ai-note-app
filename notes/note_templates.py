@@ -274,8 +274,7 @@ def build_system_prompt(template: NoteTemplate) -> str:
             f"  (e.g., <{template.sections[0].tag}>None</{template.sections[0].tag}>).",
             "- Do NOT output markdown fences or prose. XML ONLY.",
             "- Escape XML special characters (&, <, >) in text nodes.",
-            "- For code snippets or multi-line technical blocks, wrap content in "
-            "<![CDATA[ ... ]]> within the relevant ITEM.",
+            "- For code snippets or multi-line technical blocks, wrap content in <![CDATA[ ... ]]> within the relevant ITEM.",
             "</output_contract>",
         ]
     )
