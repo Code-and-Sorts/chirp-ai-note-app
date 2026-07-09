@@ -637,17 +637,27 @@ class TestTranscribeSurfacesModelLoadError:
 
 
 class TestTranscribeRegenTemplateAndNoteFilter:
-    def _seed(self, tmp_path: Path, slug: str, tags: list[str] | None = None) -> None:
+    def _seed(
+        self,
+        tmp_path: Path,
+        slug: str,
+        tags: list[str] | None = None,
+        date: str = "2026-04-20T09:00:00",
+        transcript: bool = True,
+        notes: bool = True,
+    ) -> None:
         note_dir = tmp_path / slug
         note_dir.mkdir()
-        (note_dir / "transcript.txt").write_text("hello world", encoding="utf-8")
-        (note_dir / "notes.md").write_text(f"# {slug}\n", encoding="utf-8")
+        if transcript:
+            (note_dir / "transcript.txt").write_text("hello world", encoding="utf-8")
+        if notes:
+            (note_dir / "notes.md").write_text(f"# {slug}\n", encoding="utf-8")
 
         import tomli_w
 
         with (note_dir / "meta.toml").open("wb") as fh:
             tomli_w.dump(
-                {"title": slug, "date": "2026-04-20T09:00:00", "tags": tags or []},
+                {"title": slug, "date": date, "tags": tags or []},
                 fh,
             )
 
@@ -756,6 +766,39 @@ class TestTranscribeRegenTemplateAndNoteFilter:
         assert result.exit_code == 1
         assert "no note matching" in result.stderr
 
+    def test_regen_numeric_note_id_matches_notes_table(self, tmp_path, monkeypatch):
+        """Numeric --note ids number the `chirp notes` table (generated notes,
+        newest first) — a transcript-only record must not shift the numbering."""
+        self._seed(tmp_path, "a-old", date="2026-04-18T09:00:00")
+        self._seed(
+            tmp_path, "b-mid", date="2026-04-19T09:00:00", notes=False
+        )  # failed generation: transcript but no notes.md
+        self._seed(tmp_path, "c-new", date="2026-04-20T09:00:00")
+        captured: dict = {}
+
+        result = self._invoke(
+            tmp_path,
+            monkeypatch,
+            ["transcribe", "--regen", "--note", "2"],
+            captured,
+        )
+
+        assert result.exit_code == 0
+        assert [r.slug for r in captured["records"]] == ["a-old"]
+
+    def test_regen_note_without_transcript_fails(self, tmp_path, monkeypatch):
+        self._seed(tmp_path, "a-old", date="2026-04-18T09:00:00")
+        self._seed(
+            tmp_path, "orphan-notes", date="2026-04-20T09:00:00", transcript=False
+        )
+        result = self._invoke(
+            tmp_path,
+            monkeypatch,
+            ["transcribe", "--regen", "--note", "orphan-notes"],
+        )
+        assert result.exit_code == 1
+        assert "no transcript to regenerate from" in result.stderr
+
 
 class TestNotesTag:
     def _runner(self, tmp_path, monkeypatch):
@@ -863,3 +906,54 @@ class TestRecordTemplateFlag:
         assert result.exit_code == 2
         assert "unknown template 'nope'" in result.stderr
         assert "standup" in result.stderr
+
+
+class TestAskTagFlag:
+    def test_repeated_and_comma_tags_reach_ask(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        monkeypatch.setattr(
+            "chirp.init_flow.offer_first_run_setup", lambda *a, **k: None
+        )
+        captured: dict = {}
+
+        def fake_ask(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr("notes_chat.cli.ask", fake_ask)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(
+            chirp.cli.app,
+            ["ask", "anything?", "--tag", "standup", "--tag", "work,extra"],
+        )
+
+        assert result.exit_code == 0
+        assert captured["tags"] == ["standup", "work", "extra"]
+
+
+class TestInitTemplateScaffold:
+    def test_init_survives_templates_path_being_a_file(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        blocker = tmp_path / "templates"
+        blocker.write_text("not a directory", encoding="utf-8")
+
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        monkeypatch.setattr("notes.note_templates.user_templates_dir", lambda: blocker)
+        monkeypatch.setattr(
+            "chirp.init_flow.require_apple_silicon", lambda console: None
+        )
+        monkeypatch.setattr("chirp.init_flow.run_init", lambda *a, **k: 0)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(chirp.cli.app, ["init"])
+
+        assert result.exit_code == 0
+        assert "could not scaffold note templates" in result.stderr
+        assert blocker.read_text(encoding="utf-8") == "not a directory"

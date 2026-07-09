@@ -797,9 +797,8 @@ def _run_regen_pipeline(
         _validated_template_or_exit(template)
 
     notes_root = settings.directories.notes_root
-    records = [
-        record for record in list_notes(notes_root) if record.transcript is not None
-    ]
+    all_records = list_notes(notes_root)
+    records = [record for record in all_records if record.transcript is not None]
 
     if not records:
         console.print(
@@ -809,9 +808,19 @@ def _run_regen_pipeline(
         return
 
     if note_ids:
+        # Numeric ids follow the `chirp notes` table (generated notes only);
+        # slugs resolve across every record — the same contract as `notes tag`.
+        visible = [record for record in all_records if record.notes is not None]
         selected: dict[str, NoteRecord] = {}
         for note_id in note_ids:
-            record = _resolve_from_records_or_exit(records, note_id)
+            pool = visible if note_id.strip().isdigit() else all_records
+            record = _resolve_from_records_or_exit(pool, note_id)
+            if record.transcript is None:
+                console.print(
+                    f"[red]{glyphs.FAILURE} note '{record.slug}' has no "
+                    "transcript to regenerate from[/red]"
+                )
+                raise typer.Exit(exit_codes.RUNTIME_ERROR)
             selected[record.slug] = record
         records = list(selected.values())
         if template is not None:
@@ -1332,11 +1341,11 @@ def ask(
         help="Same as the positional argument; kept for backwards compatibility.",
     ),
     when: str | None = typer.Option(None, "--when", help="Time range filter"),
-    tag: str | None = typer.Option(
+    tag: list[str] = typer.Option(
         None,
         "--tag",
         help="Only answer from notes with this tag "
-        "(comma-separated values are AND-combined).",
+        "(repeatable; comma-separated values are AND-combined).",
     ),
     sources: bool = typer.Option(True, "--sources/--no-sources", help="Show sources"),
     markdown: bool = typer.Option(
@@ -1367,11 +1376,14 @@ def ask(
             "using the positional.[/yellow]"
         )
     resolved = question if question is not None else question_option
+    resolved_tags = [
+        parsed for piece in (tag or []) for parsed in _parse_tag_filter(piece)
+    ]
     ask(
         question=resolved,
         question_option=None,
         when=when,
-        tags=_parse_tag_filter(tag) or None,
+        tags=resolved_tags or None,
         sources=sources,
         dry_run=dry_run,
         markdown=markdown,
@@ -1477,12 +1489,19 @@ def init(
 
     from notes.note_templates import TemplateLoader, user_templates_dir
 
-    written = TemplateLoader().scaffold()
-    if written:
+    try:
+        written = TemplateLoader().scaffold()
+    except OSError as exc:
         console.print(
-            f"[dim]note templates scaffolded to {user_templates_dir()} — "
-            "edit them to customize note layouts and tag links[/dim]"
+            f"[yellow]could not scaffold note templates to "
+            f"{user_templates_dir()}: {exc}[/yellow]"
         )
+    else:
+        if written:
+            console.print(
+                f"[dim]note templates scaffolded to {user_templates_dir()} — "
+                "edit them to customize note layouts and tag links[/dim]"
+            )
 
     code = run_init(settings, console, recheck=recheck, switch_model=switch_model)
     if code != 0:

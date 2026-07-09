@@ -80,6 +80,21 @@ class TestParseTemplate:
         )
         assert [s.key for s in template.sections] == ["items"]
 
+    def test_structural_tag_collision_raises(self):
+        with pytest.raises(TemplateError, match=r"\{notes\} collides"):
+            parse_template("t", "### Notes\n\n{notes}\n")
+        with pytest.raises(TemplateError, match=r"\{item\} collides"):
+            parse_template("t", "### Items\n\n{item}\n")
+
+    def test_placeholder_on_heading_line_becomes_section(self):
+        template = parse_template(
+            "t", "### Blockers {blockers}\n\n### Today\n\n{today}\n"
+        )
+        assert [(s.key, s.heading) for s in template.sections] == [
+            ("blockers", "Blockers"),
+            ("today", "Today"),
+        ]
+
     def test_heading_fallback_is_titleized_key(self):
         template = parse_template("t", "{open_questions}\n")
         assert template.sections[0].heading == "Open Questions"

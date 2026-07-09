@@ -193,11 +193,17 @@ def _derive_sections(body: str, prose_keys: set[str]) -> tuple[Section, ...]:
         heading_match = _HEADING_RE.match(line)
         if heading_match:
             heading = _PLACEHOLDER_RE.sub("", heading_match.group(1)).strip()
-            continue
         for match in _PLACEHOLDER_RE.finditer(line):
             key = match.group(1)
             if key in RESERVED_KEYS or key in seen:
                 continue
+            if key.upper() in _STRUCTURAL_TAGS:
+                # A <NOTES>/<ITEM>/<TITLE> section tag would nest inside the
+                # XML contract's own tags and corrupt parsing.
+                raise TemplateError(
+                    f"section placeholder {{{key}}} collides with the XML "
+                    "contract — rename it (e.g. {" + key + "_section})"
+                )
             seen.add(key)
             if key == ACTION_LIST_KEY:
                 kind = "action_list"
@@ -248,6 +254,7 @@ _PROMPT_RULES = """<handling_rules>
 
 ROOT_TAG = "NOTES"
 TITLE_TAG = "TITLE"
+_STRUCTURAL_TAGS = frozenset({ROOT_TAG, TITLE_TAG, "ITEM"})
 
 
 def build_system_prompt(template: NoteTemplate) -> str:
