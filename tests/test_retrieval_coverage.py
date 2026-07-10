@@ -936,6 +936,4 @@ class TestRetrieveContextTagFilter:
 
         assert padded["success"] is True
         assert "standup content" in padded["context"]
-        # A tag that strips to nothing is no filter at all, matching
-        # _parse_tag_filter's behavior — not a filter that matches nothing.
         assert blank_only["success"] is True

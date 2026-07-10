@@ -771,9 +771,7 @@ class TestTranscribeRegenTemplateAndNoteFilter:
         """Numeric --note ids number the `chirp notes` table (generated notes,
         newest first) — a transcript-only record must not shift the numbering."""
         self._seed(tmp_path, "a-old", date="2026-04-18T09:00:00")
-        self._seed(
-            tmp_path, "b-mid", date="2026-04-19T09:00:00", notes=False
-        )  # failed generation: transcript but no notes.md
+        self._seed(tmp_path, "b-mid", date="2026-04-19T09:00:00", notes=False)
         self._seed(tmp_path, "c-new", date="2026-04-20T09:00:00")
         captured: dict = {}
 
@@ -848,8 +846,6 @@ class TestNotesTag:
         assert self._read_tags(tmp_path, "a-2026-04-20") == ["fresh"]
 
     def test_numeric_id_matches_notes_table(self, tmp_path, monkeypatch):
-        # Distinct dates: id ordering is newest-first by created_at, and equal
-        # timestamps would make the order filesystem-dependent.
         _write_note(
             tmp_path, "older-2026-04-19", "Older", "x", date="2026-04-19T09:00:00"
         )

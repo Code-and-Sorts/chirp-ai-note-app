@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
+from typing import Literal
 
 from utils.file_utils import ensure_private_directory
 
@@ -54,7 +55,7 @@ class Section:
     key: str
     tag: str
     heading: str
-    kind: str  # "prose" | "list" | "action_list"
+    kind: Literal["prose", "list", "action_list"]
 
 
 @dataclass(frozen=True)
@@ -198,13 +199,12 @@ def _derive_sections(body: str, prose_keys: set[str]) -> tuple[Section, ...]:
             if key in RESERVED_KEYS or key in seen:
                 continue
             if key.upper() in _STRUCTURAL_TAGS:
-                # A <NOTES>/<ITEM>/<TITLE> section tag would nest inside the
-                # XML contract's own tags and corrupt parsing.
                 raise TemplateError(
                     f"section placeholder {{{key}}} collides with the XML "
                     "contract — rename it (e.g. {" + key + "_section})"
                 )
             seen.add(key)
+            kind: Literal["prose", "list", "action_list"]
             if key == ACTION_LIST_KEY:
                 kind = "action_list"
             elif key in prose_keys:

@@ -144,8 +144,6 @@ def retrieve_context(
         else:
             time_range = parse_time_range(question)
 
-        # Over-fetch under a tag filter so post-filtering by slug doesn't
-        # starve the context of the K the budget expects.
         fetch_k = config.notes_chat.k * (3 if allowed_slugs is not None else 1)
         bm25_results = _search_bm25(
             index_manager.bm25_file,

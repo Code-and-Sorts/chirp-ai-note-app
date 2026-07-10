@@ -922,8 +922,6 @@ def _list_notes(tag: str | None, json_output: bool = False) -> None:
     else:
         records = all_records
 
-    # Ids come from the unfiltered newest-first ordering so a --tag filtered
-    # table shows the same ids that `notes tag N` / `--regen --note N` resolve.
     id_by_slug = {
         record.slug: idx for idx, record in enumerate(reversed(all_records), start=1)
     }

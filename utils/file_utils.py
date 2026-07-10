@@ -134,9 +134,6 @@ def list_notes(notes_root: Path) -> list[NoteRecord]:
         if record is not None:
             records.append(record)
 
-    # Slug tie-break: equal timestamps must not leave ordering to iterdir()
-    # (filesystem-dependent) — the numeric note ids shown by `chirp notes`
-    # and consumed by `notes tag N` / `--regen --note N` depend on it.
     records.sort(key=lambda rec: (rec.created_at, rec.slug))
     return records
 

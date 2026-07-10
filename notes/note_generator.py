@@ -751,8 +751,6 @@ Return ONLY the XML document, no additional text before or after."""
             return parsed
 
         except ET.ParseError:
-            # Reached only after the strict parse fails, so well-formed output
-            # is untouched.
             return self._extract_notes_lenient(xml_content, template)
         except (AttributeError, KeyError, TypeError, ValueError):
             return None
