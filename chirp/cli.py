@@ -889,6 +889,11 @@ def _parse_tag_filter(tag: str | None) -> list[str]:
     return [piece.strip() for piece in tag.split(",") if piece.strip()]
 
 
+def _parse_tag_filters(values: list[str] | None) -> list[str]:
+    """Flatten a repeatable --tag option; each value may be comma-separated."""
+    return [parsed for piece in values or [] for parsed in _parse_tag_filter(piece)]
+
+
 def _note_to_json(idx: int, record: NoteRecord) -> dict:
     return {
         "id": idx,
@@ -1379,14 +1384,11 @@ def ask(
             "using the positional.[/yellow]"
         )
     resolved = question if question is not None else question_option
-    resolved_tags = [
-        parsed for piece in (tag or []) for parsed in _parse_tag_filter(piece)
-    ]
     ask(
         question=resolved,
         question_option=None,
         when=when,
-        tags=resolved_tags or None,
+        tags=_parse_tag_filters(tag) or None,
         sources=sources,
         dry_run=dry_run,
         markdown=markdown,
@@ -1450,9 +1452,7 @@ def search(
         since_minutes=since_minutes,
         regex=regex,
         json=json_output,
-        tags=tuple(
-            parsed for piece in (tag or []) for parsed in _parse_tag_filter(piece)
-        ),
+        tags=tuple(_parse_tag_filters(tag)),
     )
 
     result = run_search(settings, options)
