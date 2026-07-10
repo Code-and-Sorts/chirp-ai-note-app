@@ -124,13 +124,9 @@ def render_results(
     )
     stderr_console.print()
 
-    scope_parts = []
-    if options.since_minutes is not None:
-        scope_parts.append(f"last {_humanize_duration(options.since_minutes)}")
-    if options.tags:
-        scope_parts.append(f"tag: {', '.join(options.tags)}")
-    if scope_parts:
-        stderr_console.print(f" [dim]scope: {' · '.join(scope_parts)}[/dim]")
+    scope = _scope_line(options)
+    if scope:
+        stderr_console.print(f" [dim]scope: {scope}[/dim]")
         stderr_console.print()
 
     if not matches:
@@ -202,6 +198,10 @@ def render_no_matches(
         f" [dim]searching {total_scanned} {_plural(total_scanned, 'note')} for[/dim] "
         f'[bold yellow]"{query}"[/bold yellow]'
     )
+    scope = _scope_line(options)
+    if scope:
+        console.print()
+        console.print(f" [dim]scope: {scope}[/dim]")
     console.print()
     console.print(" [red]✗[/red] [bold white]no exact matches.[/bold white]")
     console.print()
@@ -211,7 +211,8 @@ def render_no_matches(
     )
     console.print("   answers, try chirp ask:")
     console.print()
-    console.print(f'   [dim]$[/dim] chirp ask "{query}"')
+    ask_tags = "".join(f" --tag {tag}" for tag in options.tags)
+    console.print(f'   [dim]$[/dim] chirp ask "{query}"{ask_tags}')
 
     if suggestions:
         console.print()
@@ -278,6 +279,15 @@ def _token_pattern(text: str) -> re.Pattern[str] | None:
         return None
     alternation = "|".join(re.escape(token) for token in tokens)
     return re.compile(rf"(?<!\w)(?:{alternation})(?!\w)", re.IGNORECASE)
+
+
+def _scope_line(options: SearchOptions) -> str:
+    scope_parts = []
+    if options.since_minutes is not None:
+        scope_parts.append(f"last {_humanize_duration(options.since_minutes)}")
+    if options.tags:
+        scope_parts.append(f"tag: {', '.join(options.tags)}")
+    return " · ".join(scope_parts)
 
 
 def _apply_since(

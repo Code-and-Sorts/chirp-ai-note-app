@@ -30,8 +30,8 @@ from utils.file_utils import (
     NOTES_FILENAME,
     NoteRecord,
     atomic_write_text,
-    atomic_write_toml,
     list_notes,
+    merge_note_meta,
 )
 from utils.popup_manager import PopupManager
 
@@ -284,21 +284,14 @@ class NoteGenerator:
         return 0.0
 
     def _update_meta(self, note_dir: Path) -> None:
-        meta_path = note_dir / META_FILENAME
-        meta: dict[str, Any] = {}
-        if meta_path.exists():
-            try:
-                with meta_path.open("rb") as fh:
-                    meta = dict(tomllib.load(fh))
-            except (OSError, tomllib.TOMLDecodeError):
-                meta = {}
-
-        meta["whisper_model"] = self.settings.models.whisper
-        meta["llm_model"] = resolved_chat_model(self.settings.models.llm)
-        meta["indexed_at"] = datetime.now(UTC).replace(microsecond=0).isoformat()
-
-        meta_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_toml(meta_path, meta)
+        merge_note_meta(
+            note_dir,
+            {
+                "whisper_model": self.settings.models.whisper,
+                "llm_model": resolved_chat_model(self.settings.models.llm),
+                "indexed_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+            },
+        )
 
     def _format_generated_note(self, body: str, note_date: datetime) -> str:
         metadata = {

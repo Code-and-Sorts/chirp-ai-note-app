@@ -139,8 +139,14 @@ def ask(
 
         if not context_result.get("success"):
             error = context_result.get("error", "Unknown error")
-            if "no documents found" in error.lower():
-                console.print("[yellow]No relevant documents found.[/yellow]")
+            lowered = error.lower()
+            if "no documents found" in lowered or "no notes match" in lowered:
+                message = (
+                    error
+                    if "no notes match" in lowered
+                    else "No relevant documents found."
+                )
+                console.print(f"[yellow]{message}[/yellow]")
                 if context_result.get("suggestion"):
                     console.print(f"[dim]try: {context_result['suggestion']}[/dim]")
                 raise typer.Exit(exit_codes.USAGE_ERROR)

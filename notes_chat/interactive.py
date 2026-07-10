@@ -114,9 +114,10 @@ class InteractiveChatSession:
     def start(self):
         note_count = self._count_notes()
         model = getattr(self.config.models, "llm", "local")
+        tag_scope = f" · tag: {', '.join(self.tags)}" if self.tags else ""
         header = (
-            f"[cyan bold]Chirp[/cyan bold] [dim]· chat over {note_count} notes · "
-            f"{model} (local)[/dim]"
+            f"[cyan bold]Chirp[/cyan bold] [dim]· chat over {note_count} notes"
+            f"{tag_scope} · {model} (local)[/dim]"
         )
         console.print()
         console.print(header)

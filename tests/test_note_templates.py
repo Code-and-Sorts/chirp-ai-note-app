@@ -252,3 +252,23 @@ def test_note_template_is_immutable():
     assert isinstance(template, NoteTemplate)
     with pytest.raises(AttributeError):
         template.name = "other"
+
+
+class TestDefaultTemplateShadow:
+    def test_load_default_honors_user_meeting_shadow(self, loader):
+        loader.user_dir.mkdir(parents=True)
+        (loader.user_dir / "meeting.md").write_text(
+            "### Key Points\n\n{key_points}\n", encoding="utf-8"
+        )
+
+        assert [s.key for s in loader.load_default().sections] == ["key_points"]
+        assert [s.key for s in loader.resolve(None, [], None).sections] == [
+            "key_points"
+        ]
+
+    def test_broken_user_meeting_falls_back_to_builtin_default(self, loader):
+        loader.user_dir.mkdir(parents=True)
+        (loader.user_dir / "meeting.md").write_text("---\nbroken\n---\n")
+
+        template = loader.load_default()
+        assert template.sections[0].key == "executive_summary"

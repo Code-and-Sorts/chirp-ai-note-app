@@ -28,11 +28,10 @@ from llm.cli.daemon import daemon_app
 from llm.cli.models import app as models_app
 from llm.registry import resolved_chat_model, resolved_embed_model
 from utils.file_utils import (
-    META_FILENAME,
     NoteRecord,
     atomic_write_text,
-    atomic_write_toml,
     list_notes,
+    merge_note_meta,
 )
 from utils.tls import enable_system_trust_store
 
@@ -394,21 +393,6 @@ def _render_record_view(state: _RecordViewState) -> RenderableType:
     return Group(*lines)
 
 
-def _merge_note_meta(note_dir: Path, updates: dict) -> None:
-    import tomllib
-
-    meta_path = note_dir / META_FILENAME
-    meta: dict = {}
-    if meta_path.exists():
-        try:
-            with meta_path.open("rb") as fh:
-                meta = dict(tomllib.load(fh))
-        except (OSError, tomllib.TOMLDecodeError):
-            meta = {}
-    meta.update(updates)
-    atomic_write_toml(meta_path, meta)
-
-
 def _validated_template_or_exit(template: str) -> str:
     from notes.note_templates import TemplateLoader
 
@@ -602,7 +586,7 @@ def record(
             return
 
         if template is not None:
-            _merge_note_meta(note_dir, {"template": template})
+            merge_note_meta(note_dir, {"template": template})
         console.print(f"[green]saved to {note_dir}[/green]")
         console.print(
             f" [dim]{glyphs.INPUT_ARROW} chirp transcribe    "
@@ -685,7 +669,7 @@ def _run_live_transcription(
     from utils.time_utils import format_duration
 
     if template is not None and result.audio_path is not None:
-        _merge_note_meta(Path(result.audio_path).parent, {"template": template})
+        merge_note_meta(Path(result.audio_path).parent, {"template": template})
 
     console.print()
     console.print("[green]Live recording complete[/green]")
@@ -808,13 +792,9 @@ def _run_regen_pipeline(
         return
 
     if note_ids:
-        # Numeric ids follow the `chirp notes` table (generated notes only);
-        # slugs resolve across every record — the same contract as `notes tag`.
-        visible = [record for record in all_records if record.notes is not None]
         selected: dict[str, NoteRecord] = {}
         for note_id in note_ids:
-            pool = visible if note_id.strip().isdigit() else all_records
-            record = _resolve_from_records_or_exit(pool, note_id)
+            record = _resolve_note_target(all_records, note_id)
             if record.transcript is None:
                 console.print(
                     f"[red]{glyphs.FAILURE} note '{record.slug}' has no "
@@ -825,7 +805,7 @@ def _run_regen_pipeline(
         records = list(selected.values())
         if template is not None:
             for record in records:
-                _merge_note_meta(record.dir, {"template": template})
+                merge_note_meta(record.dir, {"template": template})
                 record.template = template
 
     note_generator = NoteGenerator(settings)
@@ -848,6 +828,8 @@ def _run_regen_pipeline(
             slug = failure.get("slug", "<unknown>")
             error = failure.get("error", "unknown error")
             console.print(f"[red]  {glyphs.FAILURE} {slug}: {error}[/red]")
+    if sub_results and success_count == 0:
+        raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
 
 notes_app = typer.Typer(
@@ -935,10 +917,16 @@ def _list_notes(tag: str | None, json_output: bool = False) -> None:
     else:
         records = all_records
 
+    # Ids come from the unfiltered newest-first ordering so a --tag filtered
+    # table shows the same ids that `notes tag N` / `--regen --note N` resolve.
+    id_by_slug = {
+        record.slug: idx for idx, record in enumerate(reversed(all_records), start=1)
+    }
+
     if json_output:
         payload = [
-            _note_to_json(idx, record)
-            for idx, record in enumerate(reversed(records), start=1)
+            _note_to_json(id_by_slug[record.slug], record)
+            for record in reversed(records)
         ]
         sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
         return
@@ -989,7 +977,7 @@ def _list_notes(tag: str | None, json_output: bool = False) -> None:
     table.add_column("length", style="dim", justify="right", no_wrap=True)
     table.add_column("tags", style="dim", no_wrap=True)
 
-    for idx, record in enumerate(reversed(records), start=1):
+    for record in reversed(records):
         title = _resolve_display_title(record)
 
         try:
@@ -1005,7 +993,9 @@ def _list_notes(tag: str | None, json_output: bool = False) -> None:
             length_str = "?"
 
         tag_cell = ", ".join(record.tags) if record.tags else glyphs.PENDING
-        table.add_row(str(idx), title, date_str, length_str, tag_cell)
+        table.add_row(
+            str(id_by_slug[record.slug]), title, date_str, length_str, tag_cell
+        )
 
     stdout_console.print(table)
     arrow = glyphs.INPUT_ARROW
@@ -1079,6 +1069,20 @@ def _resolve_or_exit(note_id: str) -> NoteRecord:
     return _resolve_from_records_or_exit(_load_notes_or_exit(), note_id)
 
 
+def _resolve_note_target(all_records: list[NoteRecord], note_id: str) -> NoteRecord:
+    """Resolve an id for commands that accept any record, not just listed ones.
+
+    Numeric ids follow the `chirp notes` table (generated notes only); slugs
+    resolve across every record so untranscribed notes can be targeted too.
+    """
+    pool = (
+        [record for record in all_records if record.notes is not None]
+        if note_id.strip().isdigit()
+        else all_records
+    )
+    return _resolve_from_records_or_exit(pool, note_id)
+
+
 @notes_app.command("tag")
 def notes_tag(
     note_id: str = typer.Argument(..., help="Note id (slug or prefix)"),
@@ -1103,21 +1107,18 @@ def notes_tag(
         )
         raise typer.Exit(exit_codes.RUNTIME_ERROR)
 
-    # Numeric ids follow the `chirp notes` table (generated notes only); slugs
-    # resolve across every record so untranscribed notes can be tagged too.
-    if note_id.strip().isdigit():
-        records = [record for record in records if record.notes is not None]
-    record = _resolve_from_records_or_exit(records, note_id)
+    record = _resolve_note_target(records, note_id)
 
     tags = [] if clear else list(record.tags)
     for tag in remove or []:
-        tags = [existing for existing in tags if existing != tag]
+        cleaned = tag.strip()
+        tags = [existing for existing in tags if existing != cleaned]
     for tag in add or []:
         cleaned = tag.strip()
         if cleaned and cleaned not in tags:
             tags.append(cleaned)
 
-    _merge_note_meta(record.dir, {"tags": tags})
+    merge_note_meta(record.dir, {"tags": tags})
 
     label = ", ".join(tags) if tags else glyphs.PENDING
     console.print(f"[green]tags for {record.slug}:[/green] {label}")
@@ -1403,10 +1404,10 @@ def search(
         "--since",
         help="Only notes from the last DURATION (e.g. 30d, 2w, 48h).",
     ),
-    tag: str | None = typer.Option(
+    tag: list[str] | None = typer.Option(
         None,
         "--tag",
-        help="Filter by tag (comma-separated values are AND-combined).",
+        help="Filter by tag (repeatable; comma-separated values are AND-combined).",
     ),
     regex: bool = typer.Option(False, "--regex", help="Treat QUERY as a Python regex."),
     json_output: bool = typer.Option(
@@ -1449,7 +1450,9 @@ def search(
         since_minutes=since_minutes,
         regex=regex,
         json=json_output,
-        tags=tuple(_parse_tag_filter(tag)),
+        tags=tuple(
+            parsed for piece in (tag or []) for parsed in _parse_tag_filter(piece)
+        ),
     )
 
     result = run_search(settings, options)

@@ -234,3 +234,38 @@ class TestEnsurePrivateDirectory:
         target.chmod(0o755)
         ensure_private_directory(target, tighten_existing=True)
         assert self._mode(target) == 0o700
+
+
+def test_list_notes_equal_timestamps_order_by_slug(tmp_path):
+    from utils.file_utils import list_notes
+
+    for slug in ("zulu-note", "alpha-note", "mike-note"):
+        note_dir = tmp_path / slug
+        note_dir.mkdir()
+        (note_dir / "meta.toml").write_text(
+            f'title = "{slug}"\ndate = "2026-07-01T09:00:00"\n', encoding="utf-8"
+        )
+
+    ordered = [record.slug for record in list_notes(tmp_path)]
+    assert ordered == ["alpha-note", "mike-note", "zulu-note"]
+
+
+def test_merge_note_meta_round_trip_and_corrupt_recovery(tmp_path):
+    import tomllib
+
+    from utils.file_utils import merge_note_meta
+
+    note_dir = tmp_path / "note"
+    note_dir.mkdir()
+    (note_dir / "meta.toml").write_text('title = "Kept"\n', encoding="utf-8")
+
+    merge_note_meta(note_dir, {"template": "standup"})
+    with (note_dir / "meta.toml").open("rb") as fh:
+        meta = tomllib.load(fh)
+    assert meta == {"title": "Kept", "template": "standup"}
+
+    (note_dir / "meta.toml").write_text("not [valid toml", encoding="utf-8")
+    merge_note_meta(note_dir, {"tags": ["a"]})
+    with (note_dir / "meta.toml").open("rb") as fh:
+        meta = tomllib.load(fh)
+    assert meta == {"tags": ["a"]}

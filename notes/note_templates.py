@@ -392,9 +392,7 @@ class TemplateLoader:
         )
 
     def load_default(self) -> NoteTemplate:
-        return parse_template(
-            DEFAULT_TEMPLATE_NAME, self._builtins[DEFAULT_TEMPLATE_NAME]
-        )
+        return self.load(DEFAULT_TEMPLATE_NAME)
 
     def match_by_tags(self, note_tags: list[str]) -> NoteTemplate | None:
         """The template sharing the most tags with the note; ties break by name."""

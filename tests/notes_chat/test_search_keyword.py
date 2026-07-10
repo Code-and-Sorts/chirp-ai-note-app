@@ -441,3 +441,51 @@ def test_cli_search_passes_tag_filter(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["tags"] == ["standup", "work"]
     assert [m["slug"] for m in payload["matches"]] == ["standup-tagged"]
+
+
+def test_cli_search_repeatable_tag_flags(tmp_path):
+    settings = _build_settings(tmp_path)
+    now = datetime.now()
+    _seed_note(
+        settings,
+        slug="both-tags",
+        created_at=now,
+        title="both",
+        notes_md="pricing discussion\n",
+        tags=["standup", "work"],
+    )
+    _seed_note(
+        settings,
+        slug="one-tag",
+        created_at=now - timedelta(days=1),
+        title="one",
+        notes_md="pricing discussion\n",
+        tags=["standup"],
+    )
+
+    result = _invoke_search(
+        ["pricing", "--tag", "standup", "--tag", "work", "--json"], settings
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert [m["slug"] for m in payload["matches"]] == ["both-tags"]
+    assert payload["tags"] == ["standup", "work"]
+
+
+def test_no_matches_under_tag_filter_shows_scope(tmp_path):
+    settings = _build_settings(tmp_path)
+    now = datetime.now()
+    _seed_note(
+        settings,
+        slug="untagged-note",
+        created_at=now,
+        title="untagged",
+        notes_md="hello there\n",
+    )
+
+    result = _invoke_search(["hello", "--tag", "ghost"], settings)
+
+    assert result.exit_code == 0
+    assert "scope: tag: ghost" in result.output
+    assert 'chirp ask "hello" --tag ghost' in result.output

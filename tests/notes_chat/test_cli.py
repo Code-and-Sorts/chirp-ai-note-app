@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
@@ -455,3 +456,30 @@ class TestAskLLMExceptions:
         result = runner.invoke(app, ["ask", "q?"])
         assert result.exit_code == 1
         assert "inference oom" in result.output
+
+
+class TestAskTagNoMatch:
+    def test_tag_no_match_is_friendly_usage_error(self, monkeypatch):
+        from typer.testing import CliRunner
+
+        import notes_chat.cli as notes_cli
+
+        def fake_retrieve(config, question, when_filter=None, tags=None):
+            return {
+                "success": False,
+                "error": "No notes match tag(s): ghost",
+                "suggestion": "Run `chirp notes` to see the tags in use.",
+            }
+
+        monkeypatch.setattr("notes_chat.retrieval.retrieve_context", fake_retrieve)
+        monkeypatch.setattr(
+            "notes_chat.cli.get_notes_config", lambda: SimpleNamespace()
+        )
+
+        result = CliRunner().invoke(
+            notes_cli.app, ["ask", "anything?", "--tag", "ghost"]
+        )
+
+        assert result.exit_code == 2
+        assert "No notes match tag(s): ghost" in result.output
+        assert "retrieval failed" not in result.output.lower()

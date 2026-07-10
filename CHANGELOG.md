@@ -19,8 +19,8 @@ releases published to PyPI as `chirp-notes-ai`.
   `chirp transcribe --regen --note` to regenerate specific notes.
 - `chirp notes tag <id> --add/--remove/--clear` to edit tags on existing
   notes.
-- `--tag` filters on `chirp search` (comma-separated, AND-combined) and
-  `chirp ask` (repeatable) to scope search and answers to tagged notes.
+- `--tag` filters on `chirp search` and `chirp ask` (repeatable and/or
+  comma-separated, AND-combined) to scope search and answers to tagged notes.
 - `CHANGELOG.md`, PyPI classifiers, license metadata, and project URLs.
 - Model downloads and daemon loads are pinned to the HuggingFace commit SHA
   captured at `chirp models add` time (`revision` field in `models.toml`);

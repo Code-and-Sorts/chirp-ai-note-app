@@ -50,6 +50,21 @@ def atomic_write_toml(path: Path, payload: dict[str, Any]) -> None:
     atomic_write_bytes(path, tomli_w.dumps(payload).encode("utf-8"))
 
 
+def merge_note_meta(note_dir: Path, updates: dict[str, Any]) -> None:
+    """Merge ``updates`` into a note's meta.toml, starting fresh if corrupt."""
+    meta_path = note_dir / META_FILENAME
+    meta: dict[str, Any] = {}
+    if meta_path.exists():
+        try:
+            with meta_path.open("rb") as fh:
+                meta = dict(tomllib.load(fh))
+        except (OSError, tomllib.TOMLDecodeError):
+            meta = {}
+    meta.update(updates)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_toml(meta_path, meta)
+
+
 def atomic_write_json(path: Path, payload: Any, *, indent: int = 2) -> None:
     atomic_write_bytes(path, json.dumps(payload, indent=indent).encode("utf-8"))
 
@@ -119,7 +134,10 @@ def list_notes(notes_root: Path) -> list[NoteRecord]:
         if record is not None:
             records.append(record)
 
-    records.sort(key=lambda rec: rec.created_at)
+    # Slug tie-break: equal timestamps must not leave ordering to iterdir()
+    # (filesystem-dependent) — the numeric note ids shown by `chirp notes`
+    # and consumed by `notes tag N` / `--regen --note N` depend on it.
+    records.sort(key=lambda rec: (rec.created_at, rec.slug))
     return records
 
 

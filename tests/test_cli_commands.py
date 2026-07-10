@@ -964,3 +964,86 @@ class TestInitTemplateScaffold:
         assert result.exit_code == 0
         assert "could not scaffold note templates" in result.stderr
         assert blocker.read_text(encoding="utf-8") == "not a directory"
+
+
+class TestFilteredNotesTableIds:
+    def test_filtered_table_and_json_keep_global_ids(self, tmp_path, monkeypatch):
+        import json
+
+        _write_note(
+            tmp_path,
+            "retro-2026-04-18",
+            "Retro",
+            "x",
+            tags=["work"],
+            date="2026-04-18T09:00:00",
+        )
+        _write_note(
+            tmp_path,
+            "sync-2026-04-20",
+            "Team Sync",
+            "x",
+            tags=[],
+            date="2026-04-20T09:00:00",
+        )
+        runner, app = TestListNotes()._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "--tag", "work", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert [(row["id"], row["slug"]) for row in payload] == [
+            (2, "retro-2026-04-18")
+        ]
+
+        tagged = runner.invoke(app, ["notes", "tag", "2", "--add", "check"])
+        assert tagged.exit_code == 0
+        assert "retro-2026-04-18" in tagged.output
+
+
+class TestRegenExitCode:
+    def test_regen_total_failure_exits_nonzero(self, tmp_path, monkeypatch):
+        helper = TestTranscribeRegenTemplateAndNoteFilter()
+        helper._seed(tmp_path, "a-2026-04-20")
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        class FailingNoteGenerator:
+            def __init__(self, s):
+                pass
+
+            def generate_for_records(
+                self, records, force=False, template_override=None
+            ):
+                return {
+                    "success": False,
+                    "error": "boom",
+                    "results": [
+                        {"success": False, "slug": r.slug, "error": "boom"}
+                        for r in records
+                    ],
+                }
+
+        monkeypatch.setattr("notes.note_generator.NoteGenerator", FailingNoteGenerator)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(chirp.cli.app, ["transcribe", "--regen"])
+        assert result.exit_code == 1
+        assert "boom" in result.stderr
+
+
+class TestNotesTagRemoveHygiene:
+    def test_remove_strips_whitespace(self, tmp_path, monkeypatch):
+        import tomllib
+
+        _write_note(tmp_path, "a-2026-04-20", "A", "x", tags=["work", "keep"])
+        runner, app = TestListNotes()._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(
+            app, ["notes", "tag", "a-2026-04-20", "--remove", " work "]
+        )
+        assert result.exit_code == 0
+        with (tmp_path / "a-2026-04-20" / "meta.toml").open("rb") as fh:
+            assert tomllib.load(fh)["tags"] == ["keep"]
