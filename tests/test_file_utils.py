@@ -17,6 +17,7 @@ from utils.file_utils import (
     ensure_private_directory,
     get_file_size_mb,
     list_notes,
+    merge_note_meta,
     sanitize_filename,
     slugify,
 )
@@ -237,8 +238,6 @@ class TestEnsurePrivateDirectory:
 
 
 def test_list_notes_equal_timestamps_order_by_slug(tmp_path):
-    from utils.file_utils import list_notes
-
     for slug in ("zulu-note", "alpha-note", "mike-note"):
         note_dir = tmp_path / slug
         note_dir.mkdir()
@@ -251,10 +250,6 @@ def test_list_notes_equal_timestamps_order_by_slug(tmp_path):
 
 
 def test_merge_note_meta_round_trip_and_corrupt_recovery(tmp_path):
-    import tomllib
-
-    from utils.file_utils import merge_note_meta
-
     note_dir = tmp_path / "note"
     note_dir.mkdir()
     (note_dir / "meta.toml").write_text('title = "Kept"\n', encoding="utf-8")

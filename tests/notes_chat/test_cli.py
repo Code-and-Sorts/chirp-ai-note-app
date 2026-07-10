@@ -460,10 +460,6 @@ class TestAskLLMExceptions:
 
 class TestAskTagNoMatch:
     def test_tag_no_match_is_friendly_usage_error(self, monkeypatch):
-        from typer.testing import CliRunner
-
-        import notes_chat.cli as notes_cli
-
         def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": False,
@@ -472,13 +468,10 @@ class TestAskTagNoMatch:
             }
 
         monkeypatch.setattr("notes_chat.retrieval.retrieve_context", fake_retrieve)
-        monkeypatch.setattr(
-            "notes_chat.cli.get_notes_config", lambda: SimpleNamespace()
-        )
+        monkeypatch.setattr("notes_chat.cli.get_notes_config", SimpleNamespace)
 
-        result = CliRunner().invoke(
-            notes_cli.app, ["ask", "anything?", "--tag", "ghost"]
-        )
+        runner = CliRunner()
+        result = runner.invoke(app, ["ask", "anything?", "--tag", "ghost"])
 
         assert result.exit_code == 2
         assert "No notes match tag(s): ghost" in result.output
