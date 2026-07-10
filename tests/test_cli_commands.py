@@ -17,6 +17,7 @@ def _write_note(
     title: str,
     body: str,
     tags: list[str] | None = None,
+    date: str = "2026-04-20T09:00:00",
 ) -> Path:
     note_dir = tmp_path / slug
     note_dir.mkdir()
@@ -29,7 +30,7 @@ def _write_note(
         tomli_w.dump(
             {
                 "title": title,
-                "date": "2026-04-20T09:00:00",
+                "date": date,
                 "tags": tags or [],
             },
             fh,
@@ -847,8 +848,14 @@ class TestNotesTag:
         assert self._read_tags(tmp_path, "a-2026-04-20") == ["fresh"]
 
     def test_numeric_id_matches_notes_table(self, tmp_path, monkeypatch):
-        _write_note(tmp_path, "older-2026-04-19", "Older", "x")
-        _write_note(tmp_path, "newer-2026-04-20", "Newer", "x")
+        # Distinct dates: id ordering is newest-first by created_at, and equal
+        # timestamps would make the order filesystem-dependent.
+        _write_note(
+            tmp_path, "older-2026-04-19", "Older", "x", date="2026-04-19T09:00:00"
+        )
+        _write_note(
+            tmp_path, "newer-2026-04-20", "Newer", "x", date="2026-04-20T09:00:00"
+        )
         runner, app = self._runner(tmp_path, monkeypatch)
 
         result = runner.invoke(app, ["notes", "tag", "1", "--add", "top"])
