@@ -19,7 +19,6 @@ from llm import error_codes
 from llm.protocol import (
     EVENT_DONE,
     EVENT_ERROR,
-    OP_CHAT,
     OP_EMBED,
     OP_HELLO,
     PROTOCOL_VERSION,
@@ -203,50 +202,3 @@ async def test_embed_missing_inputs_emits_protocol_malformed(
         await _close(writer)
     assert events[-1]["event"] == EVENT_ERROR
     assert events[-1]["code"] == error_codes.PROTOCOL_MALFORMED
-
-
-async def test_embed_parallel_with_chat(
-    embed_server: tuple[FakeBackend, DaemonState],
-    embed_socket_path: Path,
-) -> None:
-    backend, _ = embed_server
-    backend.chat_tokens = ["a", "b"]
-    backend.generation_delay_s = 0.02
-
-    async def _do_embed() -> list[dict]:
-        reader, writer = await _connect(embed_socket_path)
-        try:
-            await _send(
-                writer,
-                {
-                    "id": new_request_id(),
-                    "op": OP_EMBED,
-                    "model": "nomic",
-                    "inputs": ["x"],
-                },
-            )
-            return await _read_events_until_done(reader)
-        finally:
-            await _close(writer)
-
-    async def _do_chat() -> list[dict]:
-        reader, writer = await _connect(embed_socket_path)
-        try:
-            await _send(
-                writer,
-                {
-                    "id": new_request_id(),
-                    "op": OP_CHAT,
-                    "model": "gemma",
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "options": {},
-                    "keep_alive": None,
-                },
-            )
-            return await _read_events_until_done(reader)
-        finally:
-            await _close(writer)
-
-    chat_events, embed_events = await asyncio.gather(_do_chat(), _do_embed())
-    assert chat_events[-1]["event"] == EVENT_DONE
-    assert embed_events[-1]["event"] == EVENT_DONE

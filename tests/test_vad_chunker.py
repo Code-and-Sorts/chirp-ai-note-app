@@ -32,10 +32,18 @@ def _make_frame(timestamp: float, level: float = 0.1) -> AudioFrame:
     )
 
 
-def _feed_frames(frame_queue, frames, delay=0.002):
+def _feed_frames(frame_queue, frames):
     for frame in frames:
         frame_queue.put(frame)
-        time.sleep(delay)
+
+
+def _wait_until(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
 
 
 def test_vad_chunker_emits_chunk():
@@ -63,13 +71,11 @@ def test_vad_chunker_emits_chunk():
         frame = _make_frame(timestamp, level=0.1 if decision else 0.0)
         frame_queue.put(frame)
         timestamp += FRAME_MS / 1000.0
-        time.sleep(0.005)
 
-    time.sleep(0.2)
+    assert _wait_until(lambda: not chunk_queue.empty())
     stop_event.set()
     chunker.join(timeout=1)
 
-    assert not chunk_queue.empty()
     chunk = chunk_queue.get()
     assert chunk.start == pytest.approx(0.03, abs=0.05)
     assert chunk.end > chunk.start
@@ -101,11 +107,10 @@ def test_max_chunk_seconds_enforcement():
     frames = [_make_frame(i * FRAME_MS / 1000.0) for i in range(num_frames)]
     _feed_frames(frame_queue, frames)
 
-    time.sleep(0.3)
+    assert _wait_until(lambda: not chunk_queue.empty())
     stop_event.set()
     chunker.join(timeout=1)
 
-    assert not chunk_queue.empty()
     chunk = chunk_queue.get()
     chunk_duration = chunk.end - chunk.start
     assert chunk_duration <= 0.15
@@ -134,7 +139,7 @@ def test_energy_threshold_filtering():
     frames = [_make_frame(i * FRAME_MS / 1000.0, level=0.4) for i in range(20)]
     _feed_frames(frame_queue, frames)
 
-    time.sleep(0.2)
+    assert _wait_until(frame_queue.empty)
     stop_event.set()
     chunker.join(timeout=1)
 
@@ -166,13 +171,11 @@ def test_padding_buffer_tail_appended():
         frame = _make_frame(timestamp, level=0.1 if decision else 0.0)
         frame_queue.put(frame)
         timestamp += FRAME_MS / 1000.0
-        time.sleep(0.005)
 
-    time.sleep(0.2)
+    assert _wait_until(lambda: not chunk_queue.empty())
     stop_event.set()
     chunker.join(timeout=1)
 
-    assert not chunk_queue.empty()
     chunk = chunk_queue.get()
     speech_only_bytes = 6 * FRAME_BYTES
     assert len(chunk.data) > speech_only_bytes
@@ -202,7 +205,7 @@ def test_stop_event_flushes_active_speech():
     frames = [_make_frame(i * FRAME_MS / 1000.0) for i in range(10)]
     _feed_frames(frame_queue, frames)
 
-    time.sleep(0.2)
+    assert _wait_until(frame_queue.empty)
     stop_event.set()
     chunker.join(timeout=1)
 

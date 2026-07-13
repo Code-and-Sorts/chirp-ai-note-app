@@ -58,6 +58,7 @@ class FakeAudioCapture:
         self._on_frame = on_frame
         self._block_after_drain = block_after_drain
         self._exit_event = threading.Event()
+        self.drained = threading.Event()
 
     def __enter__(self):
         return self
@@ -73,6 +74,7 @@ class FakeAudioCapture:
             if self._on_frame is not None:
                 self._on_frame(index)
             yield frame
+        self.drained.set()
         if self._block_after_drain:
             self._exit_event.wait(timeout=5.0)
 
@@ -133,27 +135,13 @@ class TestAudioRecorder:
         assert meta["title"] == "Existing"
         assert meta["duration_s"] == pytest.approx(123.4)
 
-    def test_zero_frames_clean_eof_raises_recording_error(
+    def test_start_recording_cleans_up_note_dir_when_no_audio_captured(
         self, tmp_path, mock_settings
     ):
         # A FakeAudioCapture that yields zero frames finishes immediately
         # (clean EOF). H6: the worker treats clean EOF while still recording
         # as an unexpected end, so RecordingError is raised with the
         # "audio capture worker crashed mid-recording" message.
-        recorder = AudioRecorder(mock_settings)
-        fake_cap = FakeAudioCapture(frames=[], mic_device_name="MockMic")
-
-        with patch("recorder.audio_recorder.AudioCapture", return_value=fake_cap):
-            with pytest.raises(
-                RecordingError, match="audio capture worker crashed mid-recording"
-            ):
-                recorder.start_recording(title="zero-frames")
-
-        assert recorder.is_recording is False
-
-    def test_start_recording_cleans_up_note_dir_when_no_audio_captured(
-        self, tmp_path, mock_settings
-    ):
         recorder = AudioRecorder(mock_settings)
 
         fake_cap = FakeAudioCapture(frames=[], mic_device_name="MockMic")
@@ -164,6 +152,7 @@ class TestAudioRecorder:
             ):
                 recorder.start_recording(title="empty")
 
+        assert recorder.is_recording is False
         created_dirs = list(tmp_path.iterdir())
         assert created_dirs == [], "empty note dir should have been cleaned up"
 
@@ -350,9 +339,9 @@ class TestAudioRecorderPause:
         )
 
         def stop_after_capture_completes():
-            # All 16 raw frames (8 pairs × 2) have 0.01s delays each,
-            # so iteration takes ≈ 0.16s. Wait a generous 0.5s then stop.
-            time.sleep(0.5)
+            fake_cap.drained.wait(timeout=2.0)
+            # Give the worker a moment to drain the mixer before stopping.
+            time.sleep(0.05)
             recorder.is_recording = False
 
         stopper = threading.Thread(target=stop_after_capture_completes, daemon=True)

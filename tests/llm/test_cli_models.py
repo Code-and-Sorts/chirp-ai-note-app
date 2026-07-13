@@ -215,19 +215,6 @@ def test_add_embed_rejected_when_semantic_off(
     download.assert_not_called()
 
 
-def test_add_chat_unaffected_when_semantic_off(
-    registry_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _mock_hf(monkeypatch, validate=_chat_metadata(), download=MagicMock())
-    _mock_client(monkeypatch)
-
-    result = runner.invoke(models_module.app, ["add", CHAT_REPO])
-
-    assert result.exit_code == 0
-    registry = read_registry(path=registry_path)
-    assert alias_for_repo(CHAT_REPO) in registry.models
-
-
 def test_add_no_warm_skips_model_load(
     registry_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

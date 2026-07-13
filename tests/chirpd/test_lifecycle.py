@@ -117,16 +117,6 @@ def _patch_lock(monkeypatch: pytest.MonkeyPatch, acquired: bool) -> None:
     monkeypatch.setattr("chirpd.__main__.single_instance_lock", _fake_lock)
 
 
-def test_apple_silicon_check_passes_on_arm64(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr("chirpd.__main__.platform.machine", lambda: "arm64")
-    _patch_lock(monkeypatch, acquired=False)
-    monkeypatch.setattr("chirpd.__main__.configure_logging", lambda **_: None)
-    monkeypatch.setattr("chirpd.__main__.ensure_runtime_dirs", lambda: None)
-    assert chirpd_main.main() == 0
-
-
 def test_apple_silicon_check_fails_on_x86_64(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

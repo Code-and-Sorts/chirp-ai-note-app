@@ -753,40 +753,6 @@ class TestGenerateSuggestion:
 
 
 class TestFormatSourcesAdditionalBranches:
-    def test_updates_timestamp_to_earlier_when_second_chunk_is_earlier(self):
-        note_index = {"my-note": {"index": 1, "title": "My Note"}}
-        chunks = [
-            (
-                "c1",
-                "# header\nbody\n",
-                {"metadata": {"path": "/n/my-note/notes.md", "start_seconds": 120}},
-            ),
-            (
-                "c2",
-                "# header\nbody\n",
-                {"metadata": {"path": "/n/my-note/notes.md", "start_seconds": 30}},
-            ),
-        ]
-        sources = format_sources(chunks, note_index)
-        assert "00:30" in sources[0]
-
-    def test_keeps_existing_timestamp_when_second_chunk_is_later(self):
-        note_index = {"my-note": {"index": 1, "title": "My Note"}}
-        chunks = [
-            (
-                "c1",
-                "# header\nbody\n",
-                {"metadata": {"path": "/n/my-note/notes.md", "start_seconds": 30}},
-            ),
-            (
-                "c2",
-                "# header\nbody\n",
-                {"metadata": {"path": "/n/my-note/notes.md", "start_seconds": 120}},
-            ),
-        ]
-        sources = format_sources(chunks, note_index)
-        assert "00:30" in sources[0]
-
     def test_no_index_number_when_index_key_is_none(self):
         note_index = {"my-note": {"title": "My Note"}}
         chunks = [

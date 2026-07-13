@@ -29,12 +29,15 @@ def _embed_entry(repo: str = "mlx-community/nomic-embed") -> RegistryEntry:
 async def test_load_chat_model_schedules_idle_unload() -> None:
     backend = FakeBackend()
     registry = _registry(gemma=_chat_entry())
-    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.1)
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.02)
 
     loaded = await state.load("gemma", "chat")
     assert loaded.idle_unload_task is not None
 
-    await asyncio.sleep(0.25)
+    for _ in range(200):
+        if state.get("gemma") is None:
+            break
+        await asyncio.sleep(0.01)
     assert state.get("gemma") is None
     assert backend.unload_calls, "FakeBackend.unload should have been called"
 
@@ -42,25 +45,25 @@ async def test_load_chat_model_schedules_idle_unload() -> None:
 async def test_load_embed_model_never_schedules_idle_unload() -> None:
     backend = FakeBackend()
     registry = _registry(nomic=_embed_entry())
-    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.05)
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.02)
 
     loaded = await state.load("nomic", "embed")
     assert loaded.idle_unload_task is None
 
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(0.06)
     assert state.get("nomic") is not None
 
 
 async def test_keep_alive_minus_one_pins_model() -> None:
     backend = FakeBackend()
     registry = _registry(gemma=_chat_entry())
-    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.05)
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.02)
 
     loaded = await state.load("gemma", "chat")
     state.schedule_idle_unload(loaded, keep_alive=-1)
     assert loaded.idle_unload_task is None
 
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(0.06)
     assert state.get("gemma") is not None
 
 
@@ -176,12 +179,12 @@ async def test_idle_task_skips_unload_when_activity_advanced(
 ) -> None:
     backend = FakeBackend()
     registry = _registry(gemma=_chat_entry())
-    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.05)
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.02)
 
     loaded = await state.load("gemma", "chat")
     loaded.last_used = datetime.now(UTC) + timedelta(seconds=10)
 
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(0.06)
     assert state.get("gemma") is not None
 
 
@@ -459,16 +462,6 @@ async def test_resident_cap_is_per_role_embed_not_evicted_by_chat() -> None:
     assert state.get("other") is not None
 
 
-async def test_embed_model_not_idle_unloaded_on_timer() -> None:
-    backend = FakeBackend()
-    registry = _registry(nomic=_embed_entry())
-    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.05)
-
-    await state.load("nomic", "embed")
-    await asyncio.sleep(0.15)
-    assert state.get("nomic") is not None, "embed pin: no plain idle-timer unload"
-
-
 async def test_status_reports_resident_counts_caps_and_eviction() -> None:
     backend = FakeBackend()
     registry = _registry(
@@ -498,12 +491,12 @@ async def test_delayed_unload_skips_and_reschedules_while_lock_held() -> None:
     # reschedule, not unload the model out from under the request.
     backend = FakeBackend()
     registry = _registry(gemma=_chat_entry())
-    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.05)
+    state = DaemonState(backend=backend, registry=registry, idle_timeout_s=0.02)
 
     loaded = await state.load("gemma", "chat")
 
     async with loaded.lock:
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.08)
         assert state.get("gemma") is not None, "must not unload an in-flight model"
         assert backend.unload_calls == []
     assert state.get("gemma") is not None

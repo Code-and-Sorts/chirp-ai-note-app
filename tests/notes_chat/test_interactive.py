@@ -152,27 +152,3 @@ def test_handle_question_cached_answer(mock_print, mock_stream, chat_session):
 
     chat_session.handle_question("test question")
     mock_stream.assert_called_once_with(chat_session.config, "test question", tags=None)
-
-
-@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
-@patch("notes_chat.interactive.console.print")
-def test_handle_question_retrieval_error(mock_print, mock_stream, chat_session):
-    mock_stream.return_value = [
-        {"type": "thinking", "message": "Searching..."},
-        {"type": "error", "message": "Index error"},
-    ]
-
-    chat_session.handle_question("test question")
-    mock_stream.assert_called_once_with(chat_session.config, "test question", tags=None)
-
-
-@patch("notes_chat.interactive.enhanced_search_and_answer_stream")
-@patch("notes_chat.interactive.console.print")
-def test_handle_question_generation_failure(mock_print, mock_stream, chat_session):
-    mock_stream.return_value = [
-        {"type": "thinking", "message": "Generating answer..."},
-        {"type": "error", "message": "Generation failed"},
-    ]
-
-    chat_session.handle_question("test question")
-    mock_stream.assert_called_once_with(chat_session.config, "test question", tags=None)

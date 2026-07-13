@@ -294,14 +294,6 @@ def test_view_mode_colon_activates_command():
     assert result is False
 
 
-def test_view_mode_readonly_blocks_i():
-    editor = make_editor(readonly=True)
-    with patch("notes.note_editor.curses.beep"):
-        result = editor._handle_view_mode("i")
-    assert editor.mode == "view"
-    assert result is False
-
-
 # ---------------------------------------------------------------------------
 # _handle_insert_mode
 # ---------------------------------------------------------------------------

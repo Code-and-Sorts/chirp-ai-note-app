@@ -205,7 +205,7 @@ def test_enter_failure_cleans_up_subprocess(tmp_path: Path) -> None:
     with (
         _patch_resolve_to(fake_binary),
         mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
-        mock.patch("audio_capture._STARTUP_TIMEOUT_SECONDS", 0.5),
+        mock.patch("audio_capture._STARTUP_TIMEOUT_SECONDS", 0.15),
     ):
         with pytest.raises(AudioCaptureStartTimeout):
             with AudioCapture():
@@ -386,10 +386,10 @@ def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
             import sys, time
             sys.stderr.write('capture: awaiting_permission\\n')
             sys.stderr.flush()
-            time.sleep(0.6)
+            time.sleep(0.35)
             sys.stderr.write('capture: awaiting_permission\\n')
             sys.stderr.flush()
-            time.sleep(0.6)
+            time.sleep(0.35)
             sys.stderr.write('capture: started\\n')
             sys.stderr.flush()
             sys.stdout.buffer.flush()
@@ -409,7 +409,7 @@ def test_wait_for_startup_resets_deadline_on_each_awaiting_permission(
     with (
         _patch_resolve_to(fake_binary),
         mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
-        mock.patch("audio_capture._STARTUP_TIMEOUT_SECONDS", 1.0),
+        mock.patch("audio_capture._STARTUP_TIMEOUT_SECONDS", 0.5),
         mock.patch("audio_capture._POST_START_DRAIN_SECONDS", 0.1),
         AudioCapture() as cap,
     ):
@@ -434,10 +434,10 @@ def test_exit_during_frames_iteration_stops_cleanly(tmp_path: Path) -> None:
             import sys, time
             sys.stderr.write('capture: started\\n')
             sys.stderr.flush()
-            for _ in range(20):
+            for _ in range(50):
                 sys.stdout.buffer.write({frame_bytes!r})
                 sys.stdout.buffer.flush()
-                time.sleep(0.05)
+                time.sleep(0.02)
             """
         ),
     ]
@@ -453,11 +453,12 @@ def test_exit_during_frames_iteration_stops_cleanly(tmp_path: Path) -> None:
     with (
         _patch_resolve_to(fake_binary),
         mock.patch("audio_capture.subprocess.Popen", side_effect=popen_override),
+        mock.patch("audio_capture._POST_START_DRAIN_SECONDS", 0.05),
     ):
         with AudioCapture() as cap:
 
             def exit_after_first():
-                time.sleep(0.1)
+                time.sleep(0.05)
                 try:
                     cap.__exit__(None, None, None)
                 except Exception as exc:  # noqa: BLE001 - test contract: collect any race exception

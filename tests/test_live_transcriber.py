@@ -16,6 +16,15 @@ def _make_chunk(start: float, end: float, sample_rate: int = 16000) -> SpeechChu
     return SpeechChunk(data=data, start=start, end=end)
 
 
+def _wait_until(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
+
+
 def test_live_transcriber_emits_events():
     settings = Mock()
     chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
@@ -67,7 +76,7 @@ def test_live_transcriber_emits_events():
                 end=2.0,
             )
         )
-        time.sleep(0.1)
+        assert _wait_until(lambda: not responses and chunk_queue.empty())
         stop_event.set()
         transcriber.join(timeout=1)
 
@@ -180,7 +189,7 @@ def test_overlap_detection_filters_segments():
 
         transcriber.start()
         chunk_queue.put(_make_chunk(0.0, 2.0))
-        time.sleep(0.2)
+        assert _wait_until(lambda: transcriber.segments)
         stop_event.set()
         transcriber.join(timeout=1)
 
@@ -219,7 +228,7 @@ def test_buffer_pruning_after_segments():
 
         transcriber.start()
         chunk_queue.put(chunk)
-        time.sleep(0.2)
+        assert _wait_until(lambda: transcriber._buffer_offset_seconds > 0.0)
         stop_event.set()
         transcriber.join(timeout=1)
 
@@ -251,7 +260,7 @@ def test_empty_chunk_handling():
 
         transcriber.start()
         chunk_queue.put(SpeechChunk(data=b"", start=0.0, end=0.0))
-        time.sleep(0.1)
+        assert _wait_until(chunk_queue.empty)
         stop_event.set()
         transcriber.join(timeout=1)
 
@@ -286,7 +295,7 @@ def test_force_transcription_on_stop():
 
         transcriber.start()
         chunk_queue.put(_make_chunk(0.0, 1.0))
-        time.sleep(0.15)
+        assert _wait_until(chunk_queue.empty)
         stop_event.set()
         transcriber.join(timeout=2)
 

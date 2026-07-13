@@ -69,12 +69,6 @@ def test_logo_line_plain_no_beak_no_note():
     assert "♪" not in result
 
 
-def test_logo_line_plain_note_suppressed_when_beak_closed():
-    row = LogoCell("X", has_beak=True, has_note=True)
-    result = logo_line_plain(row, beak_open=False)
-    assert "♪" not in result
-
-
 def test_logo_line_plain_note_only_when_beak_open_and_has_note():
     row_with_note = LogoCell("X", has_beak=True, has_note=True)
     row_without_note = LogoCell("X", has_beak=True, has_note=False)

@@ -259,24 +259,13 @@ async def test_oversized_line_rejected(
     read_envelope: ReadFn,
 ) -> None:
     reader, writer = client_connection
-    chunk_size = 32_768
-    written = 0
-    target = MAX_LINE_BYTES + 64
-    response: dict[str, Any] | None = None
-    while written < target and response is None:
-        writer.write(b"x" * chunk_size)
-        written += chunk_size
-        try:
-            await writer.drain()
-        except (ConnectionResetError, BrokenPipeError):
-            break
-        try:
-            response = await asyncio.wait_for(read_envelope(reader), timeout=0.05)
-        except TimeoutError:
-            continue
+    writer.write(b"x" * (MAX_LINE_BYTES + 64))
+    try:
+        await writer.drain()
+    except (ConnectionResetError, BrokenPipeError):
+        pass
 
-    if response is None:
-        response = await read_envelope(reader)
+    response = await read_envelope(reader)
 
     assert response["event"] == EVENT_ERROR
     assert response["code"] == error_codes.PROTOCOL_MALFORMED
