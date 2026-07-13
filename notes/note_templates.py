@@ -1,6 +1,6 @@
 """Note templates: user-editable markdown files that shape generated notes.
 
-A template is a markdown file with YAML-style frontmatter::
+A template is a markdown file with YAML frontmatter::
 
     ---
     description: "Daily standup"
@@ -14,12 +14,13 @@ A template is a markdown file with YAML-style frontmatter::
 
     {yesterday}
 
-Sections are derived from the body: each ``{placeholder}`` (except the
-built-ins ``{title}``, ``{time}``, ``{duration}``) becomes a section whose
-XML tag is the upper-snake placeholder and whose heading is the nearest
-preceding markdown heading. The frontmatter ``tags`` list links the template
-to note tags; ``prose`` names placeholders extracted as prose instead of
-bullet lists.
+Frontmatter follows the Jekyll/Hugo convention — a ``---``-fenced block at
+the top of the file parsed as YAML (``yaml.safe_load``). Sections are derived
+from the body: each ``{placeholder}`` (except the built-ins ``{title}``,
+``{time}``, ``{duration}``) becomes a section whose XML tag is the
+upper-snake placeholder and whose heading is the nearest preceding markdown
+heading. The frontmatter ``tags`` list links the template to note tags;
+``prose`` names placeholders extracted as prose instead of bullet lists.
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ import re
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+import yaml
 
 from utils.file_utils import ensure_private_directory
 
@@ -43,7 +46,7 @@ RESERVED_KEYS = frozenset({"title", "time", "duration"})
 
 _PLACEHOLDER_RE = re.compile(r"\{([a-z][a-z0-9_]*)\}")
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$")
-_FLOW_LIST_RE = re.compile(r"^\[(.*)\]$")
+_FM_BOUNDARY = re.compile(r"^-{3,}\s*$", re.MULTILINE)
 
 
 class TemplateError(Exception):
@@ -89,8 +92,7 @@ class NoteTemplate:
 
 
 def parse_template(name: str, content: str) -> NoteTemplate:
-    frontmatter, body = _split_front_matter(content)
-    meta = _parse_front_matter(frontmatter)
+    meta, body = _split_front_matter(content)
 
     prose_keys = set(BUILTIN_PROSE_KEYS) | set(_string_list(meta.get("prose")))
     sections = _derive_sections(body, prose_keys)
@@ -110,80 +112,36 @@ def parse_template(name: str, content: str) -> NoteTemplate:
     )
 
 
-def _split_front_matter(content: str) -> tuple[str, str]:
+def _split_front_matter(content: str) -> tuple[dict[str, Any], str]:
+    """Split a ``---``-fenced YAML frontmatter block from the body.
+
+    Same convention as Jekyll/Hugo/python-frontmatter: the block must open
+    the file and is parsed with ``yaml.safe_load``.
+    """
     stripped = content.lstrip("﻿\n")
-    if not stripped.startswith("---"):
-        return "", stripped
-    remainder = stripped[3:]
-    if remainder.startswith("\n"):
-        remainder = remainder[1:]
-    closing = re.search(r"^---\s*$", remainder, re.MULTILINE)
-    if closing is None:
+    if not _FM_BOUNDARY.match(stripped):
+        return {}, stripped
+    pieces = _FM_BOUNDARY.split(stripped, 2)
+    if len(pieces) < 3:
         raise TemplateError("frontmatter opened with --- but never closed")
-    return remainder[: closing.start()], remainder[closing.end() :]
+    _, frontmatter, body = pieces
+    try:
+        meta = yaml.safe_load(frontmatter)
+    except yaml.YAMLError as exc:
+        raise TemplateError(f"invalid YAML frontmatter: {exc}")
+    if meta is None:
+        return {}, body
+    if not isinstance(meta, dict):
+        raise TemplateError("frontmatter must be a YAML mapping of key: value")
+    return meta, body
 
 
-def _parse_front_matter(text: str) -> dict[str, str | list[str]]:
-    """Parse the small YAML subset templates use: scalars and string lists."""
-    meta: dict[str, str | list[str]] = {}
-    current_list: list[str] | None = None
-    for line_no, raw in enumerate(text.splitlines(), start=1):
-        line = raw.rstrip()
-        if not line.strip() or line.strip().startswith("#"):
-            continue
-        item = _list_item(line)
-        if item is not None:
-            if current_list is None:
-                raise TemplateError(
-                    f"frontmatter line {line_no}: list item without a key"
-                )
-            current_list.append(item)
-            continue
-        if ":" not in line:
-            raise TemplateError(
-                f"frontmatter line {line_no}: expected 'key: value', got {line!r}"
-            )
-        key, _, value = line.partition(":")
-        key = key.strip()
-        value = value.strip()
-        if not key or " " in key:
-            raise TemplateError(f"frontmatter line {line_no}: invalid key {key!r}")
-        if not value:
-            current_list = []
-            meta[key] = current_list
-            continue
-        current_list = None
-        flow = _FLOW_LIST_RE.match(value)
-        if flow:
-            meta[key] = [
-                _unquote(piece.strip())
-                for piece in flow.group(1).split(",")
-                if piece.strip()
-            ]
-        else:
-            meta[key] = _unquote(value)
-    return meta
-
-
-def _list_item(line: str) -> str | None:
-    stripped = line.strip()
-    if not stripped.startswith("- "):
-        return None
-    return _unquote(stripped[2:].strip())
-
-
-def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        return value[1:-1]
-    return value
-
-
-def _string_list(value: str | list[str] | None) -> list[str]:
+def _string_list(value: Any) -> list[str]:
     if value is None:
         return []
-    if isinstance(value, str):
-        return [value] if value else []
-    return [item for item in value if item]
+    if not isinstance(value, list):
+        value = [value]
+    return [str(item) for item in value if item is not None and str(item)]
 
 
 def _derive_sections(body: str, prose_keys: set[str]) -> tuple[Section, ...]:

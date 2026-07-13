@@ -107,13 +107,42 @@ class TestParseTemplate:
         with pytest.raises(TemplateError, match="never closed"):
             parse_template("t", "---\ntags:\n- a\n### X\n\n{x}\n")
 
-    def test_bad_frontmatter_line_raises(self):
-        with pytest.raises(TemplateError, match="expected 'key: value'"):
-            parse_template("t", "---\nnot yaml at all\n---\n### X\n\n{x}\n")
-
-    def test_list_item_without_key_raises(self):
-        with pytest.raises(TemplateError, match="without a key"):
+    def test_non_mapping_frontmatter_raises(self):
+        with pytest.raises(TemplateError, match="YAML mapping"):
+            parse_template("t", "---\nnot a mapping\n---\n### X\n\n{x}\n")
+        with pytest.raises(TemplateError, match="YAML mapping"):
             parse_template("t", "---\n- dsu\n---\n### X\n\n{x}\n")
+
+    def test_invalid_yaml_raises(self):
+        with pytest.raises(TemplateError, match="invalid YAML"):
+            parse_template("t", "---\ntags: [unclosed\n---\n### X\n\n{x}\n")
+
+    def test_full_yaml_frontmatter(self):
+        content = (
+            "---\n"
+            "# team template, edited 2026-07\n"
+            'description: "Standup: quick, focused"\n'
+            "tags:\n"
+            "  - 'daily sync'\n"
+            '  - "dsu"\n'
+            "---\n"
+            "### Items\n\n{items}\n"
+        )
+        template = parse_template("t", content)
+        assert template.description == "Standup: quick, focused"
+        assert template.tags == ("daily sync", "dsu")
+
+    def test_empty_frontmatter_block(self):
+        template = parse_template("t", "---\n---\n### Items\n\n{items}\n")
+        assert template.tags == ()
+        assert template.description == ""
+
+    def test_body_horizontal_rules_stay_in_body(self):
+        template = parse_template(
+            "t", "---\ntags: [dsu]\n---\n### Items\n\n{items}\n\n---\n"
+        )
+        assert template.tags == ("dsu",)
+        assert template.body.endswith("---")
 
     def test_template_without_frontmatter(self):
         template = parse_template("t", "### Items\n\n{items}\n")
