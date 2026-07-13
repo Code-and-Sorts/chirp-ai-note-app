@@ -2,6 +2,12 @@ import json
 import time
 from unittest.mock import patch
 
+# Imported for its side effect: test_force_reindex_clears_cache patches
+# "notes_chat.index.build_index" by name, which only resolves if the module is
+# already loaded (the CLI imports it lazily inside the command). Importing here
+# — at collection, outside the autouse darwin sys.platform patch — also keeps
+# the chromadb import chain off the fake platform.
+import notes_chat.index  # noqa: F401
 from notes_chat.cache import cache_answer, clear_cache, get_cached_answer
 
 
