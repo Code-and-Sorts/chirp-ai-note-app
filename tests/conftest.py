@@ -14,6 +14,20 @@ from llm.exceptions import LLMError
 
 
 @pytest.fixture(autouse=True)
+def _isolated_user_templates_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the note-template user dir at a per-test temp dir.
+
+    Without this, any test constructing a default TemplateLoader() (directly
+    or via NoteGenerator/_validated_template_or_exit) reads the developer's
+    real ~/.chirp/templates/, so local template edits could flip test results.
+    """
+    path = tmp_path_factory.mktemp("user-templates")
+    monkeypatch.setattr("notes.note_templates.user_templates_dir", lambda: path)
+
+
+@pytest.fixture(autouse=True)
 def _force_darwin_platform(request: pytest.FixtureRequest) -> Iterator[None]:
     """Patch sys.platform and platform.mac_ver so macOS version checks pass.
 

@@ -17,6 +17,7 @@ def _write_note(
     title: str,
     body: str,
     tags: list[str] | None = None,
+    date: str = "2026-04-20T09:00:00",
 ) -> Path:
     note_dir = tmp_path / slug
     note_dir.mkdir()
@@ -29,7 +30,7 @@ def _write_note(
         tomli_w.dump(
             {
                 "title": title,
-                "date": "2026-04-20T09:00:00",
+                "date": date,
                 "tags": tags or [],
             },
             fh,
@@ -215,9 +216,12 @@ class TestTranscribeRegen:
             def __init__(self, s):
                 captured["settings"] = s
 
-            def generate_for_records(self, records, force=False):
+            def generate_for_records(
+                self, records, force=False, template_override=None
+            ):
                 captured["records"] = records
                 captured["force"] = force
+                captured["template_override"] = template_override
                 return {
                     "success": True,
                     "results": [{"success": True, "slug": r.slug} for r in records],
@@ -631,3 +635,411 @@ class TestTranscribeSurfacesModelLoadError:
         assert result.exit_code == 1
         flat = " ".join(result.stderr.split())
         assert "Could not download or load the Whisper model" in flat
+
+
+class TestTranscribeRegenTemplateAndNoteFilter:
+    def _seed(
+        self,
+        tmp_path: Path,
+        slug: str,
+        tags: list[str] | None = None,
+        date: str = "2026-04-20T09:00:00",
+        transcript: bool = True,
+        notes: bool = True,
+    ) -> None:
+        note_dir = tmp_path / slug
+        note_dir.mkdir()
+        if transcript:
+            (note_dir / "transcript.txt").write_text("hello world", encoding="utf-8")
+        if notes:
+            (note_dir / "notes.md").write_text(f"# {slug}\n", encoding="utf-8")
+
+        import tomli_w
+
+        with (note_dir / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {"title": slug, "date": date, "tags": tags or []},
+                fh,
+            )
+
+    def _fake_generator(self, captured: dict):
+        class FakeNoteGenerator:
+            def __init__(self, s):
+                captured["settings"] = s
+
+            def generate_for_records(
+                self, records, force=False, template_override=None
+            ):
+                captured["records"] = records
+                captured["template_override"] = template_override
+                return {
+                    "success": True,
+                    "results": [{"success": True, "slug": r.slug} for r in records],
+                }
+
+        return FakeNoteGenerator
+
+    def _invoke(self, tmp_path, monkeypatch, args, captured=None):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        if captured is not None:
+            monkeypatch.setattr(
+                "notes.note_generator.NoteGenerator", self._fake_generator(captured)
+            )
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        return CliRunner().invoke(chirp.cli.app, args)
+
+    def test_note_or_template_without_regen_rejected(self, tmp_path, monkeypatch):
+        result = self._invoke(
+            tmp_path, monkeypatch, ["transcribe", "--template", "standup"]
+        )
+        assert result.exit_code == 2
+        assert "require --regen" in result.stderr
+
+        result = self._invoke(tmp_path, monkeypatch, ["transcribe", "--note", "1"])
+        assert result.exit_code == 2
+        assert "require --regen" in result.stderr
+
+    def test_regen_unknown_template_rejected_with_names(self, tmp_path, monkeypatch):
+        self._seed(tmp_path, "a-2026-04-20")
+        result = self._invoke(
+            tmp_path, monkeypatch, ["transcribe", "--regen", "--template", "nope"]
+        )
+        assert result.exit_code == 2
+        assert "unknown template 'nope'" in result.stderr
+        assert "meeting" in result.stderr
+
+    def test_regen_note_filter_selects_single_record(self, tmp_path, monkeypatch):
+        self._seed(tmp_path, "a-2026-04-20")
+        self._seed(tmp_path, "b-2026-04-21")
+        captured: dict = {}
+
+        result = self._invoke(
+            tmp_path,
+            monkeypatch,
+            ["transcribe", "--regen", "--note", "a-2026-04-20"],
+            captured,
+        )
+
+        assert result.exit_code == 0
+        assert [r.slug for r in captured["records"]] == ["a-2026-04-20"]
+        assert captured["template_override"] is None
+
+    def test_regen_template_with_note_persists_to_meta(self, tmp_path, monkeypatch):
+        import tomllib
+
+        self._seed(tmp_path, "a-2026-04-20")
+        self._seed(tmp_path, "b-2026-04-21")
+        captured: dict = {}
+
+        result = self._invoke(
+            tmp_path,
+            monkeypatch,
+            [
+                "transcribe",
+                "--regen",
+                "--note",
+                "a-2026-04-20",
+                "--template",
+                "standup",
+            ],
+            captured,
+        )
+
+        assert result.exit_code == 0
+        assert captured["template_override"] == "standup"
+        with (tmp_path / "a-2026-04-20" / "meta.toml").open("rb") as fh:
+            meta = tomllib.load(fh)
+        assert meta["template"] == "standup"
+        with (tmp_path / "b-2026-04-21" / "meta.toml").open("rb") as fh:
+            other = tomllib.load(fh)
+        assert "template" not in other
+
+    def test_regen_unknown_note_id_fails(self, tmp_path, monkeypatch):
+        self._seed(tmp_path, "a-2026-04-20")
+        result = self._invoke(
+            tmp_path, monkeypatch, ["transcribe", "--regen", "--note", "ghost"]
+        )
+        assert result.exit_code == 1
+        assert "no note matching" in result.stderr
+
+    def test_regen_numeric_note_id_matches_notes_table(self, tmp_path, monkeypatch):
+        """Numeric --note ids number the `chirp notes` table (generated notes,
+        newest first) — a transcript-only record must not shift the numbering."""
+        self._seed(tmp_path, "a-old", date="2026-04-18T09:00:00")
+        self._seed(tmp_path, "b-mid", date="2026-04-19T09:00:00", notes=False)
+        self._seed(tmp_path, "c-new", date="2026-04-20T09:00:00")
+        captured: dict = {}
+
+        result = self._invoke(
+            tmp_path,
+            monkeypatch,
+            ["transcribe", "--regen", "--note", "2"],
+            captured,
+        )
+
+        assert result.exit_code == 0
+        assert [r.slug for r in captured["records"]] == ["a-old"]
+
+    def test_regen_note_without_transcript_fails(self, tmp_path, monkeypatch):
+        self._seed(tmp_path, "a-old", date="2026-04-18T09:00:00")
+        self._seed(
+            tmp_path, "orphan-notes", date="2026-04-20T09:00:00", transcript=False
+        )
+        result = self._invoke(
+            tmp_path,
+            monkeypatch,
+            ["transcribe", "--regen", "--note", "orphan-notes"],
+        )
+        assert result.exit_code == 1
+        assert "no transcript to regenerate from" in result.stderr
+
+
+class TestNotesTag:
+    def _runner(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        return CliRunner(), chirp.cli.app
+
+    def _read_tags(self, tmp_path: Path, slug: str) -> list[str]:
+        import tomllib
+
+        with (tmp_path / slug / "meta.toml").open("rb") as fh:
+            return tomllib.load(fh)["tags"]
+
+    def test_add_remove_round_trip(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x", tags=["meeting"])
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(
+            app, ["notes", "tag", "a-2026-04-20", "--add", "standup", "--add", "dsu"]
+        )
+        assert result.exit_code == 0
+        assert self._read_tags(tmp_path, "a-2026-04-20") == [
+            "meeting",
+            "standup",
+            "dsu",
+        ]
+
+        result = runner.invoke(
+            app, ["notes", "tag", "a-2026-04-20", "--remove", "meeting"]
+        )
+        assert result.exit_code == 0
+        assert self._read_tags(tmp_path, "a-2026-04-20") == ["standup", "dsu"]
+
+    def test_clear_then_add(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x", tags=["old", "stale"])
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(
+            app, ["notes", "tag", "a-2026-04-20", "--clear", "--add", "fresh"]
+        )
+        assert result.exit_code == 0
+        assert self._read_tags(tmp_path, "a-2026-04-20") == ["fresh"]
+
+    def test_numeric_id_matches_notes_table(self, tmp_path, monkeypatch):
+        _write_note(
+            tmp_path, "older-2026-04-19", "Older", "x", date="2026-04-19T09:00:00"
+        )
+        _write_note(
+            tmp_path, "newer-2026-04-20", "Newer", "x", date="2026-04-20T09:00:00"
+        )
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "tag", "1", "--add", "top"])
+        assert result.exit_code == 0
+        assert self._read_tags(tmp_path, "newer-2026-04-20") == ["top"]
+
+    def test_tags_untranscribed_note_by_slug(self, tmp_path, monkeypatch):
+        note_dir = tmp_path / "fresh-recording-2026-07-08"
+        note_dir.mkdir()
+        (note_dir / "audio.wav").write_bytes(b"\x00" * 10)
+
+        import tomli_w
+
+        with (note_dir / "meta.toml").open("wb") as fh:
+            tomli_w.dump(
+                {"title": "Fresh", "date": "2026-07-08T09:00:00", "tags": []}, fh
+            )
+
+        runner, app = self._runner(tmp_path, monkeypatch)
+        result = runner.invoke(
+            app, ["notes", "tag", "fresh-recording", "--add", "standup"]
+        )
+        assert result.exit_code == 0
+        assert self._read_tags(tmp_path, "fresh-recording-2026-07-08") == ["standup"]
+
+    def test_requires_a_flag(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x")
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "tag", "a-2026-04-20"])
+        assert result.exit_code == 2
+        assert "nothing to do" in result.stderr
+
+    def test_duplicate_add_is_ignored(self, tmp_path, monkeypatch):
+        _write_note(tmp_path, "a-2026-04-20", "A", "x", tags=["work"])
+        runner, app = self._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "tag", "a-2026-04-20", "--add", "work"])
+        assert result.exit_code == 0
+        assert self._read_tags(tmp_path, "a-2026-04-20") == ["work"]
+
+
+class TestRecordTemplateFlag:
+    def test_unknown_template_rejected_before_recording(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        runner = CliRunner()
+        result = runner.invoke(chirp.cli.app, ["record", "--template", "nope"])
+
+        assert result.exit_code == 2
+        assert "unknown template 'nope'" in result.stderr
+        assert "standup" in result.stderr
+
+
+class TestAskTagFlag:
+    def test_repeated_and_comma_tags_reach_ask(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        monkeypatch.setattr(
+            "chirp.init_flow.offer_first_run_setup", lambda *a, **k: None
+        )
+        captured: dict = {}
+
+        def fake_ask(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr("notes_chat.cli.ask", fake_ask)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(
+            chirp.cli.app,
+            ["ask", "anything?", "--tag", "standup", "--tag", "work,extra"],
+        )
+
+        assert result.exit_code == 0
+        assert captured["tags"] == ["standup", "work", "extra"]
+
+
+class TestInitTemplateScaffold:
+    def test_init_survives_templates_path_being_a_file(self, tmp_path, monkeypatch):
+        settings = _make_settings(tmp_path)
+        blocker = tmp_path / "templates"
+        blocker.write_text("not a directory", encoding="utf-8")
+
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+        monkeypatch.setattr("notes.note_templates.user_templates_dir", lambda: blocker)
+        monkeypatch.setattr(
+            "chirp.init_flow.require_apple_silicon", lambda console: None
+        )
+        monkeypatch.setattr("chirp.init_flow.run_init", lambda *a, **k: 0)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(chirp.cli.app, ["init"])
+
+        assert result.exit_code == 0
+        assert "could not scaffold note templates" in result.stderr
+        assert blocker.read_text(encoding="utf-8") == "not a directory"
+
+
+class TestFilteredNotesTableIds:
+    def test_filtered_table_and_json_keep_global_ids(self, tmp_path, monkeypatch):
+        import json
+
+        _write_note(
+            tmp_path,
+            "retro-2026-04-18",
+            "Retro",
+            "x",
+            tags=["work"],
+            date="2026-04-18T09:00:00",
+        )
+        _write_note(
+            tmp_path,
+            "sync-2026-04-20",
+            "Team Sync",
+            "x",
+            tags=[],
+            date="2026-04-20T09:00:00",
+        )
+        runner, app = TestListNotes()._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(app, ["notes", "--tag", "work", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert [(row["id"], row["slug"]) for row in payload] == [
+            (2, "retro-2026-04-18")
+        ]
+
+        tagged = runner.invoke(app, ["notes", "tag", "2", "--add", "check"])
+        assert tagged.exit_code == 0
+        assert "retro-2026-04-18" in tagged.output
+
+
+class TestRegenExitCode:
+    def test_regen_total_failure_exits_nonzero(self, tmp_path, monkeypatch):
+        helper = TestTranscribeRegenTemplateAndNoteFilter()
+        helper._seed(tmp_path, "a-2026-04-20")
+        settings = _make_settings(tmp_path)
+        monkeypatch.setattr("chirp.cli.get_settings", lambda: settings)
+
+        class FailingNoteGenerator:
+            def __init__(self, s):
+                pass
+
+            def generate_for_records(
+                self, records, force=False, template_override=None
+            ):
+                return {
+                    "success": False,
+                    "error": "boom",
+                    "results": [
+                        {"success": False, "slug": r.slug, "error": "boom"}
+                        for r in records
+                    ],
+                }
+
+        monkeypatch.setattr("notes.note_generator.NoteGenerator", FailingNoteGenerator)
+
+        from typer.testing import CliRunner
+
+        import chirp.cli
+
+        result = CliRunner().invoke(chirp.cli.app, ["transcribe", "--regen"])
+        assert result.exit_code == 1
+        assert "boom" in result.stderr
+
+
+class TestNotesTagRemoveHygiene:
+    def test_remove_strips_whitespace(self, tmp_path, monkeypatch):
+        import tomllib
+
+        _write_note(tmp_path, "a-2026-04-20", "A", "x", tags=["work", "keep"])
+        runner, app = TestListNotes()._runner(tmp_path, monkeypatch)
+
+        result = runner.invoke(
+            app, ["notes", "tag", "a-2026-04-20", "--remove", " work "]
+        )
+        assert result.exit_code == 0
+        with (tmp_path / "a-2026-04-20" / "meta.toml").open("rb") as fh:
+            assert tomllib.load(fh)["tags"] == ["keep"]

@@ -2,43 +2,8 @@ from datetime import datetime
 from typing import Any
 
 from config.settings import ChirpSettings
+from notes.note_templates import NoteTemplate
 from utils.time_utils import format_duration, format_meeting_time
-
-MEETING_SECTION_TEMPLATE = """## {meeting_title}
-
-**Time:** {meeting_time}
-**Duration:** {duration}
-
-### Executive Summary
-
-{executive_summary}
-
-### Agenda
-
-{agenda}
-
-### Discussion Highlights
-
-{discussion_highlights}
-
-### Action Items
-
-{action_items}
-
-### Decisions Made
-
-{decisions}
-
-### Open Questions
-
-{open_questions}
-
-### Next Steps
-
-{next_steps}
-
----"""
-
 
 DAILY_NOTES_TEMPLATE = """# Meeting Notes - {date}
 
@@ -68,32 +33,26 @@ class TemplateEngine:
         }
         return _substitute_variables(DAILY_NOTES_TEMPLATE, variables)
 
-    def render_meeting_section(self, meeting_data: dict[str, Any]) -> str:
-        metadata = meeting_data.get("metadata", {})
-        meeting_time = _extract_meeting_time(metadata)
-        duration = metadata.get("duration_s") or metadata.get("duration") or 0
-        duration_str = format_duration(duration) if duration else "Unknown"
+    def render_note(self, template: NoteTemplate, data: dict[str, Any]) -> str:
+        metadata = data.get("metadata", {})
+        duration = metadata.get("duration_s")
+        if duration is None:
+            duration = metadata.get("duration") or 0
 
-        variables = {
-            "meeting_title": meeting_data.get("meeting_title", "Untitled Meeting"),
-            "meeting_time": meeting_time,
-            "duration": duration_str,
-            "executive_summary": meeting_data.get(
-                "executive_summary", "No summary available"
-            ),
-            "agenda": _format_list_items(meeting_data.get("agenda", [])),
-            "discussion_highlights": _format_list_items(
-                meeting_data.get("discussion_highlights", [])
-            ),
-            "action_items": _format_list_items(meeting_data.get("action_items", [])),
-            "decisions": _format_list_items(meeting_data.get("decisions", [])),
-            "open_questions": _format_list_items(
-                meeting_data.get("open_questions", [])
-            ),
-            "next_steps": _format_list_items(meeting_data.get("next_steps", [])),
+        variables: dict[str, Any] = {
+            "title": data.get("title") or "Untitled Note",
+            "time": _extract_meeting_time(metadata),
+            "duration": format_duration(duration) if duration else "Unknown",
         }
+        for section in template.sections:
+            value = data.get(section.key)
+            if section.kind == "prose":
+                text = value.strip() if isinstance(value, str) else ""
+                variables[section.key] = text or "None"
+            else:
+                variables[section.key] = _format_list_items(value or [])
 
-        return _substitute_variables(MEETING_SECTION_TEMPLATE, variables)
+        return _substitute_variables(template.body, variables)
 
 
 def _substitute_variables(template: str, variables: dict[str, Any]) -> str:

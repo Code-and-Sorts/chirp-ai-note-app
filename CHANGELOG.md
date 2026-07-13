@@ -8,6 +8,19 @@ releases published to PyPI as `chirp-notes-ai`.
 
 ### Added
 
+- Tag-linked note templates: markdown files in `~/.chirp/templates/` whose
+  YAML frontmatter `tags` list selects the template for matching notes, and
+  whose body headings/placeholders drive both the LLM extraction prompt and
+  the rendered layout. Built-ins `meeting` (default), `standup`,
+  `one-on-one`, and `brainstorm` are scaffolded by `chirp init` and can be
+  edited or shadowed by user files.
+- `chirp record --template` and `chirp transcribe --regen --template` to pick
+  a template explicitly (persisted to the note's `meta.toml`), plus
+  `chirp transcribe --regen --note` to regenerate specific notes.
+- `chirp notes tag <id> --add/--remove/--clear` to edit tags on existing
+  notes.
+- `--tag` filters on `chirp search` and `chirp ask` (repeatable and/or
+  comma-separated, AND-combined) to scope search and answers to tagged notes.
 - `CHANGELOG.md`, PyPI classifiers, license metadata, and project URLs.
 - Model downloads and daemon loads are pinned to the HuggingFace commit SHA
   captured at `chirp models add` time (`revision` field in `models.toml`);
@@ -17,6 +30,9 @@ releases published to PyPI as `chirp-notes-ai`.
 
 ### Changed
 
+- Note generation builds its LLM prompt and markdown layout from the active
+  template (meeting included) instead of a hardcoded prompt, so regenerated
+  notes may differ slightly in wording from earlier runs.
 - All user-data writes (`transcript.txt`, `notes.md`, `meta.toml`,
   `config.toml`, search-index manifests) are atomic: a crash or full disk can
   no longer leave silently truncated notes or transcripts.

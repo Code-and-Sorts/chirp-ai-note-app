@@ -51,8 +51,9 @@ def generate_for_slug(generator: NoteGenerator, slug: str) -> None:
         (CORPUS_DIR / slug / "transcript.txt").read_text(encoding="utf-8").strip()
     )
 
+    template = generator.template_loader.load_default()
     structured_notes = generator._generate_structured_notes(
-        transcript_text, provided_title=None
+        transcript_text, provided_title=None, template=template
     )
     if not structured_notes:
         raise RuntimeError("LLM returned no parseable structured notes")
@@ -61,21 +62,15 @@ def generate_for_slug(generator: NoteGenerator, slug: str) -> None:
     # day of regeneration: the corpus replay has no recording timestamp in
     # scope (story 6.6 AC-2 accepts this).
     note_date = datetime.now()
-    meeting_notes = {
-        "meeting_title": structured_notes.get("meeting_title", DEFAULT_MEETING_NAME),
-        "executive_summary": structured_notes.get(
-            "executive_summary", "No summary available"
-        ),
-        "agenda": structured_notes.get("agenda", []),
-        "action_items": structured_notes.get("action_items", []),
-        "next_steps": structured_notes.get("next_steps", []),
-        "decisions": structured_notes.get("decisions", []),
-        "open_questions": structured_notes.get("open_questions", []),
-        "discussion_highlights": structured_notes.get("discussion_highlights", []),
+    note_data = {
+        "title": structured_notes.get("title") or DEFAULT_MEETING_NAME,
         "metadata": {"date": note_date.isoformat()},
     }
+    for section in template.sections:
+        default = "" if section.kind == "prose" else []
+        note_data[section.key] = structured_notes.get(section.key, default)
 
-    body = generator.template_engine.render_meeting_section(meeting_notes)
+    body = generator.template_engine.render_note(template, note_data)
     content = generator._format_generated_note(body, note_date)
     (CORPUS_DIR / slug / OUTPUT_FILENAME).write_text(content, encoding="utf-8")
 

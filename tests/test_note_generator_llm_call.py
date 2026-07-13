@@ -10,12 +10,18 @@ The client stand-ins are the shared fixtures from `tests/conftest.py` (story
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from llm.exceptions import LLMConnectionLost, LLMModelError
-from notes.note_generator import SYSTEM_PROMPT, NoteGenerator
+from notes.note_generator import NoteGenerator
+from notes.note_templates import TemplateLoader, build_system_prompt
+
+SYSTEM_PROMPT = build_system_prompt(
+    TemplateLoader(user_dir=Path("/nonexistent-chirp-templates")).load_default()
+)
 
 
 @pytest.fixture

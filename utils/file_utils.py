@@ -50,6 +50,21 @@ def atomic_write_toml(path: Path, payload: dict[str, Any]) -> None:
     atomic_write_bytes(path, tomli_w.dumps(payload).encode("utf-8"))
 
 
+def merge_note_meta(note_dir: Path, updates: dict[str, Any]) -> None:
+    """Merge ``updates`` into a note's meta.toml, starting fresh if corrupt."""
+    meta_path = note_dir / META_FILENAME
+    meta: dict[str, Any] = {}
+    if meta_path.exists():
+        try:
+            with meta_path.open("rb") as fh:
+                meta = dict(tomllib.load(fh))
+        except (OSError, tomllib.TOMLDecodeError):
+            meta = {}
+    meta.update(updates)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_toml(meta_path, meta)
+
+
 def atomic_write_json(path: Path, payload: Any, *, indent: int = 2) -> None:
     atomic_write_bytes(path, json.dumps(payload, indent=indent).encode("utf-8"))
 
@@ -65,6 +80,7 @@ class NoteRecord:
     created_at: datetime
     tags: list[str] = field(default_factory=list)
     title: str | None = None
+    template: str | None = None
 
 
 def sanitize_filename(filename: str) -> str:
@@ -118,7 +134,7 @@ def list_notes(notes_root: Path) -> list[NoteRecord]:
         if record is not None:
             records.append(record)
 
-    records.sort(key=lambda rec: rec.created_at)
+    records.sort(key=lambda rec: (rec.created_at, rec.slug))
     return records
 
 
@@ -145,6 +161,10 @@ def _build_record(entry: Path) -> NoteRecord | None:
     if not isinstance(title, str):
         title = None
 
+    template = meta_data.get("template")
+    if not isinstance(template, str):
+        template = None
+
     return NoteRecord(
         slug=entry.name,
         dir=entry,
@@ -155,6 +175,7 @@ def _build_record(entry: Path) -> NoteRecord | None:
         created_at=created_at,
         tags=list(tags),
         title=title,
+        template=template,
     )
 
 

@@ -181,6 +181,7 @@ def enhanced_search_and_answer_stream(
     config: ChirpSettings,
     question: str,
     client: LLMClient | None = None,
+    tags: list[str] | None = None,
 ) -> Generator[dict[str, Any], None, None]:
     """Stream an answer for an interactive ``chirp ask`` question via chirpd.
 
@@ -213,7 +214,7 @@ def enhanced_search_and_answer_stream(
     # Everything else is a search over the notes.
     yield {"type": "thinking", "message": "Searching your notes..."}
     try:
-        context_result = retrieve_context(config, question)
+        context_result = retrieve_context(config, question, tags=tags)
     except Exception as exc:  # noqa: BLE001 - retrieval has many failure modes
         # Log the detail; surface a stable, user-friendly message (raw
         # exception text can leak internal paths and breaks output stability).

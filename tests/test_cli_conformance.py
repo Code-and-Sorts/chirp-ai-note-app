@@ -158,7 +158,7 @@ class TestAskJson:
 
         monkeypatch.setattr(nc_cli, "get_notes_config", MagicMock)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": True,
                 "context": "ctx",
@@ -569,7 +569,7 @@ class TestAskDualInput:
 
         monkeypatch.setattr(nc_cli, "get_notes_config", MagicMock)
 
-        def fake_retrieve(config, question, when_filter=None):
+        def fake_retrieve(config, question, when_filter=None, tags=None):
             return {
                 "success": True,
                 "context": "ctx",

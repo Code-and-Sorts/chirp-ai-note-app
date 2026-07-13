@@ -3,6 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from notes.note_templates import TemplateLoader
 from notes.template_engine import (
     TemplateEngine,
     _extract_meeting_time,
@@ -19,6 +20,11 @@ def settings():
 @pytest.fixture
 def engine(settings):
     return TemplateEngine(settings)
+
+
+@pytest.fixture
+def meeting_template(tmp_path):
+    return TemplateLoader(user_dir=tmp_path / "templates").load("meeting")
 
 
 class TestSubstituteVariables:
@@ -137,10 +143,10 @@ class TestRenderDailyNotes:
         assert "1m 30s" in result
 
 
-class TestRenderMeetingSection:
-    def _full_meeting_data(self, **overrides) -> dict:
+class TestRenderNote:
+    def _full_note_data(self, **overrides) -> dict:
         base = {
-            "meeting_title": "Sprint Review",
+            "title": "Sprint Review",
             "executive_summary": "Reviewed sprint progress.",
             "agenda": ["Item A", "Item B"],
             "discussion_highlights": ["Highlight 1"],
@@ -153,68 +159,96 @@ class TestRenderMeetingSection:
         base.update(overrides)
         return base
 
-    def test_includes_meeting_title(self, engine):
-        result = engine.render_meeting_section(self._full_meeting_data())
+    def test_includes_title(self, engine, meeting_template):
+        result = engine.render_note(meeting_template, self._full_note_data())
         assert "Sprint Review" in result
 
-    def test_includes_executive_summary(self, engine):
-        result = engine.render_meeting_section(self._full_meeting_data())
+    def test_includes_executive_summary(self, engine, meeting_template):
+        result = engine.render_note(meeting_template, self._full_note_data())
         assert "Reviewed sprint progress." in result
 
-    def test_formats_list_fields(self, engine):
-        result = engine.render_meeting_section(self._full_meeting_data())
+    def test_formats_list_fields(self, engine, meeting_template):
+        result = engine.render_note(meeting_template, self._full_note_data())
         assert "- Item A" in result
         assert "- Item B" in result
         assert "- Action 1" in result
         assert "- Decision 1" in result
 
-    def test_uses_unknown_duration_when_zero(self, engine):
-        data = self._full_meeting_data()
+    def test_uses_unknown_duration_when_zero(self, engine, meeting_template):
+        data = self._full_note_data()
         data["metadata"] = {"duration": 0}
-        result = engine.render_meeting_section(data)
+        result = engine.render_note(meeting_template, data)
         assert "Unknown" in result
 
-    def test_uses_untitled_meeting_when_title_missing(self, engine):
-        data = self._full_meeting_data()
-        del data["meeting_title"]
-        result = engine.render_meeting_section(data)
-        assert "Untitled Meeting" in result
+    def test_uses_untitled_note_when_title_missing(self, engine, meeting_template):
+        data = self._full_note_data()
+        del data["title"]
+        result = engine.render_note(meeting_template, data)
+        assert "Untitled Note" in result
 
-    def test_uses_no_summary_when_summary_missing(self, engine):
-        data = self._full_meeting_data()
+    def test_missing_prose_section_renders_as_none(self, engine, meeting_template):
+        data = self._full_note_data()
         del data["executive_summary"]
-        result = engine.render_meeting_section(data)
-        assert "No summary available" in result
+        result = engine.render_note(meeting_template, data)
+        assert "### Executive Summary\n\nNone" in result
 
-    def test_empty_lists_render_as_none(self, engine):
-        data = self._full_meeting_data()
+    def test_empty_lists_render_as_none(self, engine, meeting_template):
+        data = self._full_note_data()
         data["agenda"] = []
-        result = engine.render_meeting_section(data)
-        assert "None" in result
+        result = engine.render_note(meeting_template, data)
+        assert "### Agenda\n\nNone" in result
 
-    def test_missing_metadata_uses_unknown_time(self, engine):
-        data = self._full_meeting_data()
+    def test_missing_metadata_uses_unknown_time(self, engine, meeting_template):
+        data = self._full_note_data()
         data["metadata"] = {}
-        result = engine.render_meeting_section(data)
+        result = engine.render_note(meeting_template, data)
         assert "Unknown time" in result
 
-    def test_formats_duration_from_metadata(self, engine):
-        result = engine.render_meeting_section(self._full_meeting_data())
+    def test_formats_duration_from_metadata(self, engine, meeting_template):
+        result = engine.render_note(meeting_template, self._full_note_data())
         assert "1h 0m" in result
 
-    def test_formats_duration_from_duration_s_key(self, engine):
+    def test_formats_duration_from_duration_s_key(self, engine, meeting_template):
         # meta.toml stores the recording length under `duration_s`.
-        data = self._full_meeting_data()
+        data = self._full_note_data()
         data["metadata"] = {
             "date": datetime(2026, 4, 20, 10, 0, 0),
             "duration_s": 91.99,
         }
-        result = engine.render_meeting_section(data)
+        result = engine.render_note(meeting_template, data)
         assert "1m 31s" in result
         assert "Unknown" not in result.split("**Duration:**")[1].splitlines()[0]
 
-    def test_duration_s_takes_precedence_over_legacy_duration(self, engine):
-        data = self._full_meeting_data()
+    def test_duration_s_takes_precedence_over_legacy_duration(
+        self, engine, meeting_template
+    ):
+        data = self._full_note_data()
         data["metadata"] = {"duration_s": 90.0, "duration": 0}
-        result = engine.render_meeting_section(data)
+        result = engine.render_note(meeting_template, data)
         assert "1m 30s" in result
+
+    def test_zero_duration_s_does_not_fall_back_to_legacy_duration(
+        self, engine, meeting_template
+    ):
+        data = self._full_note_data()
+        data["metadata"] = {"duration_s": 0.0, "duration": 3600.0}
+        result = engine.render_note(meeting_template, data)
+        assert "**Duration:** Unknown" in result
+
+    def test_custom_template_layout(self, engine, tmp_path):
+        loader = TemplateLoader(user_dir=tmp_path / "templates")
+        template = loader.load("standup")
+        result = engine.render_note(
+            template,
+            {
+                "title": "Daily Sync",
+                "yesterday": ["Shipped the exporter"],
+                "today": ["Review PRs"],
+                "blockers": [],
+                "metadata": {},
+            },
+        )
+        assert "## Daily Sync" in result
+        assert "### Yesterday\n\n- Shipped the exporter" in result
+        assert "### Blockers\n\nNone" in result
+        assert "Agenda" not in result

@@ -1,12 +1,19 @@
 import tomllib
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 import tomli_w
 
 from notes.note_generator import NoteGenerator
+from notes.note_templates import TemplateLoader, build_system_prompt
 from utils.file_utils import NoteRecord
+
+MEETING_TEMPLATE = TemplateLoader(
+    user_dir=Path("/nonexistent-chirp-templates")
+).load_default()
+MEETING_PROMPT = build_system_prompt(MEETING_TEMPLATE)
 
 
 @pytest.fixture
@@ -71,8 +78,8 @@ class TestNoteGenerator:
             generator = NoteGenerator(mock_settings)
 
             xml_response = """<?xml version="1.0" encoding="UTF-8"?>
-<MEETING_NOTES>
-    <MEETING_TITLE>Project Alpha Sync</MEETING_TITLE>
+<NOTES>
+    <TITLE>Project Alpha Sync</TITLE>
     <EXECUTIVE_SUMMARY>Discussed project timeline and resource allocation.</EXECUTIVE_SUMMARY>
     <AGENDA>
         <ITEM>Review Q1 goals</ITEM>
@@ -94,12 +101,12 @@ class TestNoteGenerator:
     <DISCUSSION_HIGHLIGHTS>
         <ITEM>Team discussed resource constraints</ITEM>
     </DISCUSSION_HIGHLIGHTS>
-</MEETING_NOTES>"""
+</NOTES>"""
 
             result = generator._parse_xml_response(xml_response)
 
             assert result is not None
-            assert result["meeting_title"] == "Project Alpha Sync"
+            assert result["title"] == "Project Alpha Sync"
             assert "Discussed project timeline" in result["executive_summary"]
             assert len(result["agenda"]) == 2
             assert len(result["action_items"]) == 2
@@ -116,8 +123,8 @@ class TestNoteGenerator:
             generator = NoteGenerator(mock_settings)
 
             xml_response = """<?xml version="1.0" encoding="UTF-8"?>
-<MEETING_NOTES>
-    <MEETING_TITLE>Brief Check-in</MEETING_TITLE>
+<NOTES>
+    <TITLE>Brief Check-in</TITLE>
     <EXECUTIVE_SUMMARY>Short informal chat.</EXECUTIVE_SUMMARY>
     <AGENDA>None</AGENDA>
     <ACTION_ITEMS>None</ACTION_ITEMS>
@@ -127,12 +134,12 @@ class TestNoteGenerator:
     <DISCUSSION_HIGHLIGHTS>
         <ITEM>Casual discussion</ITEM>
     </DISCUSSION_HIGHLIGHTS>
-</MEETING_NOTES>"""
+</NOTES>"""
 
             result = generator._parse_xml_response(xml_response)
 
             assert result is not None
-            assert result["meeting_title"] == "Brief Check-in"
+            assert result["title"] == "Brief Check-in"
             assert result["agenda"] == []
             assert result["action_items"] == []
             assert result["next_steps"] == []
@@ -149,13 +156,13 @@ class TestNoteGenerator:
             generator = NoteGenerator(mock_settings)
 
             xml_response = (
-                "<MEETING_NOTES>"
-                "<MEETING_TITLE>Q&A / R&D sync</MEETING_TITLE>"
+                "<NOTES>"
+                "<TITLE>Q&A / R&D sync</TITLE>"
                 "<EXECUTIVE_SUMMARY>Revenue < target; P&L reviewed</EXECUTIVE_SUMMARY>"
                 "<AGENDA><ITEM>Discuss P&L</ITEM></AGENDA>"
                 '<ACTION_ITEMS><ITEM task="Fix Q&A doc" owner="Jo" deadline="Fri"/>'
                 "</ACTION_ITEMS>"
-                "</MEETING_NOTES>"
+                "</NOTES>"
             )
             import xml.etree.ElementTree as ET
 
@@ -165,7 +172,7 @@ class TestNoteGenerator:
             result = generator._parse_xml_response(xml_response)
 
         assert result is not None
-        assert result["meeting_title"] == "Q&A / R&D sync"
+        assert result["title"] == "Q&A / R&D sync"
         assert result["executive_summary"] == "Revenue < target; P&L reviewed"
         assert result["agenda"] == ["Discuss P&L"]
         assert result["action_items"] == ["Fix Q&A doc — Owner: Jo — Deadline: Fri"]
@@ -178,14 +185,13 @@ class TestNoteGenerator:
         ):
             generator = NoteGenerator(mock_settings)
             truncated = (
-                "<MEETING_NOTES><MEETING_TITLE>Planning</MEETING_TITLE>"
-                "<EXECUTIVE_SUMMARY>We discussed the road"
+                "<NOTES><TITLE>Planning</TITLE><EXECUTIVE_SUMMARY>We discussed the road"
             )
 
             result = generator._parse_xml_response(truncated)
 
         assert result is not None
-        assert result["meeting_title"] == "Planning"
+        assert result["title"] == "Planning"
 
     def test_parse_returns_none_when_nothing_recoverable(self, mock_settings):
         """A marker with no usable tags still degrades — no empty shell note."""
@@ -195,7 +201,7 @@ class TestNoteGenerator:
         ):
             generator = NoteGenerator(mock_settings)
 
-            result = generator._parse_xml_response("<MEETING_NOTES>&&& < > junk")
+            result = generator._parse_xml_response("<NOTES>&&& < > junk")
 
         assert result is None
 
@@ -211,9 +217,7 @@ class TestNoteGenerator:
             ),
         ):
             template_instance = mock_template_engine.return_value
-            template_instance.render_meeting_section.return_value = (
-                "## Project Alpha\n\nBody"
-            )
+            template_instance.render_note.return_value = "## Project Alpha\n\nBody"
 
             generator = NoteGenerator(mock_settings)
             record = _seed_record(
@@ -229,7 +233,7 @@ class TestNoteGenerator:
                 generator,
                 "_generate_structured_notes",
                 return_value={
-                    "meeting_title": "Project Alpha",
+                    "title": "Project Alpha",
                     "executive_summary": "Summary",
                     "agenda": [],
                     "action_items": [],
@@ -435,9 +439,9 @@ class TestNoteGenerator:
             generator = NoteGenerator(mock_settings)
 
             mock_settings.models.context_window = 32768
-            big = generator._transcript_char_budget("")
+            big = generator._transcript_char_budget("", MEETING_PROMPT)
             mock_settings.models.context_window = 8192
-            small = generator._transcript_char_budget("")
+            small = generator._transcript_char_budget("", MEETING_PROMPT)
 
         assert big > small
         assert big > 24000
@@ -455,7 +459,10 @@ class TestNoteGenerator:
             mock_settings.models.context_window = 4096
             mock_settings.models.num_predict = 4096
 
-            assert generator._transcript_char_budget("") == _MIN_TRANSCRIPT_BUDGET_CHARS
+            assert (
+                generator._transcript_char_budget("", MEETING_PROMPT)
+                == _MIN_TRANSCRIPT_BUDGET_CHARS
+            )
 
     def test_whole_transcript_used_single_shot_when_it_fits(self, mock_settings):
         """A transcript within budget is sent verbatim through one prompt."""
@@ -472,7 +479,7 @@ class TestNoteGenerator:
                 patch.object(
                     generator,
                     "_parse_xml_response",
-                    return_value={"meeting_title": "T"},
+                    return_value={"title": "T"},
                 ),
             ):
                 generator._generate_structured_notes(transcript)
@@ -492,7 +499,7 @@ class TestNoteGenerator:
         ):
             console = Mock()
             generator = NoteGenerator(mock_settings, console=console)
-            budget = generator._transcript_char_budget("")
+            budget = generator._transcript_char_budget("", MEETING_PROMPT)
             long_transcript = " ".join(
                 f"Sentence {i} discusses a distinct topic in some detail."
                 for i in range((budget // 40) + 500)
@@ -504,7 +511,7 @@ class TestNoteGenerator:
                     generator,
                     "_parse_xml_response",
                     return_value={
-                        "meeting_title": "T",
+                        "title": "T",
                         "executive_summary": "part",
                         "action_items": ["A"],
                     },
@@ -578,7 +585,7 @@ class TestNoteGenerator:
             },
         ]
         with patch.object(generator, "_call_llm", return_value="whole summary"):
-            result = generator._reduce_chunk_notes(notes, 95000)
+            result = generator._reduce_chunk_notes(notes, 95000, MEETING_TEMPLATE)
 
         assert result["action_items"] == ["A1", "A2", "A3"]
         assert result["decisions"] == ["D1", "D2"]
@@ -593,7 +600,7 @@ class TestNoteGenerator:
             generator = NoteGenerator(mock_settings)
         notes = [{"executive_summary": "a"}, {"executive_summary": "b"}]
         with patch.object(generator, "_call_llm", return_value="synthesized") as call:
-            result = generator._reduce_chunk_notes(notes, 95000)
+            result = generator._reduce_chunk_notes(notes, 95000, MEETING_TEMPLATE)
 
         call.assert_called_once()
         assert result["executive_summary"] == "synthesized"
@@ -611,7 +618,7 @@ class TestNoteGenerator:
             {"executive_summary": "second half"},
         ]
         with patch.object(generator, "_call_llm", return_value="   "):
-            result = generator._reduce_chunk_notes(notes, 95000)
+            result = generator._reduce_chunk_notes(notes, 95000, MEETING_TEMPLATE)
 
         assert result["executive_summary"] == "first half second half"
 
@@ -629,7 +636,7 @@ class TestNoteGenerator:
             {"action_items": ["Ship the release — Owner: Sam"]},
         ]
         with patch.object(generator, "_call_llm", return_value="synth") as call:
-            result = generator._reduce_chunk_notes(notes, 95000)
+            result = generator._reduce_chunk_notes(notes, 95000, MEETING_TEMPLATE)
 
         call.assert_called_once()
         assert result["executive_summary"] == "synth"
@@ -647,7 +654,7 @@ class TestNoteGenerator:
             {"action_items": ["Ship it — Owner: Sam"]},
         ]
         with patch.object(generator, "_call_llm", return_value="  "):
-            result = generator._reduce_chunk_notes(notes, 95000)
+            result = generator._reduce_chunk_notes(notes, 95000, MEETING_TEMPLATE)
 
         assert result["executive_summary"] != "No summary available"
         assert result["executive_summary"].strip()
@@ -661,22 +668,23 @@ class TestNoteGenerator:
         merged = generator._merge_notes(
             [
                 {
-                    "meeting_title": "M",
+                    "title": "M",
                     "executive_summary": "a",
                     "action_items": ["Task — Owner: Jo", "shared"],
                 },
                 {
-                    "meeting_title": "M",
+                    "title": "M",
                     "executive_summary": "b",
                     "action_items": ["  task — owner: jo  ", "shared"],
                     "decisions": ["D"],
                 },
-            ]
+            ],
+            MEETING_TEMPLATE,
         )
         assert merged["action_items"] == ["Task — Owner: Jo", "shared"]
         assert merged["decisions"] == ["D"]
         assert merged["executive_summary"] == "a b"
-        assert merged["meeting_title"] == "M"
+        assert merged["title"] == "M"
 
     def test_dedup_merges_reordered_and_subset_phrasings(self, mock_settings):
         with (
@@ -768,3 +776,143 @@ class TestNoteGenerator:
         for distinct in ["beta", "gamma", "delta"]:
             assert distinct in result
         assert len(result) == 4
+
+
+STANDUP_TEMPLATE = TemplateLoader(user_dir=Path("/nonexistent-chirp-templates")).load(
+    "standup"
+)
+
+STANDUP_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<NOTES>
+    <TITLE>Daily Sync</TITLE>
+    <YESTERDAY><ITEM>Shipped the exporter</ITEM></YESTERDAY>
+    <TODAY><ITEM>Review open PRs</ITEM></TODAY>
+    <BLOCKERS>None</BLOCKERS>
+</NOTES>"""
+
+
+class TestCustomTemplates:
+    def test_parse_xml_custom_sections_strict(self, mock_settings):
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            result = generator._parse_xml_response(STANDUP_XML, STANDUP_TEMPLATE)
+
+        assert result == {
+            "title": "Daily Sync",
+            "yesterday": ["Shipped the exporter"],
+            "today": ["Review open PRs"],
+            "blockers": [],
+        }
+
+    def test_parse_xml_custom_sections_lenient(self, mock_settings):
+        """Unescaped `&` breaks ET, yet the template's tags are recovered."""
+        malformed = (
+            "<NOTES><TITLE>R&D Sync</TITLE>"
+            "<YESTERDAY><ITEM>Debugged Q&A flow</ITEM></YESTERDAY>"
+            "<TODAY>None</TODAY><BLOCKERS><ITEM>CI < flaky</ITEM></BLOCKERS>"
+            "</NOTES>"
+        )
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+            result = generator._parse_xml_response(malformed, STANDUP_TEMPLATE)
+
+        assert result is not None
+        assert result["title"] == "R&D Sync"
+        assert result["yesterday"] == ["Debugged Q&A flow"]
+        assert result["today"] == []
+        assert result["blockers"] == ["CI < flaky"]
+
+    def test_reduce_chunk_notes_with_custom_list_keys(self, mock_settings):
+        """Chunked reduce merges the template's own list sections; a template
+        with no prose section triggers no summary LLM call."""
+        with (
+            patch("notes.note_generator.TemplateEngine"),
+            patch("notes.note_generator.PopupManager"),
+        ):
+            generator = NoteGenerator(mock_settings)
+        notes = [
+            {"title": "T", "yesterday": ["a"], "today": ["b"], "blockers": []},
+            {"title": "T", "yesterday": ["c"], "today": ["b"], "blockers": ["x"]},
+        ]
+        with patch.object(generator, "_call_llm") as call:
+            result = generator._reduce_chunk_notes(notes, 95000, STANDUP_TEMPLATE)
+
+        call.assert_not_called()
+        assert result["yesterday"] == ["a", "c"]
+        assert result["today"] == ["b"]
+        assert result["blockers"] == ["x"]
+
+    def test_generate_for_record_renders_tag_matched_template(
+        self, mock_settings, tmp_path
+    ):
+        loader = TemplateLoader(user_dir=tmp_path / "templates")
+        loader.scaffold()
+        standup_path = loader.user_dir / "standup.md"
+        standup_path.write_text(
+            "---\ntags: [standup, dsu]\n---\n"
+            + standup_path.read_text(encoding="utf-8").split("---\n", 2)[2],
+            encoding="utf-8",
+        )
+
+        with (
+            patch("notes.note_generator.PopupManager"),
+            patch(
+                "notes.note_generator.resolved_chat_model",
+                lambda fallback=None, *a, **k: fallback,
+            ),
+        ):
+            generator = NoteGenerator(mock_settings, template_loader=loader)
+            record = _seed_record(
+                tmp_path,
+                title="Daily Sync",
+                transcript=(
+                    "Yesterday the exporter shipped; today the team reviews open "
+                    "pull requests and nothing is blocked."
+                ),
+            )
+            record.tags = ["standup"]
+
+            with patch.object(generator, "_call_llm", return_value=STANDUP_XML):
+                result = generator._generate_for_record(record, force=True)
+
+        assert result["success"] is True
+        content = (record.dir / "notes.md").read_text(encoding="utf-8")
+        assert "### Yesterday\n\n- Shipped the exporter" in content
+        assert "### Blockers\n\nNone" in content
+        assert "Executive Summary" not in content
+
+    def test_generate_for_record_honors_template_override(
+        self, mock_settings, tmp_path
+    ):
+        loader = TemplateLoader(user_dir=tmp_path / "templates")
+        with (
+            patch("notes.note_generator.PopupManager"),
+            patch(
+                "notes.note_generator.resolved_chat_model",
+                lambda fallback=None, *a, **k: fallback,
+            ),
+        ):
+            generator = NoteGenerator(mock_settings, template_loader=loader)
+            record = _seed_record(
+                tmp_path,
+                title="Daily Sync",
+                transcript=(
+                    "Yesterday the exporter shipped; today the team reviews open "
+                    "pull requests and nothing is blocked."
+                ),
+            )
+
+            with patch.object(generator, "_call_llm", return_value=STANDUP_XML):
+                result = generator._generate_for_record(
+                    record, force=True, template_override="standup"
+                )
+
+        assert result["success"] is True
+        content = (record.dir / "notes.md").read_text(encoding="utf-8")
+        assert "### Today\n\n- Review open PRs" in content

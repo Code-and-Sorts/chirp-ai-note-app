@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Chirp is a Typer-based CLI in `chirp/cli.py`. Runtime domains live in sibling packages: `recorder/` for capture and live transcription, `transcriber/` for Whisper processing, `notes/` for note generation and editing, `notes_chat/` for search/chat, `config/` for Pydantic settings, and `utils/` for shared helpers. Notes are stored under `~/Documents/chirp` by default as per-note directories containing `audio.wav`, `transcript.txt`, `notes.md`, and `meta.toml`. Tests mirror runtime domains in `tests/`, and contributor docs live in this file plus `.docs/DEVELOPMENT.md`.
+Chirp is a Typer-based CLI in `chirp/cli.py`. Runtime domains live in sibling packages: `recorder/` for capture and live transcription, `transcriber/` for Whisper processing, `notes/` for note generation and editing, `notes_chat/` for search/chat, `config/` for Pydantic settings, and `utils/` for shared helpers. Notes are stored under `~/Documents/chirp` by default as per-note directories containing `audio.wav`, `transcript.txt`, `notes.md`, and `meta.toml`. Built-in note templates ship as package data in `notes/templates/` and are scaffolded to `~/.chirp/templates/` where user copies shadow them (`notes/note_templates.py`). Tests mirror runtime domains in `tests/`, and contributor docs live in this file plus `.docs/DEVELOPMENT.md`.
 
 ## Build, Test & Development Commands
 **Setup:** `make dev-install` installs system deps, syncs Python dependencies with `uv`, installs the package editable, and enables pre-commit hooks. Use `make install-venv` if the virtualenv already exists and you only need the editable install.

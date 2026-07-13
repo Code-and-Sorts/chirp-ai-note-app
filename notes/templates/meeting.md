@@ -1,6 +1,9 @@
-## {meeting_title}
+---
+description: "General meeting notes"
+---
+## {title}
 
-**Time:** {meeting_time}
+**Time:** {time}
 **Duration:** {duration}
 
 ### Executive Summary
