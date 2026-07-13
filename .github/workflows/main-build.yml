@@ -25,7 +25,7 @@ jobs:
       # both gates measure the same surface. The fail_under floor lives in
       # pyproject [tool.coverage.report].
       run: |
-        uv run pytest tests/ -v --cov --cov-report=xml --cov-report=term
+        uv run pytest tests/ -n auto -v --cov --cov-report=xml --cov-report=term
 
     - name: Build package
       # Wheel-only distribution (see shared-build-and-test.yaml); never build an sdist.

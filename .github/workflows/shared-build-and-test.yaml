@@ -203,7 +203,7 @@ jobs:
       run: uvx twine check dist/*.whl
 
     - name: 🧪 Run unit tests
-      run: uv run pytest --cov --cov-report=term
+      run: uv run pytest -n auto --cov --cov-report=term
 
     - name: 📤 Upload build artifacts
       if: ${{ inputs.upload-artifacts && matrix.python-version == inputs.python-version }}
