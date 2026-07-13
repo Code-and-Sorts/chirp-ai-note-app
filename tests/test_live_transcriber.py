@@ -324,7 +324,7 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
             sample_rate=16000,
         )
 
-    errors: list[BaseException] = []
+    errors: list[Exception] = []
     mutate_stop = threading.Event()
 
     def mutate() -> None:
@@ -357,7 +357,7 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
                 # live reference mutates between these two reads.
                 assert snapshot is not transcriber._segments  # type: ignore[attr-defined]
                 assert snapshot == frozen, "snapshot mutated by worker"
-        except BaseException as exc:  # noqa: BLE001 - capturing any race failure
+        except Exception as exc:  # noqa: BLE001 - capturing any race failure
             errors.append(exc)
 
     mutator = threading.Thread(target=mutate, daemon=True)

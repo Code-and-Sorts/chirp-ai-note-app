@@ -263,6 +263,8 @@ async def test_oversized_line_rejected(
     try:
         await writer.drain()
     except (ConnectionResetError, BrokenPipeError):
+        # The server may reset the connection as soon as it detects the
+        # oversized line; the error envelope is still readable below.
         pass
 
     response = await read_envelope(reader)
