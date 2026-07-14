@@ -2,7 +2,7 @@ import json
 import time
 from unittest.mock import patch
 
-import notes_chat.index  # noqa: F401
+import notes_chat.index
 from notes_chat.cache import cache_answer, clear_cache, get_cached_answer
 
 
@@ -264,7 +264,9 @@ class TestCacheEviction:
 
         with (
             patch("notes_chat.cli.get_notes_config"),
-            patch("notes_chat.index.build_index", return_value={"success": True}),
+            patch.object(
+                notes_chat.index, "build_index", return_value={"success": True}
+            ),
             patch("notes_chat.cache.get_notes_config") as cli_cache_config,
         ):
             cli_cache_config.return_value.notes_chat.index_dir = tmp_path
