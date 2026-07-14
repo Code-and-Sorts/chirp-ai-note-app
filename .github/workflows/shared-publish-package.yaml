@@ -46,6 +46,15 @@ jobs:
     - name: Install Twine
       run: uv pip install twine --system
 
+    - name: 🔏 Sign wheel for PyPI attestations
+      # twine's --attestations upload looks for a sibling `<file>.publish.attestation`
+      # next to each distribution; nothing produces one unless we sign here first.
+      # Uses the job's id-token OIDC credential (Trusted Publishing) to request the
+      # Sigstore signing certificate — no secrets required.
+      run: |
+        uv pip install pypi-attestations --system
+        pypi-attestations sign dist/*.whl
+
     - name: 📦 Publish to ${{ env.pypi-repository }}
       # Wheel-only (see shared-build-and-test.yaml). We never publish an sdist:
       # the macOS-arm64 Swift helper can't be built from source off a macOS host
