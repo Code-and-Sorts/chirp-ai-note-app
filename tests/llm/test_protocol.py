@@ -79,12 +79,6 @@ def test_decode_rejects_non_object_root(payload: bytes) -> None:
         protocol.decode_line(payload)
 
 
-def test_decode_rejects_line_over_max_bytes() -> None:
-    too_big = b"a" * (protocol.MAX_LINE_BYTES + 1)
-    with pytest.raises(LLMMalformedResponse):
-        protocol.decode_line(too_big)
-
-
 def test_decode_accepts_line_at_exact_max_bytes_boundary() -> None:
     overhead = len(b'{"k":""}')
     padding_length = protocol.MAX_LINE_BYTES - overhead

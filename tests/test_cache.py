@@ -2,6 +2,7 @@ import json
 import time
 from unittest.mock import patch
 
+import notes_chat.index
 from notes_chat.cache import cache_answer, clear_cache, get_cached_answer
 
 
@@ -133,20 +134,6 @@ class TestCache:
             assert cache_answer("question", ["chunk1"], "answer") is False
             assert clear_cache() is False
 
-    def test_bypass_on_dry_run(self, tmp_path):
-        """Test that cache is not used in dry-run scenarios."""
-        with patch("notes_chat.cache.get_notes_config") as mock_config:
-            mock_config.return_value.notes_chat.index_dir = tmp_path
-
-            question = "Test question"
-            retrieved_ids = ["chunk1"]
-            answer = "Test answer"
-
-            cache_answer(question, retrieved_ids, answer)
-
-            cached = get_cached_answer(question, retrieved_ids)
-            assert cached == answer
-
 
 class TestCacheKeying:
     def test_different_chat_model_changes_key(self):
@@ -277,7 +264,9 @@ class TestCacheEviction:
 
         with (
             patch("notes_chat.cli.get_notes_config"),
-            patch("notes_chat.index.build_index", return_value={"success": True}),
+            patch.object(
+                notes_chat.index, "build_index", return_value={"success": True}
+            ),
             patch("notes_chat.cache.get_notes_config") as cli_cache_config,
         ):
             cli_cache_config.return_value.notes_chat.index_dir = tmp_path

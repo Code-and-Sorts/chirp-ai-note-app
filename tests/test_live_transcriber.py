@@ -16,6 +16,15 @@ def _make_chunk(start: float, end: float, sample_rate: int = 16000) -> SpeechChu
     return SpeechChunk(data=data, start=start, end=end)
 
 
+def _wait_until(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
+
+
 def test_live_transcriber_emits_events():
     settings = Mock()
     chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
@@ -67,7 +76,7 @@ def test_live_transcriber_emits_events():
                 end=2.0,
             )
         )
-        time.sleep(0.1)
+        assert _wait_until(lambda: not responses and chunk_queue.empty())
         stop_event.set()
         transcriber.join(timeout=1)
 
@@ -180,7 +189,7 @@ def test_overlap_detection_filters_segments():
 
         transcriber.start()
         chunk_queue.put(_make_chunk(0.0, 2.0))
-        time.sleep(0.2)
+        assert _wait_until(lambda: transcriber.segments)
         stop_event.set()
         transcriber.join(timeout=1)
 
@@ -219,7 +228,7 @@ def test_buffer_pruning_after_segments():
 
         transcriber.start()
         chunk_queue.put(chunk)
-        time.sleep(0.2)
+        assert _wait_until(lambda: transcriber._buffer_offset_seconds > 0.0)
         stop_event.set()
         transcriber.join(timeout=1)
 
@@ -251,7 +260,7 @@ def test_empty_chunk_handling():
 
         transcriber.start()
         chunk_queue.put(SpeechChunk(data=b"", start=0.0, end=0.0))
-        time.sleep(0.1)
+        assert _wait_until(chunk_queue.empty)
         stop_event.set()
         transcriber.join(timeout=1)
 
@@ -286,7 +295,7 @@ def test_force_transcription_on_stop():
 
         transcriber.start()
         chunk_queue.put(_make_chunk(0.0, 1.0))
-        time.sleep(0.15)
+        assert _wait_until(chunk_queue.empty)
         stop_event.set()
         transcriber.join(timeout=2)
 
@@ -294,9 +303,6 @@ def test_force_transcription_on_stop():
 
 
 def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path):
-    # AC-3: export_transcript reads through the lock-guarded `segments`
-    # property, so a worker mutating _segments concurrently can never trigger
-    # "RuntimeError: list changed size during iteration" or a torn write.
     settings = Mock()
     chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
     event_queue: queue.Queue[DashboardEvent] = queue.Queue()
@@ -315,24 +321,32 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
             sample_rate=16000,
         )
 
-    errors: list[BaseException] = []
+    errors: list[Exception] = []
     mutate_stop = threading.Event()
 
     def mutate() -> None:
         index = 0
         while not mutate_stop.is_set():
             with transcriber._lock:  # type: ignore[attr-defined]
-                transcriber._segments.append(  # type: ignore[attr-defined]
+                segments = transcriber._segments  # type: ignore[attr-defined]
+                if len(segments) >= 512:
+                    del segments[: len(segments) // 2]
+                segments.append(
                     TranscriptSegment(
                         text=f"seg-{index}", start=index, end=index + 1, words=1
                     )
                 )
             index += 1
+            time.sleep(0)
 
     def export() -> None:
         try:
             for _ in range(200):
+                snapshot = transcriber.segments
+                frozen = list(snapshot)
                 transcriber.export_transcript(tmp_path / "transcript.txt")
+                assert snapshot is not transcriber._segments  # type: ignore[attr-defined]
+                assert snapshot == frozen, "snapshot mutated by worker"
         except Exception as exc:  # noqa: BLE001 - capturing any race failure
             errors.append(exc)
 
@@ -340,10 +354,12 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
     exporter = threading.Thread(target=export, daemon=True)
     mutator.start()
     exporter.start()
-    exporter.join(timeout=5)
+    exporter.join(timeout=30)
     mutate_stop.set()
     mutator.join(timeout=5)
 
+    assert not exporter.is_alive(), "exporter thread did not finish"
+    assert not mutator.is_alive(), "mutator thread did not finish"
     assert not errors, f"export raced with mutation: {errors!r}"
 
 

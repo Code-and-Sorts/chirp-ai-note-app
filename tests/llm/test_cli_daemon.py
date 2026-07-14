@@ -46,6 +46,12 @@ def _silence_logging(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(daemon_module, "configure_logging", MagicMock())
 
 
+@pytest.fixture(autouse=True)
+def _no_restart_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the real stop→start settle sleep; tests mock the daemon boundary."""
+    monkeypatch.setattr(daemon_module, "_RESTART_SETTLE_S", 0.0)
+
+
 @pytest.fixture
 def force_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make stdout look like a terminal so ``status`` takes the table path."""

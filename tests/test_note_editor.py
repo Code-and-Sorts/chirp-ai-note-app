@@ -15,8 +15,9 @@ def test_readonly_blocks_insert(monkeypatch):
     editor = ManualNoteEditor("Sample", "Content", readonly=True)
     assert editor.mode == "view"
 
-    editor._handle_view_mode("i")
+    result = editor._handle_view_mode("i")
 
+    assert result is False
     assert editor.mode == "view"
     assert editor._readonly_notified is True
     assert editor.message.startswith("Read-only note")

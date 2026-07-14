@@ -172,25 +172,12 @@ def test_capture_not_started_when_model_load_fails(tmp_path: Path) -> None:
 
 
 def test_slow_final_pass_is_included_in_export(tmp_path: Path) -> None:
-    # AC-3: the worker's final pass can run past the old 1s join bound; the
-    # session must join unbounded so export reflects the final segments and no
-    # exception is raised.
-    #
-    # The transcriber is a *real* thread whose final _maybe_transcribe(force=True)
-    # pass sleeps PAST 1s before appending the final segment. This is a
-    # regression guard: under the old `join(timeout=1)` the session would read
-    # segments while the thread is still mid-pass (final segment missing,
-    # total_words == 0, no transcript written) — fail; under the unbounded
-    # `join()` it completes first — pass.
     import threading
-    import time
 
     from recorder.live_types import TranscriptSegment
 
     settings = _build_settings(tmp_path)
     fake_stream = _make_fake_stream(capture_error=None)
-
-    _FINAL_PASS_SECONDS = 1.5
 
     class SlowTranscriber(threading.Thread):
         def __init__(self, *args, **kwargs):
@@ -198,17 +185,20 @@ def test_slow_final_pass_is_included_in_export(tmp_path: Path) -> None:
             self._segments: list[TranscriptSegment] = []
             self._lock = threading.Lock()
             self.total_words = 0
-            self.started = threading.Event()
+            self._unbounded_join = threading.Event()
 
         def run(self):
-            self.started.set()
-            # Simulate a multi-second final Whisper pass on CPU int8.
-            time.sleep(_FINAL_PASS_SECONDS)
-            with self._lock:
-                self._segments.append(
-                    TranscriptSegment(text="final", start=0.0, end=1.0, words=1)
-                )
-                self.total_words = 1
+            if self._unbounded_join.wait(timeout=5):
+                with self._lock:
+                    self._segments.append(
+                        TranscriptSegment(text="final", start=0.0, end=1.0, words=1)
+                    )
+                    self.total_words = 1
+
+        def join(self, timeout=None):
+            if timeout is None:
+                self._unbounded_join.set()
+            super().join(timeout)
 
         @property
         def segments(self):
@@ -237,9 +227,6 @@ def test_slow_final_pass_is_included_in_export(tmp_path: Path) -> None:
         session.stop_event.set()
         result = session.run()
 
-    # Under the unbounded join, the multi-second final pass completes before
-    # segments are read: the final segment is present and the transcript is
-    # written. Under join(timeout=1) this assertion fails (segment missing).
     assert result.total_words == 1
     assert result.transcript_path is not None
     assert result.transcript_path.read_text(encoding="utf-8") == "final"

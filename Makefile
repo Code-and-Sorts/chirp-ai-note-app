@@ -46,8 +46,8 @@ about: ## Show the animated Chirp logo + version info
 	uv run chirp about
 
 # Testing commands
-test: ## Run unit tests
-	uv run pytest
+test: ## Run unit tests (parallel)
+	uv run pytest -n auto
 
 test-file: ## Run a single test file (FILE=tests/test_settings.py)
 	uv run pytest $(FILE)
@@ -56,7 +56,7 @@ test-match: ## Run tests matching a pattern (PATTERN=slugify)
 	uv run pytest -k "$(PATTERN)"
 
 test-coverage: ## Run tests with coverage report (fails below the pyproject fail_under floor)
-	uv run pytest --cov --cov-report=html --cov-report=term
+	uv run pytest -n auto --cov --cov-report=html --cov-report=term
 
 test-failed: ## Run only failed tests from last run
 	uv run pytest --lf

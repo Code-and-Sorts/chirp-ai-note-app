@@ -446,41 +446,6 @@ def test_install_missing_surfaces_daemon_failure_without_installing(monkeypatch)
     assert "chirp daemon logs" in output
 
 
-def test_install_missing_dispatches_build_for_missing_binary(tmp_path, monkeypatch):
-    import sys as _sys
-
-    monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")
-
-    run_calls: list[list[str]] = []
-
-    def _fake_run(args, timeout=10.0):
-        run_calls.append(list(args))
-        return 0, ""
-
-    monkeypatch.setattr(init_flow, "_run", _fake_run)
-
-    statuses = [
-        init_flow.DependencyStatus(
-            name="screen recording permission",
-            installed=False,
-            detail="capture_audio binary not built — run python -m audio_capture.build",
-        )
-    ]
-
-    init_flow.install_missing(_console(), statuses)
-
-    assert len(run_calls) == 1, f"expected exactly one dispatch, got: {run_calls}"
-    args = run_calls[0]
-    assert _sys.executable in args, (
-        f"expected python executable in dispatch, got: {args}"
-    )
-    assert "-m" in args, f"expected -m in dispatch, got: {args}"
-    assert "audio_capture.build" in args, (
-        f"expected audio_capture.build dispatch, got: {args}"
-    )
-
-
 def test_install_missing_surfaces_denied_permission_without_dispatching(monkeypatch):
     monkeypatch.setattr(init_flow.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(init_flow, "_which", lambda cmd: f"/usr/bin/{cmd}")

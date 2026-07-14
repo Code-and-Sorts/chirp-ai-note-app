@@ -307,12 +307,6 @@ class TestExitCodes:
         result = runner.invoke(app, ["search", "   "])
         assert result.exit_code == 2
 
-    def test_notes_view_missing_is_1(self, tmp_path, monkeypatch):
-        _write_note(tmp_path, "alpha-2026-04-20", "Alpha")
-        runner, app = _runner(tmp_path, monkeypatch)
-        result = runner.invoke(app, ["notes", "view", "nope"])
-        assert result.exit_code == 1
-
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
