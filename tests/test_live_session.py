@@ -172,16 +172,6 @@ def test_capture_not_started_when_model_load_fails(tmp_path: Path) -> None:
 
 
 def test_slow_final_pass_is_included_in_export(tmp_path: Path) -> None:
-    # AC-3: the worker's final pass can run past any bounded join; the session
-    # must join unbounded so export reflects the final segments and no
-    # exception is raised.
-    #
-    # The transcriber is a *real* thread whose final _maybe_transcribe(force=True)
-    # pass outlasts any bounded join: the final segment is appended only once the
-    # session commits to an unbounded `join()`. This is a regression guard: under
-    # the old `join(timeout=1)` the session reads segments while the thread is
-    # still mid-pass (final segment missing, total_words == 0, no transcript
-    # written) — fail; under the unbounded `join()` it completes first — pass.
     import threading
 
     from recorder.live_types import TranscriptSegment
@@ -198,8 +188,6 @@ def test_slow_final_pass_is_included_in_export(tmp_path: Path) -> None:
             self._unbounded_join = threading.Event()
 
         def run(self):
-            # Stand-in for the multi-second final Whisper pass: it finishes
-            # only if the session waits without a bound.
             if self._unbounded_join.wait(timeout=5):
                 with self._lock:
                     self._segments.append(
@@ -239,9 +227,6 @@ def test_slow_final_pass_is_included_in_export(tmp_path: Path) -> None:
         session.stop_event.set()
         result = session.run()
 
-    # Under the unbounded join, the final pass completes before segments are
-    # read: the final segment is present and the transcript is written. Under
-    # any bounded join this assertion fails (segment missing).
     assert result.total_words == 1
     assert result.transcript_path is not None
     assert result.transcript_path.read_text(encoding="utf-8") == "final"

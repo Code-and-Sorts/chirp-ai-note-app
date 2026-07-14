@@ -303,9 +303,6 @@ def test_force_transcription_on_stop():
 
 
 def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path):
-    # AC-3: export_transcript reads through the lock-guarded `segments`
-    # property, which must return a copy taken under the lock — never the live
-    # list — so a concurrently mutating worker cannot tear an export.
     settings = Mock()
     chunk_queue: queue.Queue[SpeechChunk] = queue.Queue()
     event_queue: queue.Queue[DashboardEvent] = queue.Queue()
@@ -328,9 +325,6 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
     mutate_stop = threading.Event()
 
     def mutate() -> None:
-        # Append AND periodically truncate so exports see both growth and
-        # shrinkage, while the list stays bounded — an unthrottled append-only
-        # loop makes each export O(total appends) and the test quadratic.
         index = 0
         while not mutate_stop.is_set():
             with transcriber._lock:  # type: ignore[attr-defined]
@@ -343,8 +337,6 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
                     )
                 )
             index += 1
-            # Yield so the exporter can win the lock; without this the spin
-            # loop starves it and the test crawls under GIL contention.
             time.sleep(0)
 
     def export() -> None:
@@ -353,8 +345,6 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
                 snapshot = transcriber.segments
                 frozen = list(snapshot)
                 transcriber.export_transcript(tmp_path / "transcript.txt")
-                # The property must hand back a copy taken under the lock; a
-                # live reference mutates between these two reads.
                 assert snapshot is not transcriber._segments  # type: ignore[attr-defined]
                 assert snapshot == frozen, "snapshot mutated by worker"
         except Exception as exc:  # noqa: BLE001 - capturing any race failure
@@ -368,8 +358,6 @@ def test_export_transcript_is_race_free_under_concurrent_mutation(tmp_path: Path
     mutate_stop.set()
     mutator.join(timeout=5)
 
-    # An abandoned worker outlives the test and steals GIL time from the rest
-    # of the suite, so a leak must fail here rather than slow everything else.
     assert not exporter.is_alive(), "exporter thread did not finish"
     assert not mutator.is_alive(), "mutator thread did not finish"
     assert not errors, f"export raced with mutation: {errors!r}"
